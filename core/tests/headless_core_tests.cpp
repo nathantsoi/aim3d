@@ -1,9 +1,11 @@
 #include "aim3d/application.hpp"
 #include "aim3d/document.hpp"
+#include "aim3d/sketch_solver.hpp"
 #include "aim3d/topo_naming.hpp"
 
 #include <atomic>
 #include <cassert>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -16,6 +18,10 @@
 #endif
 
 namespace {
+
+bool near(double actual, double expected, double tolerance = 1.0e-5) {
+    return std::abs(actual - expected) <= tolerance;
+}
 
 std::filesystem::path test_dir() {
     auto dir = std::filesystem::temp_directory_path() / "aim3d-a1-tests";
@@ -405,6 +411,178 @@ void test_history_tree_tracks_selections_and_downstream_dirty_state() {
     assert(dirtyFeatures[1].isDirty);
 }
 
+void test_sketch_solver_coincident_points() {
+    aim3d::SketchSolveRequest request;
+    request.points = {
+        {1, 0.0, 0.0, true},
+        {2, 5.0, -3.0, false},
+    };
+    request.entities = {
+        {101, aim3d::SketchEntityType::Point, 1, -1, -1, 0.0},
+        {102, aim3d::SketchEntityType::Point, 2, -1, -1, 0.0},
+    };
+    request.constraints = {
+        {aim3d::SketchConstraintKind::Coincident, 101, 102, 0.0},
+    };
+
+    const aim3d::SketchSolver solver;
+    const auto result = solver.solve(request);
+    assert(result.status == aim3d::SketchSolveStatus::Success);
+    assert(result.diagnostics.isFullyConstrained);
+    assert(result.diagnostics.degreesOfFreedom == 0);
+    assert(near(result.points[1].x, 0.0));
+    assert(near(result.points[1].y, 0.0));
+}
+
+void test_sketch_solver_distance_constraint() {
+    aim3d::SketchSolveRequest request;
+    request.points = {
+        {1, 0.0, 0.0, true},
+        {2, 2.0, 0.0, false},
+    };
+    request.entities = {
+        {101, aim3d::SketchEntityType::Point, 1, -1, -1, 0.0},
+        {102, aim3d::SketchEntityType::Point, 2, -1, -1, 0.0},
+    };
+    request.constraints = {
+        {aim3d::SketchConstraintKind::Distance, 101, 102, 5.0},
+    };
+
+    const aim3d::SketchSolver solver;
+    const auto result = solver.solve(request);
+    assert(result.status == aim3d::SketchSolveStatus::Success);
+    assert(near(std::hypot(result.points[1].x, result.points[1].y), 5.0));
+    assert(result.diagnostics.degreesOfFreedom > 0);
+}
+
+void test_sketch_solver_line_circle_tangent() {
+    aim3d::SketchSolveRequest request;
+    request.points = {
+        {1, 0.0, 0.0, true},
+        {2, 5.0, 0.0, true},
+        {3, 2.0, 3.0, false},
+    };
+    request.entities = {
+        {201, aim3d::SketchEntityType::Line, 1, 2, -1, 0.0},
+        {202, aim3d::SketchEntityType::Circle, -1, -1, 3, 1.0},
+    };
+    request.constraints = {
+        {aim3d::SketchConstraintKind::Tangent, 201, 202, 0.0},
+    };
+
+    const aim3d::SketchSolver solver;
+    const auto result = solver.solve(request);
+    assert(result.status == aim3d::SketchSolveStatus::Success);
+    assert(near(std::abs(result.points[2].y), 1.0));
+}
+
+void test_sketch_solver_circle_circle_tangent() {
+    aim3d::SketchSolveRequest request;
+    request.points = {
+        {1, 0.0, 0.0, true},
+        {2, 5.0, 0.0, false},
+    };
+    request.entities = {
+        {301, aim3d::SketchEntityType::Circle, -1, -1, 1, 1.0},
+        {302, aim3d::SketchEntityType::Circle, -1, -1, 2, 2.0},
+    };
+    request.constraints = {
+        {aim3d::SketchConstraintKind::Tangent, 301, 302, 0.0},
+    };
+
+    const aim3d::SketchSolver solver;
+    const auto result = solver.solve(request);
+    assert(result.status == aim3d::SketchSolveStatus::Success);
+    assert(near(std::hypot(result.points[1].x, result.points[1].y), 3.0));
+}
+
+void test_sketch_solver_fixed_and_underconstrained_dof() {
+    aim3d::SketchSolveRequest fixedRequest;
+    fixedRequest.points = {
+        {1, 0.0, 0.0, true},
+        {2, 5.0, 0.0, false},
+    };
+    fixedRequest.entities = {
+        {101, aim3d::SketchEntityType::Point, 1, -1, -1, 0.0},
+        {102, aim3d::SketchEntityType::Point, 2, -1, -1, 0.0},
+    };
+    fixedRequest.constraints = {
+        {aim3d::SketchConstraintKind::Fixed, 102, -1, 0.0},
+    };
+
+    const aim3d::SketchSolver solver;
+    const auto fixedResult = solver.solve(fixedRequest);
+    assert(fixedResult.status == aim3d::SketchSolveStatus::Success);
+    assert(fixedResult.diagnostics.degreesOfFreedom == 0);
+    assert(fixedResult.diagnostics.isFullyConstrained);
+
+    aim3d::SketchSolveRequest looseRequest;
+    looseRequest.points = {
+        {1, 0.0, 0.0, false},
+        {2, 3.0, 0.0, false},
+    };
+    looseRequest.entities = fixedRequest.entities;
+    looseRequest.constraints = {
+        {aim3d::SketchConstraintKind::Distance, 101, 102, 3.0},
+    };
+
+    const auto looseResult = solver.solve(looseRequest);
+    assert(looseResult.status == aim3d::SketchSolveStatus::Success);
+    assert(looseResult.diagnostics.degreesOfFreedom > 0);
+    assert(!looseResult.diagnostics.isFullyConstrained);
+}
+
+void test_sketch_solver_inconsistent_constraints() {
+    aim3d::SketchSolveRequest request;
+    request.points = {
+        {1, 0.0, 0.0, true},
+        {2, 10.0, 0.0, true},
+    };
+    request.entities = {
+        {101, aim3d::SketchEntityType::Point, 1, -1, -1, 0.0},
+        {102, aim3d::SketchEntityType::Point, 2, -1, -1, 0.0},
+    };
+    request.constraints = {
+        {aim3d::SketchConstraintKind::Coincident, 101, 102, 0.0},
+    };
+
+    const aim3d::SketchSolver solver;
+    const auto result = solver.solve(request);
+    assert(result.status == aim3d::SketchSolveStatus::Inconsistent);
+    assert(!result.diagnostics.warnings.empty());
+}
+
+void test_sketch_solver_c_abi_smoke() {
+    Aim3dSketchPoint points[] = {
+        {1, 0.0, 0.0, 1},
+        {2, 2.0, 0.0, 0},
+    };
+    const Aim3dSketchEntity entities[] = {
+        {101, 0, 1, -1, -1, 0.0},
+        {102, 0, 2, -1, -1, 0.0},
+    };
+    const Aim3dSketchConstraint constraints[] = {
+        {1, 101, 102, 4.0},
+    };
+    Aim3dSketchSolveResult result{};
+
+    const int status = aim3d_solve_sketch_2d(
+        points,
+        2,
+        entities,
+        2,
+        constraints,
+        1,
+        nullptr,
+        &result
+    );
+
+    assert(status == 0);
+    assert(result.status == 0);
+    assert(near(std::hypot(points[1].x, points[1].y), 4.0));
+    assert(result.degrees_of_freedom > 0);
+}
+
 }
 
 int main() {
@@ -429,5 +607,12 @@ int main() {
     test_unsupported_geometry_extension_fails();
     test_topology_rebind_reports_structured_stale_and_ambiguous_states();
     test_history_tree_tracks_selections_and_downstream_dirty_state();
+    test_sketch_solver_coincident_points();
+    test_sketch_solver_distance_constraint();
+    test_sketch_solver_line_circle_tangent();
+    test_sketch_solver_circle_circle_tangent();
+    test_sketch_solver_fixed_and_underconstrained_dof();
+    test_sketch_solver_inconsistent_constraints();
+    test_sketch_solver_c_abi_smoke();
     return 0;
 }
