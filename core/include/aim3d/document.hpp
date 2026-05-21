@@ -5,6 +5,7 @@
 #include <memory>
 #include <array>
 #include <cstdint>
+#include <mutex>
 #include <utility>
 
 namespace aim3d {
@@ -32,7 +33,7 @@ struct BodyInspection {
     EntityId id = 0;
     std::string name;
     GeometryFormat sourceFormat = GeometryFormat::Unknown;
-    std::string shapeType = "Mock";
+    std::string shapeType = "Unknown";
     BoundingBox bounds;
     std::size_t faceCount = 0;
     std::size_t edgeCount = 0;
@@ -52,9 +53,9 @@ public:
     std::string shapeType() const { return m_shapeType; }
     void setShapeType(const std::string& shapeType) { m_shapeType = shapeType; }
     
-    // Simulates returning high-performance direct contiguous memory pointers
     const float* getVerticesBuffer(size_t& count) const;
     BodyInspection inspect() const;
+    std::shared_ptr<KernelShape> kernelShapeHandle() const { return m_kernelShape; }
     
 private:
     friend class Document;
@@ -63,8 +64,8 @@ private:
     EntityId m_id = 0;
     std::string m_name;
     GeometryFormat m_sourceFormat = GeometryFormat::Unknown;
-    std::string m_shapeType = "Mock";
-    std::vector<float> m_mockVertices = {0.0f, 0.0f, 0.0f, 10.0f, 0.0f, 0.0f, 0.0f, 10.0f, 0.0f};
+    std::string m_shapeType = "Unknown";
+    std::vector<float> m_vertices;
     std::shared_ptr<KernelShape> m_kernelShape;
 };
 
@@ -155,12 +156,14 @@ public:
 
     bool save(const std::string& path);
     std::shared_ptr<BRepBody> importGeometry(const std::string& path);
+    bool exportGeometry(const std::string& path) const;
     std::vector<BodyInspection> inspectBodies() const;
 
 private:
     EntityId nextEntityId();
     static GeometryFormat detectFormat(const std::string& path);
     static const char* formatName(GeometryFormat format);
+    bool saveNativeDocument(const std::string& path) const;
 
     EntityId m_id = 0;
     EntityId m_nextEntityId = 1;
@@ -168,6 +171,7 @@ private:
     bool m_dirty = false;
     std::shared_ptr<DesignProduct> m_design;
     std::shared_ptr<CamProduct> m_cam;
+    mutable std::mutex m_mutex;
 };
 
 } // namespace aim3d

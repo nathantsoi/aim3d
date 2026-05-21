@@ -25,7 +25,7 @@ if(BUILD_TESTING)
     message(STATUS "Unit tests enabled for aim3d_core")
 endif()
 
-option(AIM3D_ENABLE_OCCT "Enable OpenCASCADE-backed geometry import/export" OFF)
+option(AIM3D_ENABLE_OCCT "Enable OpenCASCADE-backed geometry import/export" ON)
 set(AIM3D_OCCT_DIR "" CACHE PATH "Path to a configured OpenCASCADE/OCCT CMake package")
 
 # Build Core and Solvers

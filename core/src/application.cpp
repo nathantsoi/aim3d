@@ -2,10 +2,28 @@
 #include "aim3d/document.hpp"
 #include <iostream>
 #include <algorithm>
+#include <cctype>
 #include <exception>
 #include <stdexcept>
 
 namespace aim3d {
+
+namespace {
+
+bool isExchangeGeometryPath(const std::string& path) {
+    const auto dot = path.find_last_of('.');
+    if (dot == std::string::npos) {
+        return false;
+    }
+
+    std::string ext = path.substr(dot + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return ext == "step" || ext == "stp" || ext == "iges" || ext == "igs" || ext == "brep";
+}
+
+} // namespace
 
 std::unique_ptr<Application> Application::s_instance = nullptr;
 
@@ -42,8 +60,11 @@ std::vector<std::shared_ptr<Document>> Application::documents() const {
 }
 
 std::shared_ptr<Document> Application::openDocument(const std::string& path) {
-    dispatchEvent("LOG", "Opening STEP/IGES document path: " + path);
+    dispatchEvent("LOG", "Opening document path: " + path);
     auto doc = std::make_shared<Document>(m_nextDocumentId++, path);
+    if (isExchangeGeometryPath(path)) {
+        doc->importGeometry(path);
+    }
     m_documents.push_back(doc);
     m_activeDocument = doc;
     return doc;
