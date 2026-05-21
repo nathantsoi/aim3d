@@ -6,10 +6,17 @@
 #include <stdexcept>
 
 #if AIM3D_HAS_OCCT
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRep_Builder.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepGProp.hxx>
+#include <BRepOffsetAPI_MakeOffsetShape.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
 #include <Bnd_Box.hxx>
+#include <GProp_GProps.hxx>
+#include <gp_Pnt.hxx>
 #include <IGESControl_Reader.hxx>
 #include <IGESControl_Writer.hxx>
 #include <IFSelect_ReturnStatus.hxx>
@@ -17,6 +24,7 @@
 #include <STEPControl_Writer.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Shape.hxx>
 #endif
@@ -44,6 +52,113 @@ std::string lowerExtension(const std::string& path) {
 }
 
 #if AIM3D_HAS_OCCT
+TopologySignature signatureFromShape(const TopoDS_Shape& shape, TopologyKind kind) {
+    TopologySignature signature;
+
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box);
+    if (!box.IsVoid()) {
+        box.Get(
+            signature.minX,
+            signature.minY,
+            signature.minZ,
+            signature.maxX,
+            signature.maxY,
+            signature.maxZ);
+        signature.centerX = (signature.minX + signature.maxX) * 0.5;
+        signature.centerY = (signature.minY + signature.maxY) * 0.5;
+        signature.centerZ = (signature.minZ + signature.maxZ) * 0.5;
+    }
+
+    if (kind == TopologyKind::Face) {
+        GProp_GProps props;
+        BRepGProp::SurfaceProperties(shape, props);
+        signature.measure = props.Mass();
+        const auto center = props.CentreOfMass();
+        signature.centerX = center.X();
+        signature.centerY = center.Y();
+        signature.centerZ = center.Z();
+    } else if (kind == TopologyKind::Edge) {
+        GProp_GProps props;
+        BRepGProp::LinearProperties(shape, props);
+        signature.measure = props.Mass();
+        const auto center = props.CentreOfMass();
+        signature.centerX = center.X();
+        signature.centerY = center.Y();
+        signature.centerZ = center.Z();
+    } else if (kind == TopologyKind::Vertex) {
+        const auto point = BRep_Tool::Pnt(TopoDS::Vertex(shape));
+        signature.centerX = point.X();
+        signature.centerY = point.Y();
+        signature.centerZ = point.Z();
+        signature.minX = signature.maxX = point.X();
+        signature.minY = signature.maxY = point.Y();
+        signature.minZ = signature.maxZ = point.Z();
+    } else if (kind == TopologyKind::Body) {
+        signature.measure = (signature.maxX - signature.minX)
+            * (signature.maxY - signature.minY)
+            * (signature.maxZ - signature.minZ);
+    }
+
+    return signature;
+}
+
+std::shared_ptr<KernelShape> cloneKernelShape(const std::shared_ptr<KernelShape>& source) {
+    if (!source) {
+        return nullptr;
+    }
+    auto clone = std::make_shared<KernelShape>();
+    clone->shape = source->shape;
+    return clone;
+}
+
+std::shared_ptr<KernelShape> makeKernelShape(const TopoDS_Shape& shape) {
+    if (shape.IsNull()) {
+        throw std::runtime_error("OCCT edit produced an empty shape");
+    }
+    auto kernelShape = std::make_shared<KernelShape>();
+    kernelShape->shape = shape;
+    return kernelShape;
+}
+
+TopoDS_Shape splitShapeAtX(const TopoDS_Shape& source, double splitX) {
+    Bnd_Box box;
+    BRepBndLib::Add(source, box);
+    if (box.IsVoid()) {
+        throw std::runtime_error("Cannot split a shape with empty bounds");
+    }
+
+    double minX = 0.0;
+    double minY = 0.0;
+    double minZ = 0.0;
+    double maxX = 0.0;
+    double maxY = 0.0;
+    double maxZ = 0.0;
+    box.Get(minX, minY, minZ, maxX, maxY, maxZ);
+    if (splitX <= minX || splitX >= maxX) {
+        throw std::invalid_argument("Split edit value must be inside the body's X bounds");
+    }
+
+    const double pad = std::max({maxX - minX, maxY - minY, maxZ - minZ, 1.0}) * 2.0;
+    const gp_Pnt corner(splitX, minY - pad, minZ - pad);
+    const auto cutter = BRepPrimAPI_MakeBox(corner, maxX - splitX + pad, maxY - minY + pad * 2.0, maxZ - minZ + pad * 2.0).Shape();
+    BRepAlgoAPI_Cut cut(source, cutter);
+    cut.Build();
+    if (!cut.IsDone() || cut.Shape().IsNull()) {
+        throw std::runtime_error("OCCT failed to perform split edit");
+    }
+    return cut.Shape();
+}
+
+TopoDS_Shape offsetShape(const TopoDS_Shape& source, double offset) {
+    BRepOffsetAPI_MakeOffsetShape maker;
+    maker.PerformBySimple(source, offset);
+    if (!maker.IsDone() || maker.Shape().IsNull()) {
+        throw std::runtime_error("OCCT failed to perform offset edit");
+    }
+    return maker.Shape();
+}
+
 std::size_t countSubShapes(const TopoDS_Shape& shape, TopAbs_ShapeEnum shapeType) {
     std::size_t count = 0;
     for (TopExp_Explorer explorer(shape, shapeType); explorer.More(); explorer.Next()) {
@@ -257,9 +372,114 @@ std::shared_ptr<BRepBody> Document::importGeometry(const std::string& path) {
     body->setShapeType(formatName(format));
     body->setKernelShape(readOcctShape(path, format));
     m_design->rootComponent()->addBody(body);
+    registerBodyTopology(body);
     m_dirty = true;
     return body;
 #endif
+}
+
+bool Document::replaceBodyGeometry(EntityId bodyId, const std::string& path) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto format = detectFormat(path);
+    if (format == GeometryFormat::Unknown) {
+        throw std::invalid_argument("Unsupported geometry format for replacement: " + path);
+    }
+
+    for (const auto& body : m_design->rootComponent()->bRepBodies()) {
+        if (!body || body->id() != bodyId) {
+            continue;
+        }
+
+#if !AIM3D_HAS_OCCT
+        throw std::runtime_error("aim3d was built without OCCT; geometry replacement is unavailable");
+#else
+        body->setName(path);
+        body->setSourceFormat(format);
+        body->setShapeType(formatName(format));
+        body->setKernelShape(readOcctShape(path, format));
+        m_topology.rebindOwnerRecords(bodyId, buildBodyTopologyRecords(*body));
+        m_dirty = true;
+        return true;
+#endif
+    }
+
+    return false;
+}
+
+bool Document::applySplitEdit(EntityId bodyId, double splitX) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return applySplitEditUnlocked(bodyId, splitX, "", nullptr);
+}
+
+bool Document::applyOffsetEdit(EntityId bodyId, double offset) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return applyOffsetEditUnlocked(bodyId, offset, "", nullptr);
+}
+
+std::string Document::addSplitEditFeature(EntityId bodyId, double splitX) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto body = findBody(bodyId);
+    if (!body) {
+        throw std::invalid_argument("Cannot add split feature for unknown body");
+    }
+#if !AIM3D_HAS_OCCT
+    (void)splitX;
+    throw std::runtime_error("aim3d was built without OCCT; split edit features are unavailable");
+#else
+    auto sourceShape = cloneKernelShape(body->kernelShapeHandle());
+    if (!sourceShape || sourceShape->shape.IsNull()) {
+        throw std::runtime_error("Cannot add split feature without OCCT body geometry");
+    }
+    const auto featureId = m_history.addFeature("Split", splitX);
+    m_topologyEditFeatures.push_back({featureId, TopologyEditType::Split, bodyId, splitX, sourceShape});
+    return featureId;
+#endif
+}
+
+std::string Document::addOffsetEditFeature(EntityId bodyId, double offset) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto body = findBody(bodyId);
+    if (!body) {
+        throw std::invalid_argument("Cannot add offset feature for unknown body");
+    }
+#if !AIM3D_HAS_OCCT
+    (void)offset;
+    throw std::runtime_error("aim3d was built without OCCT; offset edit features are unavailable");
+#else
+    auto sourceShape = cloneKernelShape(body->kernelShapeHandle());
+    if (!sourceShape || sourceShape->shape.IsNull()) {
+        throw std::runtime_error("Cannot add offset feature without OCCT body geometry");
+    }
+    const auto featureId = m_history.addFeature("Offset", offset);
+    m_topologyEditFeatures.push_back({featureId, TopologyEditType::Offset, bodyId, offset, sourceShape});
+    return featureId;
+#endif
+}
+
+bool Document::recomputeHistory() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto features = m_history.features();
+    for (const auto& feature : features) {
+        if (!feature.isDirty) {
+            continue;
+        }
+        for (auto& edit : m_topologyEditFeatures) {
+            if (edit.featureId != feature.id) {
+                continue;
+            }
+            edit.value = feature.value;
+            if (edit.type == TopologyEditType::Split) {
+                applySplitEditUnlocked(edit.bodyId, edit.value, edit.featureId, edit.sourceShape);
+            } else if (edit.type == TopologyEditType::Offset) {
+                applyOffsetEditUnlocked(edit.bodyId, edit.value, edit.featureId, edit.sourceShape);
+            }
+        }
+    }
+    const bool ok = m_history.recomputeAll();
+    if (ok) {
+        m_dirty = true;
+    }
+    return ok;
 }
 
 bool Document::exportGeometry(const std::string& path) const {
@@ -284,6 +504,131 @@ std::vector<BodyInspection> Document::inspectBodies() const {
         inspections.push_back(body->inspect());
     }
     return inspections;
+}
+
+std::shared_ptr<BRepBody> Document::findBody(EntityId bodyId) const {
+    for (const auto& body : m_design->rootComponent()->bRepBodies()) {
+        if (body && body->id() == bodyId) {
+            return body;
+        }
+    }
+    return nullptr;
+}
+
+bool Document::applySplitEditUnlocked(EntityId bodyId, double splitX, const std::string& featureId, std::shared_ptr<KernelShape> sourceShape) {
+    auto body = findBody(bodyId);
+    if (!body) {
+        return false;
+    }
+#if !AIM3D_HAS_OCCT
+    (void)splitX;
+    (void)featureId;
+    (void)sourceShape;
+    throw std::runtime_error("aim3d was built without OCCT; split edits are unavailable");
+#else
+    const auto source = sourceShape ? sourceShape : body->kernelShapeHandle();
+    if (!source || source->shape.IsNull()) {
+        throw std::runtime_error("Cannot split body without OCCT geometry");
+    }
+    body->setKernelShape(makeKernelShape(splitShapeAtX(source->shape, splitX)));
+    auto records = buildBodyTopologyRecords(*body);
+    for (auto& record : records) {
+        record.featureId = featureId;
+    }
+    m_topology.rebindOwnerRecords(bodyId, records);
+    m_dirty = true;
+    return true;
+#endif
+}
+
+bool Document::applyOffsetEditUnlocked(EntityId bodyId, double offset, const std::string& featureId, std::shared_ptr<KernelShape> sourceShape) {
+    auto body = findBody(bodyId);
+    if (!body) {
+        return false;
+    }
+#if !AIM3D_HAS_OCCT
+    (void)offset;
+    (void)featureId;
+    (void)sourceShape;
+    throw std::runtime_error("aim3d was built without OCCT; offset edits are unavailable");
+#else
+    const auto source = sourceShape ? sourceShape : body->kernelShapeHandle();
+    if (!source || source->shape.IsNull()) {
+        throw std::runtime_error("Cannot offset body without OCCT geometry");
+    }
+    body->setKernelShape(makeKernelShape(offsetShape(source->shape, offset)));
+    auto records = buildBodyTopologyRecords(*body);
+    for (auto& record : records) {
+        record.featureId = featureId;
+    }
+    m_topology.rebindOwnerRecords(bodyId, records);
+    m_dirty = true;
+    return true;
+#endif
+}
+
+void Document::registerBodyTopology(const std::shared_ptr<BRepBody>& body) {
+    if (!body) {
+        return;
+    }
+    m_topology.replaceRecordsForOwner(body->id(), buildBodyTopologyRecords(*body));
+}
+
+std::vector<TopologyRecord> Document::buildBodyTopologyRecords(const BRepBody& body) const {
+    std::vector<TopologyRecord> records;
+
+    TopologyRecord bodyRecord;
+    bodyRecord.token = m_topology.makeBodyToken(body.id());
+    bodyRecord.kind = TopologyKind::Body;
+    bodyRecord.ownerId = body.id();
+    bodyRecord.ordinal = 0;
+
+#if AIM3D_HAS_OCCT
+    if (body.kernelShapeHandle() && !body.kernelShapeHandle()->shape.IsNull()) {
+        bodyRecord.signature = signatureFromShape(body.kernelShapeHandle()->shape, TopologyKind::Body);
+        records.push_back(bodyRecord);
+
+        std::size_t ordinal = 0;
+        for (TopExp_Explorer explorer(body.kernelShapeHandle()->shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
+            TopologyRecord record;
+            record.token = m_topology.makeSubshapeToken(body.id(), TopologyKind::Face, ordinal);
+            record.kind = TopologyKind::Face;
+            record.ownerId = body.id();
+            record.ordinal = ordinal;
+            record.signature = signatureFromShape(explorer.Current(), TopologyKind::Face);
+            records.push_back(record);
+            ordinal++;
+        }
+
+        ordinal = 0;
+        for (TopExp_Explorer explorer(body.kernelShapeHandle()->shape, TopAbs_EDGE); explorer.More(); explorer.Next()) {
+            TopologyRecord record;
+            record.token = m_topology.makeSubshapeToken(body.id(), TopologyKind::Edge, ordinal);
+            record.kind = TopologyKind::Edge;
+            record.ownerId = body.id();
+            record.ordinal = ordinal;
+            record.signature = signatureFromShape(explorer.Current(), TopologyKind::Edge);
+            records.push_back(record);
+            ordinal++;
+        }
+
+        ordinal = 0;
+        for (TopExp_Explorer explorer(body.kernelShapeHandle()->shape, TopAbs_VERTEX); explorer.More(); explorer.Next()) {
+            TopologyRecord record;
+            record.token = m_topology.makeSubshapeToken(body.id(), TopologyKind::Vertex, ordinal);
+            record.kind = TopologyKind::Vertex;
+            record.ownerId = body.id();
+            record.ordinal = ordinal;
+            record.signature = signatureFromShape(explorer.Current(), TopologyKind::Vertex);
+            records.push_back(record);
+            ordinal++;
+        }
+        return records;
+    }
+#endif
+
+    records.push_back(bodyRecord);
+    return records;
 }
 
 EntityId Document::nextEntityId() {

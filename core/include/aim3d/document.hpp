@@ -1,16 +1,17 @@
 #pragma once
 
+#include "aim3d/history_tree.hpp"
+#include "aim3d/topo_naming.hpp"
+
 #include <string>
 #include <vector>
 #include <memory>
 #include <array>
-#include <cstdint>
 #include <mutex>
 #include <utility>
 
 namespace aim3d {
 
-using EntityId = std::uint64_t;
 struct KernelShape;
 
 enum class GeometryFormat {
@@ -156,14 +157,41 @@ public:
 
     bool save(const std::string& path);
     std::shared_ptr<BRepBody> importGeometry(const std::string& path);
+    bool replaceBodyGeometry(EntityId bodyId, const std::string& path);
+    bool applySplitEdit(EntityId bodyId, double splitX);
+    bool applyOffsetEdit(EntityId bodyId, double offset);
+    std::string addSplitEditFeature(EntityId bodyId, double splitX);
+    std::string addOffsetEditFeature(EntityId bodyId, double offset);
+    bool recomputeHistory();
     bool exportGeometry(const std::string& path) const;
     std::vector<BodyInspection> inspectBodies() const;
+    const TopologicalNaming& topology() const { return m_topology; }
+    const HistoryTree& history() const { return m_history; }
+    HistoryTree& history() { return m_history; }
 
 private:
+    enum class TopologyEditType {
+        Split,
+        Offset
+    };
+
+    struct TopologyEditFeature {
+        std::string featureId;
+        TopologyEditType type = TopologyEditType::Split;
+        EntityId bodyId = 0;
+        double value = 0.0;
+        std::shared_ptr<KernelShape> sourceShape;
+    };
+
     EntityId nextEntityId();
     static GeometryFormat detectFormat(const std::string& path);
     static const char* formatName(GeometryFormat format);
     bool saveNativeDocument(const std::string& path) const;
+    void registerBodyTopology(const std::shared_ptr<BRepBody>& body);
+    std::vector<TopologyRecord> buildBodyTopologyRecords(const BRepBody& body) const;
+    std::shared_ptr<BRepBody> findBody(EntityId bodyId) const;
+    bool applySplitEditUnlocked(EntityId bodyId, double splitX, const std::string& featureId, std::shared_ptr<KernelShape> sourceShape);
+    bool applyOffsetEditUnlocked(EntityId bodyId, double offset, const std::string& featureId, std::shared_ptr<KernelShape> sourceShape);
 
     EntityId m_id = 0;
     EntityId m_nextEntityId = 1;
@@ -171,6 +199,9 @@ private:
     bool m_dirty = false;
     std::shared_ptr<DesignProduct> m_design;
     std::shared_ptr<CamProduct> m_cam;
+    TopologicalNaming m_topology;
+    HistoryTree m_history;
+    std::vector<TopologyEditFeature> m_topologyEditFeatures;
     mutable std::mutex m_mutex;
 };
 
