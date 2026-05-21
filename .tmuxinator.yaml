@@ -1,0 +1,23 @@
+name: aim3d
+root: .
+
+startup_window: dev
+on_project_start: make deps
+
+windows:
+  - dev:
+      layout: tiled
+      panes:
+        - core:
+            - watchman-make --root . -p 'CMakeLists.txt' 'core/CMakeLists.txt' 'core/**/*.hpp' 'core/**/*.cpp' -t test-core
+        - frontend:
+            - cd ui/frontend
+            - npm run dev -- --host 127.0.0.1 --port 1420
+        - tauri:
+            - cd ui
+            - sleep 3
+            - npm run dev
+        - python:
+            - watchman-make --root . --make '.venv/bin/python -m pytest' -p 'python/**/*.py' -t python/tests
+        - simulation:
+            - watchman-make --root . --make '.venv/bin/python -m pytest' -p 'simulation/**/*.py' -t simulation/tests

@@ -1,0 +1,11 @@
+{
+  "ignore_dirs": [
+    ".git",
+    ".venv",
+    "build",
+    "ui/frontend/dist",
+    "ui/frontend/node_modules",
+    "ui/node_modules",
+    "ui/src-tauri/target"
+  ]
+}

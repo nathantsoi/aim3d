@@ -1,9 +1,9 @@
 {
   "build": {
     "beforeDevCommand": "",
-    "beforeBuildCommand": "",
+    "beforeBuildCommand": "cd frontend && npm run build",
     "devPath": "http://localhost:1420",
-    "distDir": "../frontend"
+    "distDir": "../frontend/dist"
   },
   "package": {
     "productName": "aim3d",
@@ -33,16 +33,14 @@
         "entitlements": null,
         "exceptionDomain": "",
         "frameworks": [],
-        "providerBundleIdentifier": null,
         "signingIdentity": null
       },
       "resources": [],
       "shortDescription": "",
-      "targets": "all",
+      "targets": ["app"],
       "windows": {
         "certificateThumbprint": null,
-        "digestAlgorithm": "sha256",
-        "timestampServer": ""
+        "digestAlgorithm": "sha256"
       }
     },
     "security": {

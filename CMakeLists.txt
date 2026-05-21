@@ -18,12 +18,15 @@ endif()
 
 message(STATUS "Configuring aim3d in ${CMAKE_CURRENT_SOURCE_DIR}")
 
-# Build Core and Solvers
-add_subdirectory(core)
-
 # Target options for building tests
 option(BUILD_TESTING "Build unit tests" ON)
 if(BUILD_TESTING)
     enable_testing()
     message(STATUS "Unit tests enabled for aim3d_core")
 endif()
+
+option(AIM3D_ENABLE_OCCT "Enable OpenCASCADE-backed geometry import/export" OFF)
+set(AIM3D_OCCT_DIR "" CACHE PATH "Path to a configured OpenCASCADE/OCCT CMake package")
+
+# Build Core and Solvers
+add_subdirectory(core)

@@ -17,6 +17,22 @@ target_include_directories(aim3d_core PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+if(AIM3D_ENABLE_OCCT)
+    if(AIM3D_OCCT_DIR)
+        list(APPEND CMAKE_PREFIX_PATH "${AIM3D_OCCT_DIR}")
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../opensource/OCCT")
+        message(STATUS "AIM3D_ENABLE_OCCT is ON; local OCCT source exists at ${CMAKE_SOURCE_DIR}/../opensource/OCCT")
+        message(STATUS "Set AIM3D_OCCT_DIR to a configured OCCT package directory if CMake cannot find OpenCASCADE.")
+    endif()
+
+    find_package(OpenCASCADE CONFIG REQUIRED)
+    target_compile_definitions(aim3d_core PUBLIC AIM3D_HAS_OCCT=1)
+    target_include_directories(aim3d_core PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+    target_link_libraries(aim3d_core PRIVATE ${OpenCASCADE_LIBRARIES})
+else()
+    target_compile_definitions(aim3d_core PUBLIC AIM3D_HAS_OCCT=0)
+endif()
+
 # Set library properties
 set_target_properties(aim3d_core PROPERTIES
     VERSION ${PROJECT_VERSION}
@@ -24,3 +40,11 @@ set_target_properties(aim3d_core PROPERTIES
 )
 
 message(STATUS "Core library target aim3d_core configured with ${CORE_SOURCES}")
+
+if(BUILD_TESTING)
+    add_executable(aim3d_core_tests
+        tests/headless_core_tests.cpp
+    )
+    target_link_libraries(aim3d_core_tests PRIVATE aim3d_core)
+    add_test(NAME aim3d_core_tests COMMAND aim3d_core_tests)
+endif()

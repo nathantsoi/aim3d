@@ -51,21 +51,76 @@ The repository is structured to enable parallelized development across 5 indepen
 ## Build and Getting Started
 
 ### Prerequisites
-- C++17 Compiler (GCC, Clang, or MSVC)
+- C++17 compiler (GCC, Clang, AppleClang, or MSVC)
 - CMake 3.18+
-- Python 3.9+ (with numpy and taichi)
-- Node.js 18+ & Rust (for Tauri frontend)
+- Python 3.9+
+- Node.js 18+ and npm
+- Rust toolchain with Cargo
+- OpenCASCADE/OCCT for native B-rep import/export work. The wiki selects OCCT as the initial kernel and the monorepo includes source at `../opensource/OCCT`; pass `-DAIM3D_ENABLE_OCCT=ON -DAIM3D_OCCT_DIR=/path/to/occt/package` after OCCT has been configured and built.
 
-### Building the Headless Core
+### Standard Commands
 ```bash
-cd core
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cd aim3d
+make build
+make run
+make clean
 ```
 
-### Installing Python Bindings
+The project is managed through the single top-level commands:
+
+- `make build`: installs dependencies, then builds the C++ core, web frontend, and Tauri desktop shell.
+- `make run`: installs dependencies, starts the Vite frontend dev server on `127.0.0.1:1420`, and launches the Tauri shell.
+- `make clean`: removes local build artifacts, the local Python virtualenv, dependency folders, and generated caches.
+
+Python dependencies are installed into a repo-local `.venv` so Homebrew/PEP 668 managed Python installations are not modified.
+
+Run tests with:
+
 ```bash
-cd python
-pip install -e .
+make test
 ```
+
+By default, the core builds without linking OCCT so the scaffold can compile in a clean environment. To require OCCT-backed geometry support:
+
+```bash
+make build AIM3D_ENABLE_OCCT=1 AIM3D_OCCT_DIR=/path/to/occt/cmake/package
+```
+
+The Python package currently exposes the Tier 1/2 scaffold: modern `aim3d.*` modules and Fusion-compatible `adsk.*` facade modules. `taichi` is the intended simulation backend; the current scaffold has a fallback path so the simulation module can import in environments where Taichi is not installed.
+
+### Component Commands
+
+The Makefile also exposes component targets for debugging:
+
+```bash
+make build-core
+make build-frontend
+make build-tauri
+make test-core
+make test-python
+make test-simulation
+```
+
+Use `make deps` directly only when you want to refresh dependencies without building or running the app.
+
+---
+
+## Current Validation Status
+
+- C++ core: `make test-core` is expected to pass from the top-level `aim3d` directory.
+- Python: `make deps` installs the editable package and test dependencies before `make test-python`.
+- Simulation: `make deps` installs Taichi for the intended sparse SDF backend.
+- Frontend/Tauri: `make deps` installs Node packages; Cargo dependency resolution requires network access unless crates are already cached.
+
+---
+
+## Roadmap Step A1: Headless Document Core
+
+The first roadmap milestone is Track A, Milestone A1. The implemented scaffold now includes:
+
+- A headless `Application` that owns document lifecycle, active document state, zero-document behavior, and event dispatch.
+- A `Document` model that owns Design/CAM products, stable entity IDs, dirty state, file path, imported B-rep body records, and inspection metadata.
+- Background geometry task APIs for import and body inspection, with task snapshots and structured event notifications.
+- CTest coverage for document lifecycle, body import/inspection, and async geometry task completion.
+
+Raw OCCT handles must remain behind the C++ core facade. Python, CAM, and UI layers should consume aim3d-owned IDs, serialized state, and contiguous buffers rather than kernel-native types.

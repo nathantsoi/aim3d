@@ -20,7 +20,7 @@ fn open_document(path: String) -> IPCResponse {
 }
 
 #[tauri::command]
-fn solve_2d_sketch(points_json: String, constraints_json: String) -> IPCResponse {
+fn solve_2d_sketch(_points_json: String, _constraints_json: String) -> IPCResponse {
     println!("[Tauri Rust IPC] Invoking headless core 2D constraint solver.");
     IPCResponse {
         status: "success".to_string(),
@@ -40,7 +40,7 @@ fn generate_toolpath(operation_id: String) -> IPCResponse {
 }
 
 #[tauri::command]
-fn run_simulation(gcode: String) -> IPCResponse {
+fn run_simulation(_gcode: String) -> IPCResponse {
     println!("[Tauri Rust IPC] Triggering Volumetric Taichi SDF Simulation sweep.");
     IPCResponse {
         status: "success".to_string(),
