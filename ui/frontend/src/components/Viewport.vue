@@ -102,7 +102,7 @@ export default defineComponent({
       };
 
       // Direct low-latency selection picking (<16ms pick boundary)
-      canvas.addEventListener('click', (e) => {
+      canvas.addEventListener('click', async (e) => {
         const rect = canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
@@ -113,9 +113,9 @@ export default defineComponent({
         // Checks boundary interaction triggers
         if (mouseX >= bodyX && mouseX <= bodyX + 240 && mouseY >= bodyY && mouseY <= bodyY + 160) {
           // Resolved stable Face ID via TNP database mapping
-          store.selectEntity('feat_Extrude_1_face_0');
+          await store.selectEntity('feat_Extrude_1_face_0');
         } else {
-          store.selectEntity(null);
+          await store.selectEntity(null);
         }
         drawMockScene();
       });

@@ -1,51 +1,89 @@
 <template>
   <div class="timeline-panel">
     <div class="panel-header">
-      <h2>Model History</h2>
+      <h2>Model Tree</h2>
     </div>
 
-    <!-- Tree-view structure representing CAD feature operations -->
-    <div class="tree-container">
-      <div class="tree-title">Parametric History Tree</div>
+    <section class="tree-container">
+      <div class="tree-title">{{ store.documentPath }}</div>
       <div class="tree-list">
-        <div 
-          v-for="(feat, index) in store.features" 
-          :key="feat.id" 
+        <button
+          v-for="feature in store.features"
+          :key="feature.id"
           class="tree-node"
-          :class="{ 
-            dirty: feat.isDirty,
-            selected: store.selectedEntityId === feat.id + '_face_0'
+          :class="{
+            dirty: feature.isDirty,
+            selected: store.selectedEntityId === feature.selectionToken
           }"
-          @click="onNodeClick(feat.id + '_face_0')"
+          data-testid="feature-tree-node"
+          @click="onNodeClick(feature.selectionToken)"
         >
-          <div class="node-indicator"></div>
-          <div class="node-content">
-            <span class="node-type">{{ feat.type }}</span>
-            <span class="node-id">{{ feat.id }}</span>
-          </div>
-          <div class="node-param">{{ feat.value }}</div>
+          <span class="node-indicator"></span>
+          <span class="node-content">
+            <span class="node-type">{{ feature.label }}</span>
+            <span class="node-id">{{ feature.id }}</span>
+          </span>
+          <span class="node-param">{{ feature.value }}</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="tree-container">
+      <div class="tree-title">Setups</div>
+      <div v-for="setup in store.setups" :key="setup.id" class="setup-group">
+        <button
+          class="tree-node setup-node"
+          :class="{ dirty: setup.isDirty, selected: store.selectedEntityId === setup.id }"
+          data-testid="setup-tree-node"
+          @click="onNodeClick(setup.id)"
+        >
+          <span class="node-indicator"></span>
+          <span class="node-content">
+            <span class="node-type">{{ setup.name }}</span>
+            <span class="node-id">{{ setup.workOffset }} / {{ setup.units }}</span>
+          </span>
+        </button>
+
+        <div class="operation-list">
+          <button
+            v-for="operation in store.operationsBySetup[setup.id]"
+            :key="operation.id"
+            class="tree-node operation-node"
+            :class="{
+              dirty: operation.isDirty || operation.status === 'Stale',
+              selected: store.selectedEntityId === operation.id
+            }"
+            data-testid="operation-tree-node"
+            @click="onNodeClick(operation.id)"
+          >
+            <span class="node-indicator"></span>
+            <span class="node-content">
+              <span class="node-type">{{ operation.name }}</span>
+              <span class="node-id">{{ operation.type }}</span>
+            </span>
+            <span class="node-param">{{ operation.status }}</span>
+          </button>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Visual timeline track -->
-    <div class="timeline-track-container">
-      <div class="track-header">Timeline Slider</div>
+    <section class="timeline-track-container">
+      <div class="track-header">Timeline</div>
       <div class="track-wrapper">
         <div class="track-line"></div>
-        <div 
-          v-for="(feat, index) in store.features" 
-          :key="'t_' + feat.id"
+        <button
+          v-for="(feature, index) in store.features"
+          :key="'t_' + feature.id"
           class="track-tick"
           :class="{ active: index <= activeIndex }"
+          :title="feature.id"
           @click="activeIndex = index"
-          :title="feat.id"
         >
-          <div class="tick-dot"></div>
-          <span class="tick-label">{{ feat.type }}</span>
-        </div>
+          <span class="tick-dot"></span>
+          <span class="tick-label">{{ feature.type }}</span>
+        </button>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -57,7 +95,7 @@ export default defineComponent({
   name: 'Timeline',
   setup() {
     const store = useCoreStore();
-    const activeIndex = ref(2); // Mock current timeline marker state
+    const activeIndex = ref(2);
 
     const onNodeClick = (entityId) => {
       store.selectEntity(store.selectedEntityId === entityId ? null : entityId);
@@ -83,25 +121,28 @@ export default defineComponent({
 .panel-header h2 {
   font-size: 1rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: hsl(220, 10%, 65%);
   margin: 0 0 10px 0;
   font-weight: 700;
 }
 
-.tree-container {
+.tree-container,
+.setup-group,
+.timeline-track-container {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.tree-title {
+.tree-title,
+.track-header {
   font-size: 0.85rem;
   font-weight: 600;
   color: hsl(220, 10%, 80%);
 }
 
-.tree-list {
+.tree-list,
+.operation-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -109,15 +150,29 @@ export default defineComponent({
   border-left: 1px solid hsla(220, 15%, 25%, 0.4);
 }
 
+.operation-list {
+  margin-left: 16px;
+}
+
+.tree-node,
+.track-tick {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
 .tree-node {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 8px 10px;
   background-color: hsl(220, 15%, 11%);
   border: 1px solid transparent;
   border-radius: 6px;
-  cursor: pointer;
   font-size: 0.75rem;
 }
 
@@ -140,14 +195,9 @@ export default defineComponent({
   height: 6px;
   border-radius: 50%;
   background-color: hsl(220, 10%, 40%);
-  margin-right: 8px;
 }
 
-.selected .node-indicator {
-  background-color: hsl(45, 100%, 55%);
-  box-shadow: 0 0 6px hsl(45, 100%, 55%);
-}
-
+.selected .node-indicator,
 .dirty .node-indicator {
   background-color: hsl(45, 100%, 55%);
 }
@@ -156,34 +206,27 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   flex-grow: 1;
+  min-width: 0;
 }
 
 .node-type {
-  font-weight: 700;
   color: hsl(220, 10%, 90%);
+  font-weight: 700;
 }
 
 .node-id {
-  font-size: 0.65rem;
   color: hsl(220, 10%, 50%);
+  font-size: 0.65rem;
 }
 
 .node-param {
+  color: hsl(200, 100%, 50%);
   font-family: monospace;
   font-weight: 700;
-  color: hsl(200, 100%, 50%);
 }
 
 .timeline-track-container {
-  display: flex;
-  flex-direction: column;
   gap: 12px;
-}
-
-.track-header {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: hsl(220, 10%, 80%);
 }
 
 .track-wrapper {
@@ -209,7 +252,6 @@ export default defineComponent({
   display: flex;
   align-items: center;
   gap: 12px;
-  cursor: pointer;
   z-index: 2;
 }
 
@@ -224,13 +266,12 @@ export default defineComponent({
 .track-tick.active .tick-dot {
   background-color: hsl(200, 100%, 50%);
   border-color: hsla(200, 100%, 50%, 0.3);
-  box-shadow: 0 0 6px hsl(200, 100%, 50%);
 }
 
 .tick-label {
+  color: hsl(220, 10%, 55%);
   font-size: 0.75rem;
   font-weight: 600;
-  color: hsl(220, 10%, 55%);
 }
 
 .active .tick-label {

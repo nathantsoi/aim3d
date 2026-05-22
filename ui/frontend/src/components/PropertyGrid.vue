@@ -2,87 +2,149 @@
   <div class="property-grid">
     <div class="panel-header">
       <h2>Properties & Operations</h2>
+      <span class="dispatch-state">{{ store.isDispatching ? 'Dispatching' : 'Idle' }}</span>
     </div>
 
-    <!-- Active Entity Selection Properties -->
-    <div class="section-container">
+    <section class="section-container">
       <h3>Active Selection</h3>
-      <div v-if="store.selectedEntityId" class="property-card">
+      <div v-if="store.selectedEntity" class="property-card">
         <div class="prop-row">
-          <span class="label">Token ID:</span>
-          <span class="value select-value">{{ store.selectedEntityId }}</span>
+          <span class="label">Token ID</span>
+          <span class="value select-value">{{ store.selectedEntity.id }}</span>
         </div>
         <div class="prop-row">
-          <span class="label">Type:</span>
-          <span class="value">B-rep Exact Face</span>
+          <span class="label">Type</span>
+          <span class="value">{{ store.selectedEntity.type }}</span>
         </div>
         <div class="prop-row">
-          <span class="label">Parent:</span>
-          <span class="value">Body1</span>
+          <span class="label">Parent</span>
+          <span class="value">{{ store.selectedEntity.parentLabel }}</span>
         </div>
       </div>
-      <div v-else class="empty-state">
-        No active B-rep face selected. Hover/Click the blue box in viewport to select.
-      </div>
-    </div>
+      <div v-else class="empty-state">No entity selected</div>
+    </section>
 
-    <!-- Declarative parameter modification -->
-    <div class="section-container">
+    <section class="section-container">
       <h3>Parametric Variables</h3>
       <div class="property-card">
-        <div v-for="feat in store.features" :key="feat.id" class="parameter-row">
+        <div v-for="feature in store.features" :key="feature.id" class="parameter-row">
           <div class="param-header">
-            <span class="param-title">{{ feat.type }} ({{ feat.id }})</span>
-            <span v-if="feat.isDirty" class="dirty-tag">Modified</span>
+            <span class="param-title">{{ feature.label }}</span>
+            <span v-if="feature.isDirty" class="dirty-tag">Modified</span>
           </div>
           <div class="control-box">
-            <input 
-              type="range" 
-              min="1" 
-              max="50" 
+            <input
+              :aria-label="`${feature.label} value`"
+              data-testid="feature-value"
+              type="range"
+              min="0"
+              max="50"
               step="0.5"
-              :value="feat.value" 
-              @input="e => onParamChange(feat.id, parseFloat(e.target.value))"
+              :value="feature.value"
+              @input="onFeatureInput(feature.id, $event)"
             />
-            <span class="param-value">{{ feat.value }}</span>
+            <span class="param-value">{{ feature.value }} {{ feature.unit }}</span>
           </div>
         </div>
-        <button 
+        <button
           class="recompute-btn"
-          :class="{ active: hasDirtyFeatures }"
+          :class="{ active: store.hasDirtyFeatures }"
+          data-testid="recompute-button"
           @click="store.triggerParametricRecompute"
         >
           Recompute parametric tree
         </button>
       </div>
-    </div>
+    </section>
 
-    <!-- CAM Operation controls & G-code simulation -->
-    <div class="section-container">
-      <h3>CAM & Simulation Controls</h3>
+    <section v-for="setup in store.setups" :key="setup.id" class="section-container">
+      <h3>Setup Sheet</h3>
       <div class="property-card">
-        <div v-for="op in store.operations" :key="op.id" class="cam-op-row">
+        <label class="input-item">
+          <span>Name</span>
+          <input
+            data-testid="setup-name"
+            type="text"
+            :value="setup.name"
+            @change="onSetupField(setup.id, 'name', $event.target.value)"
+          />
+        </label>
+        <label class="input-item">
+          <span>Work Offset</span>
+          <select
+            data-testid="setup-work-offset"
+            :value="setup.workOffset"
+            @change="onSetupField(setup.id, 'workOffset', $event.target.value)"
+          >
+            <option>G54</option>
+            <option>G55</option>
+            <option>G56</option>
+          </select>
+        </label>
+        <label class="input-item">
+          <span>Stock Allowance</span>
+          <input
+            data-testid="setup-stock-allowance"
+            type="number"
+            min="0"
+            step="0.1"
+            :value="setup.stockAllowance"
+            @change="onSetupField(setup.id, 'stockAllowance', parseNumber($event.target.value))"
+          />
+        </label>
+      </div>
+    </section>
+
+    <section class="section-container">
+      <h3>CAM Operations</h3>
+      <div class="property-card">
+        <div v-for="operation in store.operations" :key="operation.id" class="cam-op-row">
           <div class="cam-op-info">
-            <span class="op-name">{{ op.id }}</span>
-            <span class="op-status" :class="op.status.toLowerCase()">{{ op.status }}</span>
+            <div>
+              <span class="op-name">{{ operation.name }}</span>
+              <span class="op-type">{{ operation.type }}</span>
+            </div>
+            <span class="op-status" :class="operation.status.toLowerCase()">{{ operation.status }}</span>
           </div>
           <div class="cam-op-inputs">
-            <div class="input-item">
-              <label>Tool Dia (mm)</label>
-              <input type="number" v-model="op.toolDiameter" step="0.1"/>
-            </div>
-            <div class="input-item">
-              <label>Stepover (mm)</label>
-              <input type="number" v-model="op.stepover" step="0.1"/>
-            </div>
+            <label class="input-item">
+              <span>Tool Dia</span>
+              <input
+                data-testid="operation-tool-diameter"
+                type="number"
+                step="0.1"
+                :value="operation.toolDiameter"
+                @change="onOperationField(operation.id, 'toolDiameter', parseNumber($event.target.value))"
+              />
+            </label>
+            <label class="input-item">
+              <span>Stepover</span>
+              <input
+                data-testid="operation-stepover"
+                type="number"
+                step="0.1"
+                :value="operation.stepover"
+                @change="onOperationField(operation.id, 'stepover', parseNumber($event.target.value))"
+              />
+            </label>
+            <label class="input-item">
+              <span>Feed</span>
+              <input
+                data-testid="operation-feed-rate"
+                type="number"
+                step="10"
+                :value="operation.feedRate"
+                @change="onOperationField(operation.id, 'feedRate', parseNumber($event.target.value))"
+              />
+            </label>
           </div>
           <div class="button-group">
-            <button class="cam-btn" @click="store.runCAMGeneration(op.id)">
+            <button class="cam-btn" data-testid="generate-toolpath" @click="store.runCAMGeneration(operation.id)">
               Generate path
             </button>
-            <button 
-              class="sim-btn" 
-              :disabled="op.status !== 'Ready' || store.isSimulating"
+            <button
+              class="sim-btn"
+              :disabled="operation.status !== 'Ready' || store.isSimulating"
               @click="store.executeSimulation"
             >
               {{ store.isSimulating ? 'Simulating...' : 'SDF Simulate' }}
@@ -90,50 +152,52 @@
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Volumetric simulation feedback reports -->
-    <div v-if="store.simulationStats.materialRemoved > 0" class="section-container animate-fade">
+    <section v-if="store.simulationStats.materialRemoved > 0" class="section-container animate-fade">
       <h3>Taichi Volume Report</h3>
       <div class="property-card status-success">
         <div class="prop-row">
-          <span class="label">Collisions:</span>
+          <span class="label">Collisions</span>
           <span class="value text-success">{{ store.simulationStats.collisions }}</span>
         </div>
         <div class="prop-row">
-          <span class="label">Material Subtracted:</span>
-          <span class="value text-success">{{ store.simulationStats.materialRemoved }} mm³</span>
-        </div>
-        <div class="prop-row">
-          <span class="label">VRAM Usage:</span>
-          <span class="value text-success">0.24 MB (Sparse Pointer)</span>
+          <span class="label">Material Subtracted</span>
+          <span class="value text-success">{{ store.simulationStats.materialRemoved }} mm3</span>
         </div>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
 <script>
-import { defineComponent, computed } from 'vue';
+import { defineComponent } from 'vue';
 import { useCoreStore } from '../store';
 
 export default defineComponent({
   name: 'PropertyGrid',
   setup() {
     const store = useCoreStore();
+    const parseNumber = (value) => Number.parseFloat(value);
 
-    const hasDirtyFeatures = computed(() => {
-      return store.features.some(f => f.isDirty);
-    });
+    const onFeatureInput = (featureId, event) => {
+      store.updateFeatureParameter(featureId, parseNumber(event.target.value));
+    };
 
-    const onParamChange = (featId, value) => {
-      store.updateFeatureParameter(featId, value);
+    const onSetupField = (setupId, path, value) => {
+      store.updateSetupField(setupId, path, value);
+    };
+
+    const onOperationField = (operationId, path, value) => {
+      store.updateOperationField(operationId, path, value);
     };
 
     return {
       store,
-      hasDirtyFeatures,
-      onParamChange
+      parseNumber,
+      onFeatureInput,
+      onSetupField,
+      onOperationField
     };
   }
 });
@@ -147,13 +211,32 @@ export default defineComponent({
   gap: 20px;
 }
 
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .panel-header h2 {
   font-size: 1rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: hsl(220, 10%, 65%);
-  margin: 0 0 10px 0;
+  margin: 0;
   font-weight: 700;
+}
+
+.dispatch-state,
+.dirty-tag,
+.op-status {
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+}
+
+.dispatch-state {
+  background-color: hsla(200, 100%, 50%, 0.12);
+  color: hsl(200, 100%, 60%);
 }
 
 .section-container {
@@ -179,19 +262,27 @@ export default defineComponent({
   gap: 12px;
 }
 
-.prop-row {
+.prop-row,
+.cam-op-info {
   display: flex;
   justify-content: space-between;
+  gap: 12px;
+}
+
+.prop-row {
   font-size: 0.8rem;
 }
 
-.label {
+.label,
+.input-item span,
+.op-type {
   color: hsl(220, 10%, 65%);
 }
 
-.value {
+.value,
+.op-name {
   color: hsl(220, 10%, 90%);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .select-value {
@@ -208,7 +299,9 @@ export default defineComponent({
   border-radius: 8px;
 }
 
-.parameter-row {
+.parameter-row,
+.cam-op-row,
+.input-item {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -227,140 +320,93 @@ export default defineComponent({
 .dirty-tag {
   background-color: hsla(45, 100%, 50%, 0.15);
   color: hsl(45, 100%, 55%);
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 0.65rem;
-  font-weight: 700;
 }
 
-.control-box {
+.control-box,
+.button-group {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.control-box input[type="range"] {
+.control-box input[type='range'] {
   flex-grow: 1;
 }
 
 .param-value {
   font-size: 0.8rem;
   font-weight: 700;
-  width: 32px;
+  min-width: 64px;
   text-align: right;
 }
 
-.recompute-btn {
-  background-color: transparent;
-  color: hsl(220, 10%, 65%);
-  border: 1px solid hsla(220, 15%, 25%, 0.6);
+.input-item {
+  font-size: 0.75rem;
+}
+
+input,
+select {
+  background-color: hsl(220, 20%, 9%);
+  border: 1px solid hsla(220, 15%, 30%, 0.8);
   border-radius: 6px;
-  padding: 8px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.recompute-btn.active {
-  background-color: hsl(200, 100%, 50%);
-  color: hsl(220, 20%, 5%);
-  border-color: hsl(200, 100%, 50%);
-  box-shadow: 0 0 10px hsla(200, 100%, 50%, 0.3);
-}
-
-.cam-op-row {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.cam-op-info {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8rem;
-}
-
-.op-name {
-  font-weight: 700;
-}
-
-.op-status {
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-
-.op-status.stale {
-  background-color: hsla(0, 0%, 50%, 0.15);
-  color: hsl(0, 0%, 75%);
-}
-
-.op-status.ready {
-  background-color: hsla(120, 75%, 45%, 0.15);
-  color: hsl(120, 75%, 55%);
+  color: hsl(220, 10%, 90%);
+  font: inherit;
+  padding: 7px 8px;
 }
 
 .cam-op-inputs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
-.input-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.op-type {
+  display: block;
+  font-size: 0.7rem;
+  margin-top: 2px;
 }
 
-.input-item label {
-  font-size: 0.65rem;
-  color: hsl(220, 10%, 65%);
+.op-status.ready {
+  background-color: hsla(145, 70%, 42%, 0.14);
+  color: hsl(145, 70%, 58%);
 }
 
-.input-item input {
-  background-color: hsl(220, 20%, 9%);
+.op-status.stale {
+  background-color: hsla(45, 100%, 50%, 0.15);
+  color: hsl(45, 100%, 55%);
+}
+
+button {
   border: 1px solid hsla(220, 15%, 25%, 0.6);
-  color: white;
-  border-radius: 4px;
-  padding: 4px 6px;
-  font-size: 0.75rem;
-}
-
-.button-group {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.cam-btn, .sim-btn {
-  background-color: hsla(220, 15%, 25%, 0.6);
-  color: white;
-  border: 1px solid hsla(220, 15%, 35%, 0.4);
-  padding: 6px;
   border-radius: 6px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  color: hsl(220, 10%, 80%);
   cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 8px;
 }
 
-.sim-btn:not(:disabled) {
-  background-color: hsla(120, 75%, 45%, 0.15);
-  color: hsl(120, 75%, 55%);
-  border-color: hsla(120, 75%, 45%, 0.3);
-}
-
-.sim-btn:disabled {
-  opacity: 0.5;
+button:disabled {
   cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.recompute-btn,
+.sim-btn {
+  background-color: transparent;
+}
+
+.recompute-btn.active,
+.cam-btn {
+  background-color: hsla(200, 100%, 50%, 0.15);
+  color: hsl(200, 100%, 62%);
 }
 
 .status-success {
-  background-color: hsla(120, 75%, 45%, 0.05);
-  border-color: hsla(120, 75%, 45%, 0.2);
+  border-color: hsla(145, 70%, 42%, 0.4);
 }
 
 .text-success {
-  color: hsl(120, 75%, 55%);
+  color: hsl(145, 70%, 58%);
 }
 </style>
