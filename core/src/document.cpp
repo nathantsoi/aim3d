@@ -10,6 +10,7 @@
 #include <BRep_Builder.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepGProp.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Tool.hxx>
@@ -20,12 +21,15 @@
 #include <IGESControl_Reader.hxx>
 #include <IGESControl_Writer.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Poly_Triangulation.hxx>
 #include <STEPControl_Reader.hxx>
 #include <STEPControl_Writer.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #endif
 
@@ -251,6 +255,107 @@ bool writeOcctShape(const TopoDS_Shape& shape, const std::string& path, Geometry
     }
 
     throw std::invalid_argument("Unsupported geometry format for export: " + path);
+}
+#endif
+
+ViewportSolidMesh fallbackSolidMesh(EntityId bodyId, const std::string& token) {
+    ViewportSolidMesh mesh;
+    mesh.id = "solid_" + std::to_string(bodyId == 0 ? 1 : bodyId);
+    mesh.bodyId = bodyId;
+    mesh.sourceToken = token.empty() ? "feat_Extrude_1_face_0" : token;
+    mesh.positions = {
+        -1.8f, -1.2f, -0.35f, 1.8f, -1.2f, -0.35f, 1.8f, 1.2f, -0.35f, -1.8f, 1.2f, -0.35f,
+        -1.8f, -1.2f, 0.35f, 1.8f, -1.2f, 0.35f, 1.8f, 1.2f, 0.35f, -1.8f, 1.2f, 0.35f
+    };
+    mesh.normals = {
+        0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f,
+        0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f
+    };
+    mesh.colors = {
+        0.16f, 0.62f, 0.9f, 1.0f, 0.16f, 0.62f, 0.9f, 1.0f, 0.16f, 0.62f, 0.9f, 1.0f, 0.16f, 0.62f, 0.9f, 1.0f,
+        0.2f, 0.72f, 1.0f, 1.0f, 0.2f, 0.72f, 1.0f, 1.0f, 0.2f, 0.72f, 1.0f, 1.0f, 0.2f, 0.72f, 1.0f, 1.0f
+    };
+    mesh.indices = {
+        0, 1, 2, 0, 2, 3,
+        4, 6, 5, 4, 7, 6,
+        0, 4, 5, 0, 5, 1,
+        1, 5, 6, 1, 6, 2,
+        2, 6, 7, 2, 7, 3,
+        3, 7, 4, 3, 4, 0
+    };
+    return mesh;
+}
+
+ViewportToolpath fallbackToolpath() {
+    ViewportToolpath toolpath;
+    toolpath.id = "toolpath_op_Pocket_1";
+    toolpath.operationId = "op_Pocket_1";
+    toolpath.status = "Stale";
+    toolpath.points = {
+        -1.4f, -0.8f, 0.55f,
+        -0.4f, -0.8f, 0.55f,
+        -0.4f, 0.1f, 0.55f,
+        0.8f, 0.1f, 0.55f,
+        0.8f, 0.8f, 0.55f,
+        1.4f, 0.8f, 0.55f
+    };
+    return toolpath;
+}
+
+std::vector<ViewportAxis> defaultAxes() {
+    return {
+        {"axis_x", "X", {0.95f, 0.18f, 0.2f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.1f, 0.0f, 0.0f}},
+        {"axis_y", "Y", {0.2f, 0.82f, 0.28f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f, 1.1f, 0.0f}},
+        {"axis_z", "Z", {0.28f, 0.48f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.1f}}
+    };
+}
+
+#if AIM3D_HAS_OCCT
+ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& token) {
+    ViewportSolidMesh mesh;
+    mesh.id = "solid_" + std::to_string(body.id());
+    mesh.bodyId = body.id();
+    mesh.sourceToken = token;
+
+    const auto kernelShape = body.kernelShapeHandle();
+    if (!kernelShape || kernelShape->shape.IsNull()) {
+        return mesh;
+    }
+
+    BRepMesh_IncrementalMesh mesher(kernelShape->shape, 0.5, false, 0.5, true);
+    mesher.Perform();
+
+    for (TopExp_Explorer explorer(kernelShape->shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
+        TopLoc_Location location;
+        const auto face = TopoDS::Face(explorer.Current());
+        const Handle(Poly_Triangulation) triangulation = BRep_Tool::Triangulation(face, location);
+        if (triangulation.IsNull()) {
+            continue;
+        }
+
+        const auto transform = location.Transformation();
+        const auto baseIndex = static_cast<std::uint32_t>(mesh.positions.size() / 3);
+        for (int nodeIndex = 1; nodeIndex <= triangulation->NbNodes(); ++nodeIndex) {
+            const auto point = triangulation->Node(nodeIndex).Transformed(transform);
+            mesh.positions.push_back(static_cast<float>(point.X()));
+            mesh.positions.push_back(static_cast<float>(point.Y()));
+            mesh.positions.push_back(static_cast<float>(point.Z()));
+            mesh.normals.insert(mesh.normals.end(), {0.0f, 0.0f, 1.0f});
+            mesh.colors.insert(mesh.colors.end(), {0.2f, 0.72f, 1.0f, 1.0f});
+        }
+
+        for (int triangleIndex = 1; triangleIndex <= triangulation->NbTriangles(); ++triangleIndex) {
+            int a = 0;
+            int b = 0;
+            int c = 0;
+            triangulation->Triangle(triangleIndex).Get(a, b, c);
+            mesh.indices.push_back(baseIndex + static_cast<std::uint32_t>(a - 1));
+            mesh.indices.push_back(baseIndex + static_cast<std::uint32_t>(b - 1));
+            mesh.indices.push_back(baseIndex + static_cast<std::uint32_t>(c - 1));
+        }
+    }
+
+    return mesh.indices.empty() ? fallbackSolidMesh(body.id(), token) : mesh;
 }
 #endif
 
@@ -504,6 +609,40 @@ std::vector<BodyInspection> Document::inspectBodies() const {
         inspections.push_back(body->inspect());
     }
     return inspections;
+}
+
+ViewportScene Document::viewportScene() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    ViewportScene scene;
+
+    for (const auto& body : m_design->rootComponent()->bRepBodies()) {
+        if (!body) {
+            continue;
+        }
+        const auto token = m_topology.makeSubshapeToken(body->id(), TopologyKind::Face, 0).value;
+#if AIM3D_HAS_OCCT
+        scene.solids.push_back(meshFromOcctBody(*body, token));
+#else
+        scene.solids.push_back(fallbackSolidMesh(body->id(), token));
+#endif
+    }
+
+    if (scene.solids.empty()) {
+        scene.solids.push_back(fallbackSolidMesh(0, "feat_Extrude_1_face_0"));
+    }
+
+    scene.toolpaths.push_back(fallbackToolpath());
+    scene.axes = defaultAxes();
+
+    for (const auto& solid : scene.solids) {
+        scene.diagnostics.triangleCount += solid.indices.size() / 3;
+    }
+    for (const auto& toolpath : scene.toolpaths) {
+        scene.diagnostics.segmentCount += toolpath.points.size() >= 6 ? (toolpath.points.size() / 3) - 1 : 0;
+    }
+    scene.diagnostics.segmentCount += scene.axes.size();
+    scene.diagnostics.drawCount = (scene.solids.empty() ? 0 : 1) + (scene.toolpaths.empty() && scene.axes.empty() ? 0 : 1);
+    return scene;
 }
 
 std::shared_ptr<BRepBody> Document::findBody(EntityId bodyId) const {

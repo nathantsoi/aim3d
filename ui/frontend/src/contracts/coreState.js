@@ -6,6 +6,84 @@ export const ACTION_TYPES = Object.freeze({
   RUN_SIMULATION: 'sim.runSimulation'
 });
 
+const identityTransform = [
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1
+];
+
+export const createDefaultViewportScene = () => ({
+  solids: [
+    {
+      id: 'solid_MainPocket_1',
+      bodyId: 2,
+      sourceToken: 'feat_Extrude_1_face_0',
+      positions: [
+        -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
+        -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
+      ],
+      normals: [
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+        0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1
+      ],
+      colors: [
+        0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1,
+        0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1
+      ],
+      indices: [
+        0, 1, 2, 0, 2, 3,
+        4, 6, 5, 4, 7, 6,
+        0, 4, 5, 0, 5, 1,
+        1, 5, 6, 1, 6, 2,
+        2, 6, 7, 2, 7, 3,
+        3, 7, 4, 3, 4, 0
+      ],
+      transform: identityTransform
+    }
+  ],
+  toolpaths: [
+    {
+      id: 'toolpath_op_Pocket_1',
+      operationId: 'op_Pocket_1',
+      status: 'Stale',
+      color: [1, 0.74, 0.18, 1],
+      points: [
+        -1.4, -0.8, 0.55,
+        -0.4, -0.8, 0.55,
+        -0.4, 0.1, 0.55,
+        0.8, 0.1, 0.55,
+        0.8, 0.8, 0.55,
+        1.4, 0.8, 0.55
+      ]
+    }
+  ],
+  gizmos: {
+    axes: [
+      { id: 'axis_x', label: 'X', color: [0.95, 0.18, 0.2, 1], points: [0, 0, 0, 1.1, 0, 0] },
+      { id: 'axis_y', label: 'Y', color: [0.2, 0.82, 0.28, 1], points: [0, 0, 0, 0, 1.1, 0] },
+      { id: 'axis_z', label: 'Z', color: [0.28, 0.48, 1, 1], points: [0, 0, 0, 0, 0, 1.1] }
+    ],
+    workOrigin: [0, 0, 0]
+  },
+  camera: {
+    target: [0, 0, 0],
+    distance: 5.2,
+    yaw: 0.72,
+    pitch: 0.62,
+    near: 0.01,
+    far: 100
+  },
+  diagnostics: {
+    webgpuAvailable: false,
+    frameTimeMs: 0,
+    fps: 0,
+    drawCount: 0,
+    triangleCount: 12,
+    segmentCount: 8
+  }
+});
+
 export const createInitialCoreState = () => ({
   activeDocumentId: 'doc_1001',
   documentPath: 'Untitled.a3d',
@@ -78,7 +156,8 @@ export const createInitialCoreState = () => ({
   ],
   gcode: '; No code posted',
   isSimulating: false,
-  simulationStats: { collisions: 0, materialRemoved: 0 }
+  simulationStats: { collisions: 0, materialRemoved: 0 },
+  viewportScene: createDefaultViewportScene()
 });
 
 export const cloneCoreState = (state) => JSON.parse(JSON.stringify(state));
@@ -177,6 +256,38 @@ const applyFieldUpdate = (state, action) => {
   }
 };
 
+const syncViewportScene = (state) => {
+  if (!state.viewportScene) {
+    state.viewportScene = createDefaultViewportScene();
+  }
+
+  const readyOperationIds = new Set(
+    state.operations
+      .filter((operation) => operation.status === 'Ready')
+      .map((operation) => operation.id)
+  );
+
+  state.viewportScene.toolpaths.forEach((toolpath) => {
+    toolpath.status = readyOperationIds.has(toolpath.operationId) ? 'Ready' : 'Stale';
+  });
+
+  const triangleCount = state.viewportScene.solids.reduce(
+    (count, solid) => count + Math.floor((solid.indices?.length ?? 0) / 3),
+    0
+  );
+  const toolpathSegments = state.viewportScene.toolpaths.reduce(
+    (count, toolpath) => count + Math.max(0, Math.floor((toolpath.points?.length ?? 0) / 3) - 1),
+    0
+  );
+  const axisSegments = state.viewportScene.gizmos?.axes?.length ?? 0;
+
+  state.viewportScene.diagnostics = {
+    ...state.viewportScene.diagnostics,
+    triangleCount,
+    segmentCount: toolpathSegments + axisSegments
+  };
+};
+
 export const applyMockCoreAction = (currentState, action) => {
   const state = cloneCoreState(currentState);
 
@@ -187,6 +298,7 @@ export const applyMockCoreAction = (currentState, action) => {
 
   if (action.type === ACTION_TYPES.UPDATE_FIELD) {
     applyFieldUpdate(state, action);
+    syncViewportScene(state);
   }
 
   if (action.type === ACTION_TYPES.RECOMPUTE_DOCUMENT) {
@@ -199,6 +311,7 @@ export const applyMockCoreAction = (currentState, action) => {
     state.operations.forEach((operation) => {
       operation.isDirty = false;
     });
+    syncViewportScene(state);
   }
 
   if (action.type === ACTION_TYPES.GENERATE_TOOLPATH) {
@@ -215,6 +328,7 @@ export const applyMockCoreAction = (currentState, action) => {
       'G1 X24 Y8 Z-2',
       'M30'
     ].join('\n');
+    syncViewportScene(state);
   }
 
   if (action.type === ACTION_TYPES.RUN_SIMULATION) {
@@ -222,5 +336,6 @@ export const applyMockCoreAction = (currentState, action) => {
     state.simulationStats = { collisions: 0, materialRemoved: 1420.5 };
   }
 
+  syncViewportScene(state);
   return state;
 };

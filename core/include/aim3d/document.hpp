@@ -7,6 +7,7 @@
 #include <vector>
 #include <memory>
 #include <array>
+#include <cstdint>
 #include <mutex>
 #include <utility>
 
@@ -39,6 +40,63 @@ struct BodyInspection {
     std::size_t faceCount = 0;
     std::size_t edgeCount = 0;
     std::size_t vertexCount = 0;
+};
+
+struct ViewportSolidMesh {
+    std::string id;
+    EntityId bodyId = 0;
+    std::string sourceToken;
+    std::vector<float> positions;
+    std::vector<float> normals;
+    std::vector<float> colors;
+    std::vector<std::uint32_t> indices;
+    std::array<float, 16> transform = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+    };
+};
+
+struct ViewportToolpath {
+    std::string id;
+    std::string operationId;
+    std::string status;
+    std::array<float, 4> color = {1.0f, 0.74f, 0.18f, 1.0f};
+    std::vector<float> points;
+};
+
+struct ViewportAxis {
+    std::string id;
+    std::string label;
+    std::array<float, 4> color = {1.0f, 1.0f, 1.0f, 1.0f};
+    std::vector<float> points;
+};
+
+struct ViewportCamera {
+    std::array<float, 3> target = {0.0f, 0.0f, 0.0f};
+    float distance = 5.2f;
+    float yaw = 0.72f;
+    float pitch = 0.62f;
+    float nearPlane = 0.01f;
+    float farPlane = 100.0f;
+};
+
+struct ViewportDiagnostics {
+    bool webgpuAvailable = false;
+    float frameTimeMs = 0.0f;
+    float fps = 0.0f;
+    std::size_t drawCount = 0;
+    std::size_t triangleCount = 0;
+    std::size_t segmentCount = 0;
+};
+
+struct ViewportScene {
+    std::vector<ViewportSolidMesh> solids;
+    std::vector<ViewportToolpath> toolpaths;
+    std::vector<ViewportAxis> axes;
+    ViewportCamera camera;
+    ViewportDiagnostics diagnostics;
 };
 
 class BRepBody {
@@ -165,6 +223,7 @@ public:
     bool recomputeHistory();
     bool exportGeometry(const std::string& path) const;
     std::vector<BodyInspection> inspectBodies() const;
+    ViewportScene viewportScene() const;
     const TopologicalNaming& topology() const { return m_topology; }
     const HistoryTree& history() const { return m_history; }
     HistoryTree& history() { return m_history; }

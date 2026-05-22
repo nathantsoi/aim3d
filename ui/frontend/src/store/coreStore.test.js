@@ -11,6 +11,9 @@ describe('core store action gateway', () => {
   it('dispatches feature edits as stable JSON actions', async () => {
     const store = useCoreStore();
 
+    expect(store.viewportScene.solids[0].sourceToken).toBe('feat_Extrude_1_face_0');
+    expect(store.viewportScene.toolpaths[0].operationId).toBe('op_Pocket_1');
+
     await store.updateFeatureParameter('feat_Extrude_1', 14.5);
 
     expect(store.lastDispatchedAction).toMatchObject({
@@ -60,6 +63,8 @@ describe('core store action gateway', () => {
 
     await store.runCAMGeneration('op_Pocket_1');
     expect(store.operations.find((operation) => operation.id === 'op_Pocket_1').status).toBe('Ready');
+    expect(store.viewportScene.toolpaths.find((toolpath) => toolpath.operationId === 'op_Pocket_1').status).toBe('Ready');
+    expect(store.viewportScene.diagnostics.triangleCount).toBeGreaterThan(0);
     expect(store.gcode).toContain('op_Pocket_1');
   });
 });

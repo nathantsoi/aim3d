@@ -583,6 +583,26 @@ void test_sketch_solver_c_abi_smoke() {
     assert(result.degrees_of_freedom > 0);
 }
 
+void test_viewport_scene_has_renderable_buffers() {
+    aim3d::Application app;
+    auto doc = app.createDocument();
+#if AIM3D_HAS_OCCT
+    doc->importGeometry(write_box_fixture("viewport-scene-box.brep"));
+#endif
+
+    const auto scene = doc->viewportScene();
+    assert(!scene.solids.empty());
+    assert(!scene.toolpaths.empty());
+    assert(scene.axes.size() == 3);
+    assert(!scene.solids[0].positions.empty());
+    assert(!scene.solids[0].indices.empty());
+    assert(scene.solids[0].positions.size() % 3 == 0);
+    assert(scene.solids[0].indices.size() % 3 == 0);
+    assert(!scene.solids[0].sourceToken.empty());
+    assert(scene.diagnostics.triangleCount == scene.solids[0].indices.size() / 3);
+    assert(scene.diagnostics.segmentCount >= 3);
+}
+
 }
 
 int main() {
@@ -614,5 +634,6 @@ int main() {
     test_sketch_solver_fixed_and_underconstrained_dof();
     test_sketch_solver_inconsistent_constraints();
     test_sketch_solver_c_abi_smoke();
+    test_viewport_scene_has_renderable_buffers();
     return 0;
 }

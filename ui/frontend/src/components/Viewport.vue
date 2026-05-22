@@ -1,25 +1,29 @@
 <template>
   <div class="viewport-container">
-    <!-- 3D Graphics Canvas context -->
     <canvas ref="canvas3D" class="graphics-canvas"></canvas>
+    <div v-if="fallbackMessage" class="viewport-fallback glass" data-testid="webgpu-fallback">
+      {{ fallbackMessage }}
+    </div>
 
-    <!-- Overlay widgets -->
     <div class="viewport-overlay glass">
       <div class="stat-row">
         <span class="label">Graphics Context:</span>
-        <span class="value accent-text">WebGPU (wgpu)</span>
+        <span class="value accent-text">{{ diagnostics.webgpuAvailable ? 'WebGPU' : 'Unavailable' }}</span>
       </div>
       <div class="stat-row">
         <span class="label">Render Latency:</span>
-        <span class="value">1.4 ms (60 FPS)</span>
+        <span class="value">{{ diagnostics.frameTimeMs.toFixed(1) }} ms ({{ Math.round(diagnostics.fps) }} FPS)</span>
+      </div>
+      <div class="stat-row">
+        <span class="label">Scene:</span>
+        <span class="value">{{ diagnostics.triangleCount }} tris / {{ diagnostics.segmentCount }} lines</span>
       </div>
       <div class="stat-row">
         <span class="label">Selected Entity:</span>
-        <span class="value highlight-text">{{ store.selectedEntityId || 'None (Hover/Click face)' }}</span>
+        <span class="value highlight-text">{{ store.selectedEntityId || 'None' }}</span>
       </div>
     </div>
 
-    <!-- Viewport navigation cube -->
     <div class="nav-cube glass">
       <span>TOP</span>
     </div>
@@ -27,105 +31,204 @@
 </template>
 
 <script>
-import { defineComponent, onMounted, ref } from 'vue';
+import { defineComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useCoreStore } from '../store';
+import { createWebGpuViewportRenderer } from '../services/webgpuRenderer';
 
 export default defineComponent({
   name: 'Viewport',
   setup() {
     const canvas3D = ref(null);
+    const fallbackMessage = ref('');
+    const diagnostics = reactive({
+      webgpuAvailable: false,
+      frameTimeMs: 0,
+      fps: 0,
+      drawCount: 0,
+      triangleCount: 0,
+      segmentCount: 0
+    });
     const store = useCoreStore();
+    let renderer = null;
+    let animationFrame = null;
+    let disposed = false;
+    let dragState = null;
+    let suppressNextClick = false;
 
-    onMounted(() => {
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+    const ensureCamera = () => {
+      if (!store.viewportScene.camera) {
+        store.viewportScene.camera = {
+          target: [0, 0, 0],
+          distance: 5,
+          yaw: 0.7,
+          pitch: 0.6,
+          near: 0.01,
+          far: 100
+        };
+      }
+      return store.viewportScene.camera;
+    };
+
+    const panCamera = (camera, deltaX, deltaY, rect) => {
+      const scale = camera.distance / Math.max(1, Math.min(rect.width, rect.height));
+      const yaw = camera.yaw ?? 0;
+      const pitch = camera.pitch ?? 0;
+      const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
+      const up = [
+        -Math.sin(pitch) * Math.sin(yaw),
+        Math.cos(pitch),
+        -Math.sin(pitch) * Math.cos(yaw)
+      ];
+      camera.target = [
+        camera.target[0] - right[0] * deltaX * scale + up[0] * deltaY * scale,
+        camera.target[1] - right[1] * deltaX * scale + up[1] * deltaY * scale,
+        camera.target[2] - right[2] * deltaX * scale + up[2] * deltaY * scale
+      ];
+    };
+
+    const applyDiagnostics = (nextDiagnostics) => {
+      Object.assign(diagnostics, nextDiagnostics);
+      if (store.viewportScene?.diagnostics) {
+        Object.assign(store.viewportScene.diagnostics, nextDiagnostics);
+      }
+    };
+
+    const renderLoop = () => {
+      if (disposed || !renderer?.available) return;
+      renderer.updateScene(store.viewportScene, store.selectedEntityId);
+      renderer.render(store.viewportScene);
+      animationFrame = requestAnimationFrame(renderLoop);
+    };
+
+    const resize = () => {
+      renderer?.resize?.();
+    };
+
+    const handleSelectionClick = async (event) => {
+      if (suppressNextClick) {
+        suppressNextClick = false;
+        return;
+      }
       const canvas = canvas3D.value;
-      const ctx = canvas.getContext('2d'); // Mock 3D projection rendering in 2D
-      
-      const resizeCanvas = () => {
-        canvas.width = canvas.parentElement.clientWidth;
-        canvas.height = canvas.parentElement.clientHeight;
-        drawMockScene();
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const insideScene = x >= rect.width * 0.2
+        && x <= rect.width * 0.8
+        && y >= rect.height * 0.18
+        && y <= rect.height * 0.82;
+      const firstSolidToken = store.viewportScene?.solids?.[0]?.sourceToken ?? null;
+      await store.selectEntity(insideScene ? firstSolidToken : null);
+    };
+
+    const handlePointerDown = (event) => {
+      if (!store.viewportScene?.camera) return;
+      const mode = event.button === 1 || event.button === 2 || event.shiftKey ? 'pan' : 'orbit';
+      dragState = {
+        mode,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        lastX: event.clientX,
+        lastY: event.clientY,
+        moved: false
       };
+      canvas3D.value.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    };
 
-      const drawMockScene = () => {
-        if (!ctx) return;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const handlePointerMove = (event) => {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      const camera = ensureCamera();
+      const deltaX = event.clientX - dragState.lastX;
+      const deltaY = event.clientY - dragState.lastY;
+      const totalMove = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY);
+      if (totalMove > 4) {
+        dragState.moved = true;
+      }
 
-        // Draw spatial grid lines
-        ctx.strokeStyle = 'hsla(220, 15%, 25%, 0.3)';
-        ctx.lineWidth = 1;
-        const spacing = 40;
-        for (let x = 0; x < canvas.width; x += spacing) {
-          ctx.beginPath();
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, canvas.height);
-          ctx.stroke();
-        }
-        for (let y = 0; y < canvas.height; y += spacing) {
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(canvas.width, y);
-          ctx.stroke();
-        }
+      if (dragState.mode === 'pan') {
+        panCamera(camera, deltaX, deltaY, canvas3D.value.getBoundingClientRect());
+      } else {
+        camera.yaw = (camera.yaw ?? 0) + deltaX * 0.008;
+        camera.pitch = clamp((camera.pitch ?? 0) - deltaY * 0.008, -1.45, 1.45);
+      }
 
-        // Draw standard geometric solid body
-        ctx.fillStyle = 'hsla(200, 100%, 50%, 0.1)';
-        ctx.strokeStyle = 'hsl(200, 100%, 50%)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.rect(canvas.width / 2 - 120, canvas.height / 2 - 80, 240, 160);
-        ctx.fill();
-        ctx.stroke();
+      dragState.lastX = event.clientX;
+      dragState.lastY = event.clientY;
+      event.preventDefault();
+    };
 
-        // Highlight selected topological shape
-        if (store.selectedEntityId === 'feat_Extrude_1_face_0') {
-          ctx.fillStyle = 'hsla(200, 100%, 50%, 0.35)';
-          ctx.strokeStyle = 'hsl(200, 100%, 65%)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.rect(canvas.width / 2 - 120, canvas.height / 2 - 80, 240, 160);
-          ctx.fill();
-          ctx.stroke();
-        }
+    const handlePointerUp = (event) => {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      suppressNextClick = dragState.moved;
+      canvas3D.value.releasePointerCapture?.(event.pointerId);
+      dragState = null;
+    };
 
-        // Draw coordinate axes
-        ctx.strokeStyle = 'hsl(0, 85%, 55%)'; // X-axis (Red)
-        ctx.beginPath();
-        ctx.moveTo(30, canvas.height - 30);
-        ctx.lineTo(90, canvas.height - 30);
-        ctx.stroke();
+    const handleWheel = (event) => {
+      const camera = ensureCamera();
+      const zoomFactor = Math.exp(event.deltaY * 0.001);
+      camera.distance = clamp((camera.distance ?? 5) * zoomFactor, 0.6, 80);
+      event.preventDefault();
+    };
 
-        ctx.strokeStyle = 'hsl(120, 75%, 45%)'; // Y-axis (Green)
-        ctx.beginPath();
-        ctx.moveTo(30, canvas.height - 30);
-        ctx.lineTo(30, canvas.height - 90);
-        ctx.stroke();
-      };
+    const preventContextMenu = (event) => {
+      event.preventDefault();
+    };
 
-      // Direct low-latency selection picking (<16ms pick boundary)
-      canvas.addEventListener('click', async (e) => {
-        const rect = canvas.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
+    onMounted(async () => {
+      await nextTick();
+      renderer = await createWebGpuViewportRenderer(canvas3D.value, applyDiagnostics);
+      if (!renderer.available) {
+        fallbackMessage.value = renderer.reason;
+        applyDiagnostics({
+          ...store.viewportScene.diagnostics,
+          webgpuAvailable: false
+        });
+        return;
+      }
 
-        const bodyX = canvas.width / 2 - 120;
-        const bodyY = canvas.height / 2 - 80;
-        
-        // Checks boundary interaction triggers
-        if (mouseX >= bodyX && mouseX <= bodyX + 240 && mouseY >= bodyY && mouseY <= bodyY + 160) {
-          // Resolved stable Face ID via TNP database mapping
-          await store.selectEntity('feat_Extrude_1_face_0');
-        } else {
-          await store.selectEntity(null);
-        }
-        drawMockScene();
-      });
+      fallbackMessage.value = '';
+      canvas3D.value.addEventListener('click', handleSelectionClick);
+      canvas3D.value.addEventListener('pointerdown', handlePointerDown);
+      canvas3D.value.addEventListener('pointermove', handlePointerMove);
+      canvas3D.value.addEventListener('pointerup', handlePointerUp);
+      canvas3D.value.addEventListener('pointercancel', handlePointerUp);
+      canvas3D.value.addEventListener('wheel', handleWheel, { passive: false });
+      canvas3D.value.addEventListener('contextmenu', preventContextMenu);
+      window.addEventListener('resize', resize);
+      renderLoop();
+    });
 
-      window.addEventListener('resize', resizeCanvas);
-      resizeCanvas();
+    watch(
+      () => [store.viewportScene, store.selectedEntityId],
+      () => {
+        renderer?.updateScene?.(store.viewportScene, store.selectedEntityId);
+      },
+      { deep: true }
+    );
+
+    onUnmounted(() => {
+      disposed = true;
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      canvas3D.value?.removeEventListener('click', handleSelectionClick);
+      canvas3D.value?.removeEventListener('pointerdown', handlePointerDown);
+      canvas3D.value?.removeEventListener('pointermove', handlePointerMove);
+      canvas3D.value?.removeEventListener('pointerup', handlePointerUp);
+      canvas3D.value?.removeEventListener('pointercancel', handlePointerUp);
+      canvas3D.value?.removeEventListener('wheel', handleWheel);
+      canvas3D.value?.removeEventListener('contextmenu', preventContextMenu);
+      window.removeEventListener('resize', resize);
+      renderer?.destroy?.();
     });
 
     return {
       canvas3D,
+      diagnostics,
+      fallbackMessage,
       store
     };
   }
@@ -144,6 +247,21 @@ export default defineComponent({
   display: block;
   width: 100%;
   height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.graphics-canvas:active {
+  cursor: grabbing;
+}
+
+.viewport-fallback {
+  position: absolute;
+  inset: auto 24px 24px 24px;
+  padding: 12px 16px;
+  color: hsl(25, 95%, 72%);
+  font-size: 0.85rem;
+  text-align: center;
 }
 
 .viewport-overlay {

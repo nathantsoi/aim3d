@@ -92,6 +92,158 @@ fn update_items_by_id(items: &mut Value, target_id: &str, path: &str, value: Val
     }
 }
 
+fn default_viewport_scene() -> Value {
+    json!({
+        "solids": [{
+            "id": "solid_MainPocket_1",
+            "bodyId": 2,
+            "sourceToken": "feat_Extrude_1_face_0",
+            "positions": [
+                -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
+                -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
+            ],
+            "normals": [
+                0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+                0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1
+            ],
+            "colors": [
+                0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1,
+                0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1
+            ],
+            "indices": [
+                0, 1, 2, 0, 2, 3,
+                4, 6, 5, 4, 7, 6,
+                0, 4, 5, 0, 5, 1,
+                1, 5, 6, 1, 6, 2,
+                2, 6, 7, 2, 7, 3,
+                3, 7, 4, 3, 4, 0
+            ],
+            "transform": [
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 1
+            ]
+        }],
+        "toolpaths": [{
+            "id": "toolpath_op_Pocket_1",
+            "operationId": "op_Pocket_1",
+            "status": "Stale",
+            "color": [1, 0.74, 0.18, 1],
+            "points": [
+                -1.4, -0.8, 0.55,
+                -0.4, -0.8, 0.55,
+                -0.4, 0.1, 0.55,
+                0.8, 0.1, 0.55,
+                0.8, 0.8, 0.55,
+                1.4, 0.8, 0.55
+            ]
+        }],
+        "gizmos": {
+            "axes": [
+                { "id": "axis_x", "label": "X", "color": [0.95, 0.18, 0.2, 1], "points": [0, 0, 0, 1.1, 0, 0] },
+                { "id": "axis_y", "label": "Y", "color": [0.2, 0.82, 0.28, 1], "points": [0, 0, 0, 0, 1.1, 0] },
+                { "id": "axis_z", "label": "Z", "color": [0.28, 0.48, 1, 1], "points": [0, 0, 0, 0, 0, 1.1] }
+            ],
+            "workOrigin": [0, 0, 0]
+        },
+        "camera": {
+            "target": [0, 0, 0],
+            "distance": 5.2,
+            "yaw": 0.72,
+            "pitch": 0.62,
+            "near": 0.01,
+            "far": 100
+        },
+        "diagnostics": {
+            "webgpuAvailable": false,
+            "frameTimeMs": 0,
+            "fps": 0,
+            "drawCount": 0,
+            "triangleCount": 12,
+            "segmentCount": 8
+        }
+    })
+}
+
+fn sync_viewport_scene(state: &mut Value) {
+    if state.get("viewportScene").is_none() || state["viewportScene"].is_null() {
+        state["viewportScene"] = default_viewport_scene();
+    }
+
+    let ready_operation_ids: Vec<String> = state
+        .get("operations")
+        .and_then(Value::as_array)
+        .map(|operations| {
+            operations
+                .iter()
+                .filter(|operation| {
+                    operation
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "Ready")
+                })
+                .filter_map(|operation| {
+                    operation
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(toolpaths) = state["viewportScene"]["toolpaths"].as_array_mut() {
+        for toolpath in toolpaths {
+            let operation_id = toolpath
+                .get("operationId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            toolpath["status"] =
+                json!(if ready_operation_ids.iter().any(|id| id == operation_id) {
+                    "Ready"
+                } else {
+                    "Stale"
+                });
+        }
+    }
+
+    let triangle_count = state["viewportScene"]["solids"]
+        .as_array()
+        .map(|solids| {
+            solids
+                .iter()
+                .map(|solid| {
+                    solid["indices"]
+                        .as_array()
+                        .map_or(0, |indices| indices.len() / 3)
+                })
+                .sum::<usize>()
+        })
+        .unwrap_or(0);
+    let toolpath_segments = state["viewportScene"]["toolpaths"]
+        .as_array()
+        .map(|toolpaths| {
+            toolpaths
+                .iter()
+                .map(|toolpath| {
+                    toolpath["points"]
+                        .as_array()
+                        .map_or(0, |points| points.len() / 3)
+                        .saturating_sub(1)
+                })
+                .sum::<usize>()
+        })
+        .unwrap_or(0);
+    let axis_segments = state["viewportScene"]["gizmos"]["axes"]
+        .as_array()
+        .map_or(0, Vec::len);
+
+    state["viewportScene"]["diagnostics"]["triangleCount"] = json!(triangle_count);
+    state["viewportScene"]["diagnostics"]["segmentCount"] =
+        json!(toolpath_segments + axis_segments);
+}
+
 #[tauri::command]
 fn dispatch_core_action(action_json: String, state_json: String) -> IPCResponse {
     let action: Value = match serde_json::from_str(&action_json) {
@@ -185,6 +337,8 @@ fn dispatch_core_action(action_json: String, state_json: String) -> IPCResponse 
         }
         _ => {}
     }
+
+    sync_viewport_scene(&mut state);
 
     IPCResponse {
         status: "success".to_string(),
