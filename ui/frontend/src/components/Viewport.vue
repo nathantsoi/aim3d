@@ -34,6 +34,7 @@
 import { defineComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useCoreStore } from '../store';
 import { createWebGpuViewportRenderer } from '../services/webgpuRenderer';
+import { pickViewportEntity } from '../services/viewportPicking';
 
 export default defineComponent({
   name: 'Viewport',
@@ -46,9 +47,13 @@ export default defineComponent({
       fps: 0,
       drawCount: 0,
       triangleCount: 0,
-      segmentCount: 0
+      segmentCount: 0,
+      lastPickLatencyMs: 0,
+      hoverTargetId: null,
+      snapCandidateId: null
     });
     const store = useCoreStore();
+    const hoverTargetId = ref(null);
     let renderer = null;
     let animationFrame = null;
     let disposed = false;
@@ -97,7 +102,7 @@ export default defineComponent({
 
     const renderLoop = () => {
       if (disposed || !renderer?.available) return;
-      renderer.updateScene(store.viewportScene, store.selectedEntityId);
+      renderer.updateScene(store.viewportScene, store.selectedEntityId, hoverTargetId.value);
       renderer.render(store.viewportScene);
       animationFrame = requestAnimationFrame(renderLoop);
     };
@@ -106,21 +111,35 @@ export default defineComponent({
       renderer?.resize?.();
     };
 
+    const pickAtEvent = (event) => {
+      const canvas = canvas3D.value;
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      return pickViewportEntity(store.viewportScene, x, y, rect.width, rect.height);
+    };
+
+    const applyPickDiagnostics = (pickResult) => {
+      const hoverId = pickResult.hit?.entityId ?? null;
+      const snapId = pickResult.hit?.snapCandidate?.id ?? null;
+      hoverTargetId.value = hoverId;
+      applyDiagnostics({
+        ...store.viewportScene.diagnostics,
+        lastPickLatencyMs: pickResult.latencyMs,
+        hoverTargetId: hoverId,
+        snapCandidateId: snapId
+      });
+      renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverId);
+    };
+
     const handleSelectionClick = async (event) => {
       if (suppressNextClick) {
         suppressNextClick = false;
         return;
       }
-      const canvas = canvas3D.value;
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const insideScene = x >= rect.width * 0.2
-        && x <= rect.width * 0.8
-        && y >= rect.height * 0.18
-        && y <= rect.height * 0.82;
-      const firstSolidToken = store.viewportScene?.solids?.[0]?.sourceToken ?? null;
-      await store.selectEntity(insideScene ? firstSolidToken : null);
+      const pickResult = pickAtEvent(event);
+      applyPickDiagnostics(pickResult);
+      await store.selectEntity(pickResult.hit?.entityId ?? null);
     };
 
     const handlePointerDown = (event) => {
@@ -140,7 +159,11 @@ export default defineComponent({
     };
 
     const handlePointerMove = (event) => {
-      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      if (!dragState) {
+        applyPickDiagnostics(pickAtEvent(event));
+        return;
+      }
+      if (dragState.pointerId !== event.pointerId) return;
       const camera = ensureCamera();
       const deltaX = event.clientX - dragState.lastX;
       const deltaY = event.clientY - dragState.lastY;
@@ -206,7 +229,7 @@ export default defineComponent({
     watch(
       () => [store.viewportScene, store.selectedEntityId],
       () => {
-        renderer?.updateScene?.(store.viewportScene, store.selectedEntityId);
+        renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverTargetId.value);
       },
       { deep: true }
     );

@@ -43,9 +43,23 @@ struct BodyInspection {
 };
 
 struct ViewportSolidMesh {
+    struct SnapPoint {
+        std::string id;
+        std::string kind;
+        std::array<float, 3> position = {0.0f, 0.0f, 0.0f};
+    };
+
+    struct PickableMetadata {
+        std::string entityId;
+        std::string kind = "B-rep Entity";
+        int priority = 0;
+        std::vector<SnapPoint> snapPoints;
+    };
+
     std::string id;
     EntityId bodyId = 0;
     std::string sourceToken;
+    PickableMetadata pickable;
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<float> colors;
@@ -89,6 +103,9 @@ struct ViewportDiagnostics {
     std::size_t drawCount = 0;
     std::size_t triangleCount = 0;
     std::size_t segmentCount = 0;
+    float lastPickLatencyMs = 0.0f;
+    std::string hoverTargetId;
+    std::string snapCandidateId;
 };
 
 struct ViewportScene {

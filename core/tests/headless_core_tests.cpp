@@ -599,6 +599,9 @@ void test_viewport_scene_has_renderable_buffers() {
     assert(scene.solids[0].positions.size() % 3 == 0);
     assert(scene.solids[0].indices.size() % 3 == 0);
     assert(!scene.solids[0].sourceToken.empty());
+    assert(scene.solids[0].pickable.entityId == scene.solids[0].sourceToken);
+    assert(scene.solids[0].pickable.kind == "B-rep Exact Face");
+    assert(scene.solids[0].pickable.priority > 0);
     assert(scene.diagnostics.triangleCount == scene.solids[0].indices.size() / 3);
     assert(scene.diagnostics.segmentCount >= 3);
 }

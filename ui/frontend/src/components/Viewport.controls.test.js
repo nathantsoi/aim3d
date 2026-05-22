@@ -58,4 +58,55 @@ describe('Viewport camera controls', () => {
     expect(store.viewportScene.camera.pitch).toBeGreaterThan(startPitch);
     expect(store.viewportScene.camera.distance).toBeLessThan(startDistance);
   });
+
+  it('updates hover diagnostics from local picking without dispatching selection', async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(Viewport, {
+      global: {
+        plugins: [pinia]
+      }
+    });
+    await flush();
+
+    const store = useCoreStore();
+    const canvas = wrapper.find('canvas').element;
+    Object.defineProperty(canvas, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 800, height: 600 })
+    });
+
+    dispatchPointer(canvas, 'pointermove', { button: 0, clientX: 400, clientY: 300 });
+    await flush();
+
+    expect(store.viewportScene.diagnostics.hoverTargetId).toBe('feat_Extrude_1_face_0');
+    expect(store.viewportScene.diagnostics.lastPickLatencyMs).toBeLessThan(16);
+    expect(store.actionLog).toHaveLength(0);
+  });
+
+  it('commits exactly one selection action when clicking a picked entity', async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(Viewport, {
+      global: {
+        plugins: [pinia]
+      }
+    });
+    await flush();
+
+    const store = useCoreStore();
+    const canvas = wrapper.find('canvas').element;
+    Object.defineProperty(canvas, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 800, height: 600 })
+    });
+
+    canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
+    await flush();
+
+    expect(store.selectedEntityId).toBe('feat_Extrude_1_face_0');
+    expect(store.actionLog).toHaveLength(1);
+    expect(store.actionLog[0]).toMatchObject({
+      type: 'ui.selectEntity',
+      value: 'feat_Extrude_1_face_0'
+    });
+  });
 });

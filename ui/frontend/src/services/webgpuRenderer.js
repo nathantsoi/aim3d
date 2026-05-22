@@ -248,8 +248,8 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     });
   };
 
-  const updateScene = (scene, selectedEntityId) => {
-    const nextAdapted = adaptViewportScene(scene, selectedEntityId);
+  const updateScene = (scene, selectedEntityId, hoverEntityId = null) => {
+    const nextAdapted = adaptViewportScene(scene, selectedEntityId, hoverEntityId);
     if (nextAdapted.key === lastKey) return;
     buffers.solidVertex?.destroy?.();
     buffers.solidIndex?.destroy?.();

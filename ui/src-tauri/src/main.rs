@@ -98,6 +98,14 @@ fn default_viewport_scene() -> Value {
             "id": "solid_MainPocket_1",
             "bodyId": 2,
             "sourceToken": "feat_Extrude_1_face_0",
+            "pickable": {
+                "entityId": "feat_Extrude_1_face_0",
+                "kind": "B-rep Exact Face",
+                "priority": 10,
+                "snapPoints": [
+                    { "id": "solid_MainPocket_1_center", "kind": "center", "position": [0, 0, 0.35] }
+                ]
+            },
             "positions": [
                 -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
                 -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
@@ -161,7 +169,10 @@ fn default_viewport_scene() -> Value {
             "fps": 0,
             "drawCount": 0,
             "triangleCount": 12,
-            "segmentCount": 8
+            "segmentCount": 8,
+            "lastPickLatencyMs": 0,
+            "hoverTargetId": null,
+            "snapCandidateId": null
         }
     })
 }

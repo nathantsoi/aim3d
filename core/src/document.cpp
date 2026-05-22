@@ -263,6 +263,14 @@ ViewportSolidMesh fallbackSolidMesh(EntityId bodyId, const std::string& token) {
     mesh.id = "solid_" + std::to_string(bodyId == 0 ? 1 : bodyId);
     mesh.bodyId = bodyId;
     mesh.sourceToken = token.empty() ? "feat_Extrude_1_face_0" : token;
+    mesh.pickable.entityId = mesh.sourceToken;
+    mesh.pickable.kind = "B-rep Exact Face";
+    mesh.pickable.priority = 10;
+    mesh.pickable.snapPoints.push_back(ViewportSolidMesh::SnapPoint{
+        "solid_" + std::to_string(bodyId == 0 ? 1 : bodyId) + "_center",
+        "center",
+        {0.0f, 0.0f, 0.35f}
+    });
     mesh.positions = {
         -1.8f, -1.2f, -0.35f, 1.8f, -1.2f, -0.35f, 1.8f, 1.2f, -0.35f, -1.8f, 1.2f, -0.35f,
         -1.8f, -1.2f, 0.35f, 1.8f, -1.2f, 0.35f, 1.8f, 1.2f, 0.35f, -1.8f, 1.2f, 0.35f
@@ -316,6 +324,9 @@ ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& toke
     mesh.id = "solid_" + std::to_string(body.id());
     mesh.bodyId = body.id();
     mesh.sourceToken = token;
+    mesh.pickable.entityId = token;
+    mesh.pickable.kind = "B-rep Exact Face";
+    mesh.pickable.priority = 10;
 
     const auto kernelShape = body.kernelShapeHandle();
     if (!kernelShape || kernelShape->shape.IsNull()) {
