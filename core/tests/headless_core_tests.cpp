@@ -1,4 +1,6 @@
 #include "aim3d/application.hpp"
+#include "aim3d/c_api.hpp"
+#include "aim3d/cam_ir.hpp"
 #include "aim3d/document.hpp"
 #include "aim3d/sketch_solver.hpp"
 #include "aim3d/topo_naming.hpp"
@@ -606,6 +608,75 @@ void test_viewport_scene_has_renderable_buffers() {
     assert(scene.diagnostics.segmentCount >= 3);
 }
 
+void test_c_api_document_buffers_and_tasks() {
+    Aim3dDocumentHandle* doc = aim3d_document_create();
+    assert(doc != nullptr);
+
+    const auto savePath = (test_dir() / "c-api-document.a3d").string();
+    assert(aim3d_document_save(doc, savePath.c_str()) == 1);
+    assert(std::filesystem::exists(savePath));
+
+    assert(aim3d_document_body_count(doc) == 0);
+    Aim3dBodyHandle* body = aim3d_document_preview_body(doc);
+    assert(body != nullptr);
+    assert(std::string(aim3d_body_name(body)) == "Body1");
+
+    Aim3dBufferHandle* vertices = aim3d_body_vertices(body);
+    assert(vertices != nullptr);
+    assert(aim3d_buffer_dtype(vertices) == AIM3D_BUFFER_FLOAT32);
+    assert(aim3d_buffer_components(vertices) == 3);
+    assert(aim3d_buffer_count(vertices) == 9);
+    assert(aim3d_buffer_pointer(vertices) != 0);
+    const auto* vertexData = static_cast<const float*>(aim3d_buffer_data(vertices));
+    assert(near(vertexData[3], 10.0));
+
+    Aim3dBufferHandle* meshPositions = aim3d_document_mesh_positions(doc);
+    Aim3dBufferHandle* meshIndices = aim3d_document_mesh_indices(doc);
+    assert(aim3d_buffer_dtype(meshPositions) == AIM3D_BUFFER_FLOAT32);
+    assert(aim3d_buffer_components(meshPositions) == 3);
+    assert(aim3d_buffer_count(meshPositions) > 0);
+    assert(aim3d_buffer_dtype(meshIndices) == AIM3D_BUFFER_UINT32);
+    assert(aim3d_buffer_components(meshIndices) == 3);
+    assert(aim3d_buffer_count(meshIndices) > 0);
+
+    Aim3dTaskHandle* task = aim3d_document_inspect_bodies_task(doc);
+    assert(task != nullptr);
+    aim3d_task_wait(task);
+    assert(aim3d_task_state(task) == AIM3D_TASK_COMPLETED);
+    assert(std::string(aim3d_task_message(task)).find("Inspected") != std::string::npos);
+
+    aim3d_task_release(task);
+    aim3d_buffer_release(meshIndices);
+    aim3d_buffer_release(meshPositions);
+    aim3d_buffer_release(vertices);
+    aim3d_body_release(body);
+    aim3d_document_release(doc);
+}
+
+void test_c_api_cam_toolpath_buffers() {
+    Aim3dOperationHandle* operation = aim3d_operation_create_default();
+    assert(operation != nullptr);
+    assert(aim3d_operation_generate_toolpath(operation) == 1);
+
+    Aim3dBufferHandle* toolpath = aim3d_operation_toolpath(operation);
+    assert(toolpath != nullptr);
+    assert(aim3d_buffer_dtype(toolpath) == AIM3D_BUFFER_FLOAT64);
+    assert(aim3d_buffer_components(toolpath) == 5);
+    assert(aim3d_buffer_count(toolpath) == 20);
+    assert(aim3d_buffer_pointer(toolpath) != 0);
+    const auto* values = static_cast<const double*>(aim3d_buffer_data(toolpath));
+    assert(near(values[0], static_cast<double>(aim3d::MotionType::ToolChange)));
+    assert(near(values[13], -2.0));
+
+    char* gcode = aim3d_operation_post_process(operation);
+    assert(gcode != nullptr);
+    assert(std::string(gcode).find("G1 X5 Y5 Z-2") != std::string::npos);
+
+    aim3d_string_release(gcode);
+    aim3d_buffer_release(toolpath);
+    aim3d_operation_release(operation);
+}
+
 }
 
 int main() {
@@ -638,5 +709,7 @@ int main() {
     test_sketch_solver_inconsistent_constraints();
     test_sketch_solver_c_abi_smoke();
     test_viewport_scene_has_renderable_buffers();
+    test_c_api_document_buffers_and_tasks();
+    test_c_api_cam_toolpath_buffers();
     return 0;
 }

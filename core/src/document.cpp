@@ -372,7 +372,13 @@ ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& toke
 
 } // namespace
 
-BRepBody::BRepBody(EntityId id, const std::string& name) : m_id(id), m_name(name) {}
+BRepBody::BRepBody(EntityId id, const std::string& name) : m_id(id), m_name(name) {
+    m_vertices = {
+        0.0f, 0.0f, 0.0f,
+        10.0f, 0.0f, 0.0f,
+        0.0f, 10.0f, 0.0f
+    };
+}
 
 const float* BRepBody::getVerticesBuffer(size_t& count) const {
     count = m_vertices.size();

@@ -19,6 +19,8 @@ AIM3D_ENABLE_OCCT ?= 1
 CMAKE_ARGS ?= -DBUILD_TESTING=ON
 ifeq ($(AIM3D_ENABLE_OCCT),1)
 CMAKE_ARGS += -DAIM3D_ENABLE_OCCT=ON
+else
+CMAKE_ARGS += -DAIM3D_ENABLE_OCCT=OFF
 endif
 ifneq ($(AIM3D_OCCT_DIR),)
 CMAKE_ARGS += -DAIM3D_OCCT_DIR=$(AIM3D_OCCT_DIR)
@@ -94,7 +96,7 @@ test: deps test-core test-python test-simulation
 test-core: build-core
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure
 
-test-python:
+test-python: build-core
 	cd python && ../$(VENV_PYTHON) -m pytest tests
 
 test-simulation:

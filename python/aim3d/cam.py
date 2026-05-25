@@ -1,26 +1,39 @@
 import asyncio
-import numpy as np
 import ctypes
 
+from . import _native
+
+
 class Operation:
-    def __init__(self, name):
+    def __init__(self, name="Pocket1", handle=None):
         self.name = name
-        self._mock_toolpath_coords = [0.0, 0.0, 0.0, 5.0, 5.0, -2.0, 10.0, 5.0, -2.0]
+        self._handle = handle or _native.operation_create_default()
+        if not self._handle:
+            raise _native.NativeError("Missing native CAM operation handle")
 
     async def generate_toolpath_async(self):
-        """
-        Asynchronously generates CAM toolpath off the main thread.
-        """
-        await asyncio.sleep(0.02) # Simulated computation
-        return True
+        def generate():
+            if _native.operation_generate_toolpath(self._handle) != 1:
+                raise _native.NativeError(f"Failed to generate toolpath for {self.name}")
+            return True
+
+        return await asyncio.to_thread(generate)
 
     def get_toolpath_tensor(self):
         """
-        Exposes low-level zero-copy coordinates of the toolpath.
+        Return the generated canonical toolpath IR as a native float64 Nx5 array:
+        motion type, x, y, z, feed rate.
         """
-        double_array_type = ctypes.c_double * len(self._mock_toolpath_coords)
-        c_array = double_array_type(*self._mock_toolpath_coords)
-        return memoryview(c_array)
+        return _native.NativeBuffer(_native.operation_toolpath(self._handle))
+
+    def release(self):
+        if self._handle:
+            _native.operation_release(self._handle)
+            self._handle = None
+
+    def __del__(self):
+        self.release()
+
 
 class Setup:
     def __init__(self, name):
@@ -32,20 +45,19 @@ class Setup:
         return self._operations
 
     async def post_process_async(self):
-        """
-        Asynchronously posts the setup toolpaths to RS274 G-code.
-        """
-        await asyncio.sleep(0.01)
-        # Mock posted G-code string
-        gcode = (
-            "; aim3d Posted G-code\n"
-            "T1 M6\n"
-            "G0 X0 Y0 Z10\n"
-            "G1 X5 Y5 Z-2 F1200\n"
-            "G1 X10 Y5 Z-2\n"
-            "M30\n"
-        )
-        return gcode
+        operation = self._operations["Pocket1"]
+
+        def post():
+            pointer = _native.operation_post_process(operation._handle)
+            if not pointer:
+                raise _native.NativeError("Failed to post-process setup")
+            try:
+                return ctypes.string_at(pointer).decode("utf-8")
+            finally:
+                _native.string_release(pointer)
+
+        return await asyncio.to_thread(post)
+
 
 class SetupCollection:
     def __init__(self):
@@ -54,5 +66,6 @@ class SetupCollection:
     @property
     def active_setup(self):
         return self._active_setup
+
 
 setups = SetupCollection()
