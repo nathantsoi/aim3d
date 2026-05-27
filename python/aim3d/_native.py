@@ -59,6 +59,7 @@ c_char_p = ctypes.c_char_p
 c_size_t = ctypes.c_size_t
 c_int = ctypes.c_int
 c_uint64 = ctypes.c_uint64
+c_double = ctypes.c_double
 
 document_create = _bind("aim3d_document_create", c_void_p, [])
 document_open = _bind("aim3d_document_open", c_void_p, [c_char_p])
@@ -99,6 +100,72 @@ buffer_components = _bind("aim3d_buffer_components", c_int, [c_void_p])
 buffer_dtype = _bind("aim3d_buffer_dtype", c_int, [c_void_p])
 buffer_pointer = _bind("aim3d_buffer_pointer", c_uint64, [c_void_p])
 buffer_release = _bind("aim3d_buffer_release", None, [c_void_p])
+
+
+class SketchPointC(ctypes.Structure):
+    _fields_ = [
+        ("id", c_int),
+        ("x", c_double),
+        ("y", c_double),
+        ("fixed", c_int),
+    ]
+
+
+class SketchEntityC(ctypes.Structure):
+    _fields_ = [
+        ("id", c_int),
+        ("type", c_int),
+        ("point_a_id", c_int),
+        ("point_b_id", c_int),
+        ("center_point_id", c_int),
+        ("radius", c_double),
+    ]
+
+
+class SketchConstraintC(ctypes.Structure):
+    _fields_ = [
+        ("type", c_int),
+        ("entity_a_id", c_int),
+        ("entity_b_id", c_int),
+        ("value", c_double),
+    ]
+
+
+class SketchSolveOptionsC(ctypes.Structure):
+    _fields_ = [
+        ("max_iterations", c_int),
+        ("tolerance", c_double),
+        ("finite_difference_step", c_double),
+        ("damping", c_double),
+    ]
+
+
+class SketchSolveResultC(ctypes.Structure):
+    _fields_ = [
+        ("status", c_int),
+        ("is_fully_constrained", c_int),
+        ("degrees_of_freedom", c_int),
+        ("iterations", c_int),
+        ("residual_error", c_double),
+        ("warning_count", c_int),
+        ("message", ctypes.c_char * 256),
+    ]
+
+
+solve_sketch_2d_raw = _bind(
+    "aim3d_solve_sketch_2d",
+    c_int,
+    [
+        ctypes.POINTER(SketchPointC),
+        c_int,
+        ctypes.POINTER(SketchEntityC),
+        c_int,
+        ctypes.POINTER(SketchConstraintC),
+        c_int,
+        ctypes.POINTER(SketchSolveOptionsC),
+        ctypes.POINTER(SketchSolveResultC),
+    ],
+)
 
 
 def _encode_path(path):

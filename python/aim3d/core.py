@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 from . import _native
 
@@ -156,3 +157,82 @@ class DocumentsCollection:
 
 
 documents = DocumentsCollection()
+
+
+def _field(value, name, default=None):
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def solve_sketch_2d(points, entities=(), constraints=(), options=None):
+    """
+    Solve a small 2D sketch system through the native stateless sketch solver.
+
+    Points are dict-like objects with id/x/y/fixed fields. Entities use
+    type 0=point, 1=line, 2=circle. Constraints use type 0=coincident,
+    1=distance, 2=tangent, 3=fixed.
+    """
+    point_array = (_native.SketchPointC * len(points))()
+    for index, point in enumerate(points):
+        point_array[index] = _native.SketchPointC(
+            int(_field(point, "id")),
+            float(_field(point, "x")),
+            float(_field(point, "y")),
+            int(bool(_field(point, "fixed", False))),
+        )
+
+    entity_array = (_native.SketchEntityC * len(entities))()
+    for index, entity in enumerate(entities):
+        entity_array[index] = _native.SketchEntityC(
+            int(_field(entity, "id")),
+            int(_field(entity, "type", 0)),
+            int(_field(entity, "point_a_id", -1)),
+            int(_field(entity, "point_b_id", -1)),
+            int(_field(entity, "center_point_id", -1)),
+            float(_field(entity, "radius", 0.0)),
+        )
+
+    constraint_array = (_native.SketchConstraintC * len(constraints))()
+    for index, constraint in enumerate(constraints):
+        constraint_array[index] = _native.SketchConstraintC(
+            int(_field(constraint, "type", 0)),
+            int(_field(constraint, "entity_a_id")),
+            int(_field(constraint, "entity_b_id", -1)),
+            float(_field(constraint, "value", 0.0)),
+        )
+
+    options = options or {}
+    option_struct = _native.SketchSolveOptionsC(
+        int(_field(options, "max_iterations", 80)),
+        float(_field(options, "tolerance", 1.0e-8)),
+        float(_field(options, "finite_difference_step", 1.0e-6)),
+        float(_field(options, "damping", 1.0e-8)),
+    )
+    result = _native.SketchSolveResultC()
+    status = _native.solve_sketch_2d_raw(
+        point_array,
+        len(points),
+        entity_array,
+        len(entities),
+        constraint_array,
+        len(constraints),
+        option_struct,
+        result,
+    )
+    if status == 2:
+        raise _native.NativeError("Native sketch solve failed")
+    solved = [
+        SimpleNamespace(id=point_array[index].id, x=point_array[index].x, y=point_array[index].y, fixed=bool(point_array[index].fixed))
+        for index in range(len(points))
+    ]
+    return SimpleNamespace(
+        status=result.status,
+        points=solved,
+        is_fully_constrained=bool(result.is_fully_constrained),
+        degrees_of_freedom=result.degrees_of_freedom,
+        iterations=result.iterations,
+        residual_error=result.residual_error,
+        warning_count=result.warning_count,
+        message=bytes(result.message).split(b"\0", 1)[0].decode("utf-8"),
+    )

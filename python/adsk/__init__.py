@@ -14,7 +14,30 @@ class Aim3dUnsupportedFeatureError(Exception):
             message += f" Please use alternative: '{alternative}'."
         super().__init__(message)
 
+_auto_terminate = True
+_terminated = False
+
+
+def doEvents():
+    return True
+
+
+def autoTerminate(value):
+    global _auto_terminate
+    _auto_terminate = bool(value)
+    return True
+
+
+def terminate():
+    global _terminated
+    _terminated = True
+    return True
+
+
 from . import core
 from . import fusion
 from . import cam
-
+try:
+    from . import volume
+except ImportError:
+    volume = None

@@ -28,8 +28,8 @@ else ifeq ($(AIM3D_ENABLE_OCCT),1)
 CMAKE_ARGS += -DAIM3D_OCCT_DIR=$(abspath $(OCCT_INSTALL_DIR)/lib/cmake/opencascade)
 endif
 
-.PHONY: help build clean run deps python-venv test configure build-occt build-core build-frontend build-tauri \
-	test-core test-python test-simulation run-frontend run-tauri
+.PHONY: help build clean run deps python-venv test test-verbose verbose-test verbose configure build-occt build-core build-frontend build-tauri \
+	test-core test-python test-simulation test-core-verbose test-python-verbose test-simulation-verbose run-frontend run-tauri
 
 help:
 	@echo "aim3d build commands"
@@ -38,6 +38,7 @@ help:
 	@echo "  make clean          Remove local build artifacts and caches"
 	@echo "  make deps           Install Python and Node dependencies"
 	@echo "  make test           Run C++, Python, and simulation tests"
+	@echo "  make test-verbose   Run tests with full output for failures"
 	@echo ""
 	@echo "Optional:"
 	@echo "  make build-occt     Build vendored OpenCASCADE into build/occt-install"
@@ -93,14 +94,29 @@ build-tauri:
 
 test: deps test-core test-python test-simulation
 
+test-verbose: deps test-core-verbose test-python-verbose test-simulation-verbose
+
+verbose-test: test-verbose
+
+verbose: test-verbose
+
 test-core: build-core
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure
+
+test-core-verbose: build-core
+	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure --verbose
 
 test-python: build-core
 	cd python && ../$(VENV_PYTHON) -m pytest tests
 
+test-python-verbose: build-core
+	cd python && ../$(VENV_PYTHON) -m pytest -vv --tb=long --show-capture=all tests
+
 test-simulation:
 	cd simulation && ../$(VENV_PYTHON) -m pytest tests
+
+test-simulation-verbose:
+	cd simulation && ../$(VENV_PYTHON) -m pytest -vv --tb=long --show-capture=all tests
 
 run: deps run-tauri
 

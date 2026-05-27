@@ -113,12 +113,8 @@ def test_unsupported_feature_errors_are_structured():
     assert macro_error.value.feature_name == "Imperative Macro Executions"
     assert macro_error.value.alternative == "aim3d.core JSON-Schema Commands"
 
-    with pytest.raises(adsk.Aim3dUnsupportedFeatureError) as sketch_error:
-        root.sketches.add(sketch_input)
-    assert sketch_error.value.feature_name == "Sketches.add"
-    assert sketch_error.value.alternative == "aim3d.core sketch solver APIs"
+    sketch = root.sketches.add(sketch_input)
+    assert sketch.name == "Sketch1"
 
-    with pytest.raises(adsk.Aim3dUnsupportedFeatureError) as setup_error:
-        adsk.cam.CAM.cast(doc).setups.add(setup_input)
-    assert setup_error.value.feature_name == "Setups.add"
-    assert setup_error.value.alternative == "aim3d.cam setup construction APIs"
+    setup = adsk.cam.CAM.cast(doc).setups.add(setup_input)
+    assert setup.name == "Setup"

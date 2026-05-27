@@ -48,6 +48,7 @@ class TestDialog:
         self.filename = str(folder / "fusion-sample-output.tmp")
         self.filenames = [self.filename]
         self.isMultiSelectEnabled = False
+        self.dataFile = adsk.core.DataFile(self.filename)
 
     def showOpen(self):
         return self.DialogOK
@@ -110,9 +111,22 @@ class TestUserInterface(adsk.core.UserInterface):
         return TestProgressDialog()
 
     def selectEntity(self, prompt, filter_string):
-        raise adsk.Aim3dUnsupportedFeatureError(
-            "UserInterface.selectEntity", "headless aim3d test fixtures"
-        )
+        import adsk.fusion
+        from adsk._state import BodyState, ensure_body_topology
+
+        body = adsk.fusion.BRepBody(ensure_body_topology(BodyState("SelectedBody")))
+        filter_text = str(filter_string)
+        if "SketchPoint" in filter_text:
+            entity = adsk.fusion.SketchPoint(adsk.core.Point3D.create(0, 0, 0))
+        elif "Face" in filter_text:
+            entity = body.faces.item(0)
+        elif "Edge" in filter_text or "Curve" in filter_text:
+            entity = body.edges.item(0)
+        elif "Body" in filter_text:
+            entity = body
+        else:
+            entity = body
+        return adsk.core.UniversalStub("Selection", entity=entity, point=adsk.core.Point3D.create(0, 0, 0))
 
 
 def call_name(call_node):

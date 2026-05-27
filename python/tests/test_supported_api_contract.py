@@ -132,12 +132,69 @@ def test_adsk_fusion_design_component_feature_contracts():
     assert extrude_input.distance is distance
     assert extrude_input.isSymmetric is False
 
-    with pytest.raises(adsk.Aim3dUnsupportedFeatureError):
-        root.sketches.add(sketch_input)
-    with pytest.raises(adsk.Aim3dUnsupportedFeatureError):
-        root.features.extrudeFeatures.add(extrude_input)
-    with pytest.raises(adsk.Aim3dUnsupportedFeatureError):
-        root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+    sketch = root.sketches.add(sketch_input)
+    assert sketch.name == "Sketch1"
+
+    extrude = root.features.extrudeFeatures.add(extrude_input)
+    assert extrude.bodies.count == 1
+    assert root.bRepBodies.count == 2
+
+    occurrence = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+    assert occurrence.name == "Occurrence1"
+
+
+def test_adsk_fusion_sketch_profile_extrude_and_timeline():
+    app = adsk.core.Application.get()
+    doc = app.documents.add(0)
+    design = adsk.fusion.Design.cast(doc)
+    root = design.rootComponent
+    sketch = root.sketches.add(root.xYConstructionPlane)
+
+    line = sketch.sketchCurves.sketchLines.addByTwoPoints(
+        adsk.core.Point3D.create(0, 0, 0),
+        adsk.core.Point3D.create(3, 0, 0),
+    )
+    rect = sketch.sketchCurves.sketchLines.addTwoPointRectangle(
+        adsk.core.Point3D.create(0, 0, 0),
+        adsk.core.Point3D.create(2, 1, 0),
+    )
+    circle = sketch.sketchCurves.sketchCircles.addByCenterRadius(adsk.core.Point3D.create(0, 0, 0), 2)
+
+    assert line.endSketchPoint.geometry.asArray() == [3.0, 0.0, 0.0]
+    assert rect.count == 4
+    assert circle.radius == 2.0
+    assert sketch.profiles.count >= 2
+
+    distance = adsk.core.ValueInput.createByString("10 mm")
+    extrude = root.features.extrudeFeatures.addSimple(
+        sketch.profiles.item(0),
+        distance,
+        adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+    )
+
+    assert extrude.bodies.count == 1
+    assert extrude.bodies.item(0).faces.count == 6
+    assert design.timeline.count == 1
+    assert design.timeline.item(0).name == extrude.timelineObject.name
+
+
+def test_aim3d_native_sketch_solver_binding():
+    result = aim_core.solve_sketch_2d(
+        points=[
+            {"id": 1, "x": 0.0, "y": 0.0, "fixed": True},
+            {"id": 2, "x": 4.0, "y": 0.0, "fixed": False},
+        ],
+        entities=[
+            {"id": 101, "type": 0, "point_a_id": 1},
+            {"id": 102, "type": 0, "point_a_id": 2},
+        ],
+        constraints=[
+            {"type": 1, "entity_a_id": 101, "entity_b_id": 102, "value": 5.0},
+        ],
+    )
+
+    assert result.status == 0
+    assert result.points[1].x == pytest.approx(5.0, abs=1.0e-5)
 
 
 def test_adsk_cam_setup_operation_contracts():
@@ -158,10 +215,38 @@ def test_adsk_cam_setup_operation_contracts():
     assert "G1" in setup.postProcess()
     assert cam.setups.createInput().operationType == "milling"
 
-    with pytest.raises(adsk.Aim3dUnsupportedFeatureError):
-        cam.setups.add(cam.setups.createInput())
-    with pytest.raises(adsk.Aim3dUnsupportedFeatureError):
-        setup.operations.add(setup.createOperationInput("milling"))
+    new_setup = cam.setups.add(cam.setups.createInput())
+    assert new_setup.name == "Setup"
+    new_operation = setup.operations.add(setup.createOperationInput("milling"))
+    assert new_operation.name == "milling"
+
+
+def test_adsk_cam_milling_workflow_facade():
+    app = adsk.core.Application.get()
+    doc = app.documents.add(0)
+    cam = adsk.cam.CAM.cast(doc)
+    manager = adsk.cam.CAMManager.get()
+    tools = manager.libraryManager.toolLibraries.toolLibraryAtURL(
+        adsk.core.URL.create("systemlibraryroot://Samples/Milling Tools (Metric).json")
+    )
+    tool = tools.item(0)
+
+    setup_input = cam.setups.createInput(adsk.cam.OperationTypes.MillingOperation)
+    setup = cam.setups.add(setup_input)
+    setup.parameters.itemByName("job_stockOffsetTop").expression = "2 mm"
+    assert setup.parameters.itemByName("job_stockOffsetTop").expression == "2 mm"
+
+    operation_input = setup.operations.createInput("face")
+    operation_input.tool = tool
+    operation_input.parameters.itemByName("tolerance").expression = "0.01 mm"
+    operation = setup.operations.add(operation_input)
+    future = cam.generateToolpath(operation)
+    assert future.isGenerationCompleted is True
+
+    nc_input = cam.ncPrograms.createInput()
+    nc_input.operations = [operation]
+    program = cam.ncPrograms.add(nc_input)
+    assert program.postProcess(adsk.cam.NCProgramPostProcessOptions.create()) is True
 
 
 def test_aim3d_core_document_async_mesh_and_release(tmp_path):

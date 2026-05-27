@@ -67,4 +67,9 @@ def test_fusion_python_sample_imports_and_runs(sample, tmp_path):
             pytest.xfail(reason)
         raise
     finally:
+        if module is not None and sample.has_stop:
+            try:
+                module.stop(None)
+            except Exception:
+                pass
         cleanup_sample_module(sample)
