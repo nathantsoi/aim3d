@@ -101,16 +101,18 @@ export const orbitAroundPivot = (camera, pivot, deltaYaw, deltaPitch) => {
   return { yaw: yaw2, pitch: pitch2, distance, target: target2 };
 };
 
-// Pan the camera target across the view plane by a screen-space delta.
+// Pan by a screen-space delta. The camera moves so that the part travels in the
+// commanded direction (grab-and-drag), i.e. the target shifts opposite to the
+// camera's screen-right/up so geometry follows the gesture.
 export const panTarget = (camera, deltaX, deltaY, width, height) => {
   const { right, up } = cameraBasis(camera);
   const distance = camera?.distance ?? 5;
   const target = camera?.target ?? [0, 0, 0];
   const factor = distance / Math.max(1, Math.min(width || 1, height || 1));
   return [
-    target[0] - right[0] * deltaX * factor + up[0] * deltaY * factor,
-    target[1] - right[1] * deltaX * factor + up[1] * deltaY * factor,
-    target[2] - right[2] * deltaX * factor + up[2] * deltaY * factor
+    target[0] + right[0] * deltaX * factor - up[0] * deltaY * factor,
+    target[1] + right[1] * deltaX * factor - up[1] * deltaY * factor,
+    target[2] + right[2] * deltaX * factor - up[2] * deltaY * factor
   ];
 };
 
