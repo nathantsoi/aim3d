@@ -40,6 +40,8 @@ describe('PropertyGrid', () => {
 
   it('dispatches setup sheet changes through the action gateway', async () => {
     const { wrapper, store } = mountPanel();
+    store.setMode('manufacture');
+    await flush();
     const input = wrapper.find('[data-testid="setup-stock-allowance"]');
 
     input.element.value = '4.2';
@@ -57,6 +59,8 @@ describe('PropertyGrid', () => {
 
   it('dispatches operation sheet changes through the action gateway', async () => {
     const { wrapper, store } = mountPanel();
+    store.setMode('manufacture');
+    await flush();
     const input = wrapper.find('[data-testid="operation-tool-diameter"]');
 
     input.element.value = '7.5';
@@ -70,5 +74,24 @@ describe('PropertyGrid', () => {
       path: 'toolDiameter',
       value: 7.5
     });
+  });
+
+  it('switches the right panel to the sketch palette in sketch mode', async () => {
+    const { wrapper, store } = mountPanel();
+
+    expect(wrapper.find('[data-testid="sketch-palette"]').exists()).toBe(false);
+    expect(wrapper.find('.property-grid').exists()).toBe(true);
+
+    store.enterSketchMode('feat_Sketch_1');
+    await flush();
+
+    expect(wrapper.find('[data-testid="sketch-palette"]').exists()).toBe(true);
+    expect(wrapper.find('.property-grid').exists()).toBe(false);
+
+    await wrapper.find('[data-testid="finish-sketch"]').trigger('click');
+    await flush();
+
+    expect(store.isSketchMode).toBe(false);
+    expect(wrapper.find('[data-testid="sketch-palette"]').exists()).toBe(false);
   });
 });

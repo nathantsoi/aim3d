@@ -5,6 +5,7 @@ import {
   createUiAction
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
+import { RIBBON_MODES } from '../config/ribbon';
 
 export const useCoreStore = defineStore('core', {
   state: () => ({
@@ -58,6 +59,78 @@ export const useCoreStore = defineStore('core', {
       return action;
     },
 
+    setMode(mode) {
+      if (!RIBBON_MODES[mode]) return;
+      if (this.isSketchMode) {
+        this.finishSketch();
+      }
+      this.activeMode = mode;
+      this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
+    },
+
+    setWorkspaceTab(tabId) {
+      this.activeWorkspaceTab = tabId;
+    },
+
+    enterSketchMode(sketchId = null) {
+      this.activeMode = 'design';
+      this.isSketchMode = true;
+      this.activeSketchId = sketchId;
+      this.activeWorkspaceTab = 'sketch';
+
+      const camera = this.viewportScene?.camera;
+      if (camera) {
+        // Remember the current view, then snap to an orthographic view looking
+        // straight down the sketch-plane normal (XY plane, +Z eye).
+        this.preSketchCamera = { ...camera };
+        camera.yaw = 0;
+        camera.pitch = 0;
+        camera.projection = 'orthographic';
+      }
+
+      // Reveal the construction grid on the sketch plane (respecting the palette toggle).
+      if (this.viewportScene?.gizmos) {
+        this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+      }
+    },
+
+    finishSketch() {
+      this.isSketchMode = false;
+      this.activeSketchId = null;
+      this.activeWorkspaceTab = RIBBON_MODES.design.tabs[0]?.id ?? null;
+
+      const camera = this.viewportScene?.camera;
+      if (this.preSketchCamera && camera) {
+        Object.assign(camera, this.preSketchCamera);
+        if (!('projection' in this.preSketchCamera)) {
+          camera.projection = 'perspective';
+        }
+      }
+      this.preSketchCamera = null;
+
+      if (this.viewportScene?.gizmos) {
+        this.viewportScene.gizmos.sketchGrid = false;
+      }
+    },
+
+    toggleViewportGrid() {
+      if (!this.viewportScene) return;
+      if (!this.viewportScene.gizmos) {
+        this.viewportScene.gizmos = { grid: false };
+      }
+      this.viewportScene.gizmos.grid = !this.viewportScene.gizmos.grid;
+    },
+
+    toggleSketchOption(key) {
+      if (key in this.sketchPalette) {
+        this.sketchPalette[key] = !this.sketchPalette[key];
+      }
+      // Keep the rendered grid in sync with the palette toggle while sketching.
+      if (key === 'sketchGrid' && this.isSketchMode && this.viewportScene?.gizmos) {
+        this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+      }
+    },
+
     selectEntity(entityId) {
       return this.dispatchAction({
         type: ACTION_TYPES.SELECT_ENTITY,
@@ -95,6 +168,16 @@ export const useCoreStore = defineStore('core', {
         targetKind: 'operation',
         path,
         value
+      });
+    },
+
+    deleteEntity(entityId, targetKind) {
+      return this.dispatchAction({
+        type: ACTION_TYPES.DELETE_ENTITY,
+        targetId: entityId,
+        targetKind,
+        path: null,
+        value: null
       });
     },
 

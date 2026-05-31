@@ -1,4 +1,5 @@
 import { adaptViewportScene } from './viewportSceneAdapter';
+import { cameraEye, cameraUp } from './viewportControls';
 
 const GPU_BUFFER_USAGE = globalThis.GPUBufferUsage ?? {
   VERTEX: 1,
@@ -80,6 +81,18 @@ const perspective = (fovy, aspect, near, far) => {
   ]);
 };
 
+const orthographic = (size, aspect, near, far) => {
+  const right = Math.max(0.001, size * aspect);
+  const top = Math.max(0.001, size);
+  const nf = 1 / (near - far);
+  return new Float32Array([
+    1 / right, 0, 0, 0,
+    0, 1 / top, 0, 0,
+    0, 0, 2 * nf, 0,
+    0, 0, (far + near) * nf, 1
+  ]);
+};
+
 const normalize = (v) => {
   const length = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / length, v[1] / length, v[2] / length];
@@ -108,17 +121,15 @@ const lookAt = (eye, center, up) => {
 const cameraMatrix = (camera, width, height) => {
   const target = camera?.target ?? [0, 0, 0];
   const distance = camera?.distance ?? 5;
-  const yaw = camera?.yaw ?? 0.7;
-  const pitch = camera?.pitch ?? 0.6;
-  const eye = [
-    target[0] + Math.cos(pitch) * Math.sin(yaw) * distance,
-    target[1] + Math.sin(pitch) * distance,
-    target[2] + Math.cos(pitch) * Math.cos(yaw) * distance
-  ];
-  return mat4Multiply(
-    lookAt(eye, target, [0, 1, 0]),
-    perspective(Math.PI / 4, Math.max(1, width) / Math.max(1, height), camera?.near ?? 0.01, camera?.far ?? 100)
-  );
+  const eye = cameraEye(camera);
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const near = camera?.near ?? 0.01;
+  const far = camera?.far ?? 100;
+  const projection =
+    camera?.projection === 'orthographic'
+      ? orthographic(distance * 0.5, aspect, near, far)
+      : perspective(Math.PI / 4, aspect, near, far);
+  return mat4Multiply(lookAt(eye, target, cameraUp(camera)), projection);
 };
 
 const createBuffer = (device, data, usage) => {
@@ -271,7 +282,7 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: context.getCurrentTexture().createView(),
-        clearValue: { r: 0.02, g: 0.035, b: 0.055, a: 1 },
+        clearValue: { r: 0.45, g: 0.46, b: 0.48, a: 1 },
         loadOp: 'clear',
         storeOp: 'store'
       }],

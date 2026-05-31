@@ -1,6 +1,7 @@
 export const ACTION_TYPES = Object.freeze({
   SELECT_ENTITY: 'ui.selectEntity',
   UPDATE_FIELD: 'ui.updateField',
+  DELETE_ENTITY: 'core.deleteEntity',
   RECOMPUTE_DOCUMENT: 'core.recomputeDocument',
   GENERATE_TOOLPATH: 'cam.generateToolpath',
   RUN_SIMULATION: 'sim.runSimulation'
@@ -72,6 +73,7 @@ export const createDefaultViewportScene = () => ({
       { id: 'axis_y', label: 'Y', color: [0.2, 0.82, 0.28, 1], points: [0, 0, 0, 0, 1.1, 0] },
       { id: 'axis_z', label: 'Z', color: [0.28, 0.48, 1, 1], points: [0, 0, 0, 0, 0, 1.1] }
     ],
+    grid: false,
     workOrigin: [0, 0, 0]
   },
   camera: {
@@ -80,7 +82,8 @@ export const createDefaultViewportScene = () => ({
     yaw: 0.72,
     pitch: 0.62,
     near: 0.01,
-    far: 100
+    far: 100,
+    projection: 'perspective'
   },
   diagnostics: {
     webgpuAvailable: false,
@@ -98,6 +101,31 @@ export const createDefaultViewportScene = () => ({
 export const createInitialCoreState = () => ({
   activeDocumentId: 'doc_1001',
   documentPath: 'Untitled.a3d',
+  activeMode: 'design',
+  activeWorkspaceTab: 'solid',
+  isSketchMode: false,
+  activeSketchId: null,
+  preSketchCamera: null,
+  sketchPalette: {
+    sketchGrid: true,
+    snap: true,
+    slice: false,
+    profile: true,
+    points: true,
+    dimensions: true,
+    constraints: true,
+    projectedGeometries: true,
+    constructionGeometries: true,
+    threeDSketch: false
+  },
+  sketchConstraints: [
+    { id: 'con_h_1', type: 'Horizontal', glyph: '—', entities: 'Line 1' },
+    { id: 'con_v_1', type: 'Vertical', glyph: '|', entities: 'Line 4' },
+    { id: 'con_coin_1', type: 'Coincident', glyph: '◦', entities: 'P1, P3' },
+    { id: 'con_perp_1', type: 'Perpendicular', glyph: '⊾', entities: 'Line 1, Line 4' },
+    { id: 'con_par_1', type: 'Parallel', glyph: '∥', entities: 'Line 2, Line 4' },
+    { id: 'con_eq_1', type: 'Equal', glyph: '=', entities: 'Line 1, Line 3' }
+  ],
   selectedEntityId: null,
   selectedEntity: null,
   features: [
@@ -267,9 +295,80 @@ const applyFieldUpdate = (state, action) => {
   }
 };
 
+const clearSelectionIf = (state, ...ids) => {
+  if (ids.filter(Boolean).includes(state.selectedEntityId)) {
+    state.selectedEntityId = null;
+    state.selectedEntity = null;
+  }
+};
+
+// A solid is "produced by" a feature when its source/pickable token resolves
+// back to that feature. Tokens look like `${featureId}_face_0`, so we accept an
+// exact match against the feature's selectionToken/id or a `${featureId}_`
+// prefix (guarding against prefix collisions like feat_Extrude_1 vs _10).
+const solidBelongsToFeature = (solid, feature) => {
+  if (!solid || !feature) return false;
+  const tokens = [solid.sourceToken, solid.pickable?.entityId, solid.id].filter(Boolean);
+  return tokens.some((token) =>
+    token === feature.selectionToken ||
+    token === feature.id ||
+    token.startsWith(`${feature.id}_`)
+  );
+};
+
+const applyEntityDeletion = (state, action) => {
+  const { targetKind, targetId } = action;
+
+  if (targetKind === 'feature') {
+    const removed = findById(state.features, targetId);
+    state.features = state.features.filter((feature) => feature.id !== targetId);
+    state.operations.forEach((operation) => {
+      operation.status = 'Stale';
+    });
+    // Remove the geometry this feature produced so the 3D view stays in sync
+    // with the model tree / timeline.
+    if (removed && Array.isArray(state.viewportScene?.solids)) {
+      state.viewportScene.solids = state.viewportScene.solids.filter(
+        (solid) => !solidBelongsToFeature(solid, removed)
+      );
+    }
+    clearSelectionIf(state, targetId, removed?.selectionToken);
+  }
+
+  if (targetKind === 'setup') {
+    state.setups = state.setups.filter((setup) => setup.id !== targetId);
+    state.operations = state.operations.filter((operation) => operation.setupId !== targetId);
+    clearSelectionIf(state, targetId);
+  }
+
+  if (targetKind === 'operation') {
+    state.operations = state.operations.filter((operation) => operation.id !== targetId);
+    state.setups.forEach((setup) => {
+      if (Array.isArray(setup.operationIds)) {
+        setup.operationIds = setup.operationIds.filter((id) => id !== targetId);
+      }
+    });
+    clearSelectionIf(state, targetId);
+  }
+
+  if (state.viewportScene?.toolpaths) {
+    const liveOperationIds = new Set(state.operations.map((operation) => operation.id));
+    state.viewportScene.toolpaths = state.viewportScene.toolpaths.filter((toolpath) =>
+      liveOperationIds.has(toolpath.operationId)
+    );
+  }
+};
+
 const syncViewportScene = (state) => {
   if (!state.viewportScene) {
     state.viewportScene = createDefaultViewportScene();
+  }
+
+  // A toolpath only has meaning relative to a body it machines. Once every
+  // solid is gone, drop any orphaned toolpaths so the 3D view doesn't keep
+  // showing a path floating in empty space.
+  if (Array.isArray(state.viewportScene.solids) && state.viewportScene.solids.length === 0) {
+    state.viewportScene.toolpaths = [];
   }
 
   const readyOperationIds = new Set(
@@ -309,6 +408,11 @@ export const applyMockCoreAction = (currentState, action) => {
 
   if (action.type === ACTION_TYPES.UPDATE_FIELD) {
     applyFieldUpdate(state, action);
+    syncViewportScene(state);
+  }
+
+  if (action.type === ACTION_TYPES.DELETE_ENTITY) {
+    applyEntityDeletion(state, action);
     syncViewportScene(state);
   }
 

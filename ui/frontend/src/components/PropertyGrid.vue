@@ -1,5 +1,7 @@
 <template>
-  <div class="property-grid">
+  <div class="panel-context">
+    <SketchPalette v-if="store.isSketchMode" />
+    <div v-else class="property-grid">
     <div class="panel-header">
       <h2>Properties & Operations</h2>
       <span class="dispatch-state">{{ store.isDispatching ? 'Dispatching' : 'Idle' }}</span>
@@ -24,7 +26,7 @@
       <div v-else class="empty-state">No entity selected</div>
     </section>
 
-    <section class="section-container">
+    <section v-if="store.activeMode === 'design'" class="section-container">
       <h3>Parametric Variables</h3>
       <div class="property-card">
         <div v-for="feature in store.features" :key="feature.id" class="parameter-row">
@@ -57,7 +59,11 @@
       </div>
     </section>
 
-    <section v-for="setup in store.setups" :key="setup.id" class="section-container">
+    <section
+      v-for="setup in (store.activeMode === 'manufacture' ? store.setups : [])"
+      :key="setup.id"
+      class="section-container"
+    >
       <h3>Setup Sheet</h3>
       <div class="property-card">
         <label class="input-item">
@@ -95,7 +101,7 @@
       </div>
     </section>
 
-    <section class="section-container">
+    <section v-if="store.activeMode === 'manufacture'" class="section-container">
       <h3>CAM Operations</h3>
       <div class="property-card">
         <div v-for="operation in store.operations" :key="operation.id" class="cam-op-row">
@@ -154,7 +160,10 @@
       </div>
     </section>
 
-    <section v-if="store.simulationStats.materialRemoved > 0" class="section-container animate-fade">
+    <section
+      v-if="store.activeMode === 'manufacture' && store.simulationStats.materialRemoved > 0"
+      class="section-container animate-fade"
+    >
       <h3>Taichi Volume Report</h3>
       <div class="property-card status-success">
         <div class="prop-row">
@@ -167,15 +176,18 @@
         </div>
       </div>
     </section>
+    </div>
   </div>
 </template>
 
 <script>
 import { defineComponent } from 'vue';
 import { useCoreStore } from '../store';
+import SketchPalette from './SketchPalette.vue';
 
 export default defineComponent({
   name: 'PropertyGrid',
+  components: { SketchPalette },
   setup() {
     const store = useCoreStore();
     const parseNumber = (value) => Number.parseFloat(value);
@@ -204,6 +216,12 @@ export default defineComponent({
 </script>
 
 <style scoped>
+.panel-context {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
 .property-grid {
   padding: 16px;
   display: flex;

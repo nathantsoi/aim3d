@@ -86,9 +86,16 @@
     #app {
       display: grid;
       grid-template-columns: 280px 1fr 340px;
-      flex-grow: 1;
-      height: calc(100vh - 58px);
+      grid-template-rows: 100%;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
       position: relative;
+    }
+
+    /* Bottom bar holds its height and never gets squeezed by the grid */
+    #timeline-bar {
+      flex-shrink: 0;
     }
 
     /* Standard panels */
@@ -118,6 +125,9 @@
     <div class="status-badge" id="conn-status">Headless Core connected</div>
   </header>
 
+  <!-- Fusion-style ribbon toolbar (mode switcher + workspace tabs + command groups) -->
+  <div id="ribbon-mount"></div>
+
   <div id="app">
     <!-- Left Sidebar: Parametric Timeline (Track A2) -->
     <div class="app-panel" id="timeline-panel">
@@ -134,6 +144,9 @@
       <!-- Vue will inject content here -->
     </div>
   </div>
+
+  <!-- Bottom bar: parametric timeline -->
+  <div id="timeline-bar"></div>
 
   <script type="module" src="./src/main.js"></script>
 </body>

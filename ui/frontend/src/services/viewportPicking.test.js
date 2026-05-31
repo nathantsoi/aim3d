@@ -21,10 +21,10 @@ const createPickScene = () => ({
       snapPoints: [{ id: 'snap_center', kind: 'center', position: [0, 0, 0] }]
     },
     positions: [
-      -1, -1, 0,
-      1, -1, 0,
-      1, 1, 0,
-      -1, 1, 0
+      -1, 0, -1,
+      1, 0, -1,
+      1, 0, 1,
+      -1, 0, 1
     ],
     indices: [0, 1, 2, 0, 2, 3]
   }]

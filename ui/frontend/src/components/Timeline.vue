@@ -1,110 +1,143 @@
 <template>
   <div class="timeline-panel">
     <div class="panel-header">
-      <h2>Model Tree</h2>
+      <h2>{{ store.activeMode === 'manufacture' ? 'Manufacture Browser' : 'Model Tree' }}</h2>
     </div>
 
-    <section class="tree-container">
+    <section v-if="store.activeMode === 'design'" class="tree-container">
       <div class="tree-title">{{ store.documentPath }}</div>
       <div class="tree-list">
-        <button
+        <div
           v-for="feature in store.features"
           :key="feature.id"
-          class="tree-node"
-          :class="{
-            dirty: feature.isDirty,
-            selected: store.selectedEntityId === feature.selectionToken
-          }"
-          data-testid="feature-tree-node"
-          @click="onNodeClick(feature.selectionToken)"
+          class="tree-node-row"
         >
-          <span class="node-indicator"></span>
-          <span class="node-content">
-            <span class="node-type">{{ feature.label }}</span>
-            <span class="node-id">{{ feature.id }}</span>
-          </span>
-          <span class="node-param">{{ feature.value }}</span>
-        </button>
-      </div>
-    </section>
-
-    <section class="tree-container">
-      <div class="tree-title">Setups</div>
-      <div v-for="setup in store.setups" :key="setup.id" class="setup-group">
-        <button
-          class="tree-node setup-node"
-          :class="{ dirty: setup.isDirty, selected: store.selectedEntityId === setup.id }"
-          data-testid="setup-tree-node"
-          @click="onNodeClick(setup.id)"
-        >
-          <span class="node-indicator"></span>
-          <span class="node-content">
-            <span class="node-type">{{ setup.name }}</span>
-            <span class="node-id">{{ setup.workOffset }} / {{ setup.units }}</span>
-          </span>
-        </button>
-
-        <div class="operation-list">
           <button
-            v-for="operation in store.operationsBySetup[setup.id]"
-            :key="operation.id"
-            class="tree-node operation-node"
+            class="tree-node"
             :class="{
-              dirty: operation.isDirty || operation.status === 'Stale',
-              selected: store.selectedEntityId === operation.id
+              dirty: feature.isDirty,
+              selected: store.selectedEntityId === feature.selectionToken
             }"
-            data-testid="operation-tree-node"
-            @click="onNodeClick(operation.id)"
+            data-testid="feature-tree-node"
+            @click="onNodeClick(feature.selectionToken)"
           >
             <span class="node-indicator"></span>
             <span class="node-content">
-              <span class="node-type">{{ operation.name }}</span>
-              <span class="node-id">{{ operation.type }}</span>
+              <span class="node-type">{{ feature.label }}</span>
+              <span class="node-id">{{ feature.id }}</span>
             </span>
-            <span class="node-param">{{ operation.status }}</span>
+            <span class="node-param">{{ feature.value }}</span>
+          </button>
+          <button
+            v-if="feature.type === 'Sketch'"
+            class="open-btn"
+            :title="`Open ${feature.label}`"
+            data-testid="sketch-open"
+            @click="onOpenSketch(feature.id)"
+          >
+            &#9998;
+          </button>
+          <button
+            class="delete-btn"
+            :title="`Delete ${feature.label}`"
+            data-testid="feature-delete"
+            @click="onDelete(feature.id, 'feature')"
+          >
+            &times;
           </button>
         </div>
       </div>
     </section>
 
-    <section class="timeline-track-container">
-      <div class="track-header">Timeline</div>
-      <div class="track-wrapper">
-        <div class="track-line"></div>
-        <button
-          v-for="(feature, index) in store.features"
-          :key="'t_' + feature.id"
-          class="track-tick"
-          :class="{ active: index <= activeIndex }"
-          :title="feature.id"
-          @click="activeIndex = index"
-        >
-          <span class="tick-dot"></span>
-          <span class="tick-label">{{ feature.type }}</span>
-        </button>
+    <section v-if="store.activeMode === 'manufacture'" class="tree-container">
+      <div class="tree-title">Setups</div>
+      <div v-for="setup in store.setups" :key="setup.id" class="setup-group">
+        <div class="tree-node-row">
+          <button
+            class="tree-node setup-node"
+            :class="{ dirty: setup.isDirty, selected: store.selectedEntityId === setup.id }"
+            data-testid="setup-tree-node"
+            @click="onNodeClick(setup.id)"
+          >
+            <span class="node-indicator"></span>
+            <span class="node-content">
+              <span class="node-type">{{ setup.name }}</span>
+              <span class="node-id">{{ setup.workOffset }} / {{ setup.units }}</span>
+            </span>
+          </button>
+          <button
+            class="delete-btn"
+            :title="`Delete ${setup.name}`"
+            data-testid="setup-delete"
+            @click="onDelete(setup.id, 'setup')"
+          >
+            &times;
+          </button>
+        </div>
+
+        <div class="operation-list">
+          <div
+            v-for="operation in store.operationsBySetup[setup.id]"
+            :key="operation.id"
+            class="tree-node-row"
+          >
+            <button
+              class="tree-node operation-node"
+              :class="{
+                dirty: operation.isDirty || operation.status === 'Stale',
+                selected: store.selectedEntityId === operation.id
+              }"
+              data-testid="operation-tree-node"
+              @click="onNodeClick(operation.id)"
+            >
+              <span class="node-indicator"></span>
+              <span class="node-content">
+                <span class="node-type">{{ operation.name }}</span>
+                <span class="node-id">{{ operation.type }}</span>
+              </span>
+              <span class="node-param">{{ operation.status }}</span>
+            </button>
+            <button
+              class="delete-btn"
+              :title="`Delete ${operation.name}`"
+              data-testid="operation-delete"
+              @click="onDelete(operation.id, 'operation')"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   </div>
 </template>
 
 <script>
-import { defineComponent, ref } from 'vue';
+import { defineComponent } from 'vue';
 import { useCoreStore } from '../store';
 
 export default defineComponent({
   name: 'Timeline',
   setup() {
     const store = useCoreStore();
-    const activeIndex = ref(2);
 
     const onNodeClick = (entityId) => {
       store.selectEntity(store.selectedEntityId === entityId ? null : entityId);
     };
 
+    const onDelete = (entityId, kind) => {
+      store.deleteEntity(entityId, kind);
+    };
+
+    const onOpenSketch = (sketchId) => {
+      store.enterSketchMode(sketchId);
+    };
+
     return {
       store,
-      activeIndex,
-      onNodeClick
+      onNodeClick,
+      onDelete,
+      onOpenSketch
     };
   }
 });
@@ -127,15 +160,13 @@ export default defineComponent({
 }
 
 .tree-container,
-.setup-group,
-.timeline-track-container {
+.setup-group {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.tree-title,
-.track-header {
+.tree-title {
   font-size: 0.85rem;
   font-weight: 600;
   color: hsl(220, 10%, 80%);
@@ -154,17 +185,21 @@ export default defineComponent({
   margin-left: 16px;
 }
 
-.tree-node,
-.track-tick {
+.tree-node-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tree-node {
   background: none;
   border: 0;
   color: inherit;
   cursor: pointer;
   font: inherit;
   text-align: left;
-}
-
-.tree-node {
+  flex-grow: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -225,56 +260,44 @@ export default defineComponent({
   font-weight: 700;
 }
 
-.timeline-track-container {
-  gap: 12px;
-}
-
-.track-wrapper {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding-left: 20px;
-}
-
-.track-line {
-  position: absolute;
-  top: 0;
-  left: 24px;
-  bottom: 0;
-  width: 2px;
-  background-color: hsla(220, 15%, 25%, 0.6);
-  z-index: 1;
-}
-
-.track-tick {
-  position: relative;
+.delete-btn,
+.open-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  z-index: 2;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: hsl(220, 10%, 45%);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
 }
 
-.tick-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background-color: hsl(220, 15%, 20%);
-  border: 2px solid hsla(220, 15%, 35%, 0.6);
+.open-btn {
+  opacity: 1;
+  color: hsl(200, 100%, 60%);
 }
 
-.track-tick.active .tick-dot {
-  background-color: hsl(200, 100%, 50%);
-  border-color: hsla(200, 100%, 50%, 0.3);
+.tree-node-row:hover .delete-btn {
+  opacity: 1;
 }
 
-.tick-label {
-  color: hsl(220, 10%, 55%);
-  font-size: 0.75rem;
-  font-weight: 600;
+.open-btn:hover {
+  color: hsl(200, 100%, 70%);
+  border-color: hsla(200, 100%, 50%, 0.4);
+  background-color: hsla(200, 100%, 50%, 0.12);
 }
 
-.active .tick-label {
-  color: hsl(220, 10%, 90%);
+.delete-btn:hover {
+  color: hsl(0, 85%, 68%);
+  border-color: hsla(0, 85%, 65%, 0.4);
+  background-color: hsla(0, 85%, 65%, 0.12);
 }
 </style>

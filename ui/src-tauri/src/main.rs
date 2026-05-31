@@ -92,6 +92,103 @@ fn update_items_by_id(items: &mut Value, target_id: &str, path: &str, value: Val
     }
 }
 
+fn retain_by_id(items: &mut Value, target_id: &str) {
+    if let Some(array) = items.as_array_mut() {
+        array.retain(|item| item.get("id").and_then(Value::as_str) != Some(target_id));
+    }
+}
+
+fn clear_selection_if(state: &mut Value, target_id: Option<&str>) {
+    let selected = state.get("selectedEntityId").and_then(Value::as_str);
+    if target_id.is_some() && selected == target_id {
+        state["selectedEntityId"] = Value::Null;
+        state["selectedEntity"] = Value::Null;
+    }
+}
+
+fn delete_entity(state: &mut Value, target_kind: &str, target_id: &str) {
+    match target_kind {
+        "feature" => {
+            let token = state["features"]
+                .as_array()
+                .and_then(|features| {
+                    features.iter().find(|feature| {
+                        feature.get("id").and_then(Value::as_str) == Some(target_id)
+                    })
+                })
+                .and_then(|feature| feature.get("selectionToken").and_then(Value::as_str))
+                .map(str::to_string);
+            retain_by_id(&mut state["features"], target_id);
+            if let Some(operations) = state["operations"].as_array_mut() {
+                for operation in operations {
+                    operation["status"] = json!("Stale");
+                }
+            }
+            // Remove the geometry this feature produced so the 3D view stays in
+            // sync with the model tree / timeline. Solids reference their source
+            // feature via `sourceToken`/`pickable.entityId` (e.g.
+            // `feat_Extrude_1_face_0`).
+            if let Some(solids) = state["viewportScene"]["solids"].as_array_mut() {
+                let prefix = format!("{target_id}_");
+                solids.retain(|solid| {
+                    let tokens = [
+                        solid.get("sourceToken").and_then(Value::as_str),
+                        solid
+                            .get("pickable")
+                            .and_then(|pickable| pickable.get("entityId"))
+                            .and_then(Value::as_str),
+                        solid.get("id").and_then(Value::as_str),
+                    ];
+                    !tokens.into_iter().flatten().any(|t| {
+                        Some(t) == token.as_deref()
+                            || t == target_id
+                            || t.starts_with(&prefix)
+                    })
+                });
+            }
+            clear_selection_if(state, Some(target_id));
+            clear_selection_if(state, token.as_deref());
+        }
+        "setup" => {
+            retain_by_id(&mut state["setups"], target_id);
+            if let Some(operations) = state["operations"].as_array_mut() {
+                operations.retain(|operation| {
+                    operation.get("setupId").and_then(Value::as_str) != Some(target_id)
+                });
+            }
+            clear_selection_if(state, Some(target_id));
+        }
+        "operation" => {
+            retain_by_id(&mut state["operations"], target_id);
+            clear_selection_if(state, Some(target_id));
+        }
+        _ => {}
+    }
+
+    let live_operation_ids: Vec<String> = state["operations"]
+        .as_array()
+        .map(|operations| {
+            operations
+                .iter()
+                .filter_map(|operation| {
+                    operation
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(toolpaths) = state["viewportScene"]["toolpaths"].as_array_mut() {
+        toolpaths.retain(|toolpath| {
+            toolpath
+                .get("operationId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| live_operation_ids.iter().any(|live| live == id))
+        });
+    }
+}
+
 fn default_viewport_scene() -> Value {
     json!({
         "solids": [{
@@ -153,6 +250,7 @@ fn default_viewport_scene() -> Value {
                 { "id": "axis_y", "label": "Y", "color": [0.2, 0.82, 0.28, 1], "points": [0, 0, 0, 0, 1.1, 0] },
                 { "id": "axis_z", "label": "Z", "color": [0.28, 0.48, 1, 1], "points": [0, 0, 0, 0, 0, 1.1] }
             ],
+            "grid": false,
             "workOrigin": [0, 0, 0]
         },
         "camera": {
@@ -180,6 +278,16 @@ fn default_viewport_scene() -> Value {
 fn sync_viewport_scene(state: &mut Value) {
     if state.get("viewportScene").is_none() || state["viewportScene"].is_null() {
         state["viewportScene"] = default_viewport_scene();
+    }
+
+    // A toolpath only has meaning relative to a body it machines. Once every
+    // solid is gone, drop any orphaned toolpaths so the 3D view doesn't keep
+    // showing a path floating in empty space.
+    let no_solids = state["viewportScene"]["solids"]
+        .as_array()
+        .is_some_and(Vec::is_empty);
+    if no_solids {
+        state["viewportScene"]["toolpaths"] = json!([]);
     }
 
     let ready_operation_ids: Vec<String> = state
@@ -317,6 +425,9 @@ fn dispatch_core_action(action_json: String, state_json: String) -> IPCResponse 
                 update_items_by_id(&mut state["operations"], target_id, path, value);
             }
         }
+        "core.deleteEntity" => {
+            delete_entity(&mut state, target_kind, target_id);
+        }
         "core.recomputeDocument" => {
             for key in ["features", "setups", "operations"] {
                 if let Some(items) = state[key].as_array_mut() {
@@ -404,6 +515,28 @@ fn run_simulation(_gcode: String) -> IPCResponse {
     }
 }
 
+#[tauri::command]
+fn recompute_document() -> IPCResponse {
+    println!("[Tauri Rust IPC] Invoking headless core parametric recompute.");
+    IPCResponse {
+        status: "success".to_string(),
+        message: "Document recomputed".to_string(),
+        data: "{\"recomputed\": true, \"cleared_dirty\": 3}".to_string(),
+    }
+}
+
+#[tauri::command]
+fn post_process(setup_id: String) -> IPCResponse {
+    println!("[Tauri Rust IPC] Posting G-code for setup: {}", setup_id);
+    IPCResponse {
+        status: "success".to_string(),
+        message: format!("Posted G-code for {}", setup_id),
+        data: format!(
+            "{{\"gcode\": \"; aim3d Posted G-code for {setup_id}\\nT1 M6\\nG0 X0 Y0 Z10\\nG1 X12 Y8 Z-2 F800\\nM30\"}}"
+        ),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -411,7 +544,9 @@ fn main() {
             open_document,
             solve_2d_sketch,
             generate_toolpath,
-            run_simulation
+            run_simulation,
+            recompute_document,
+            post_process
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -31,6 +31,38 @@ const pushLineSegments = (vertices, points, color) => {
   }
 };
 
+const GRID_LINE_COLOR = [0.32, 0.36, 0.46, 0.85];
+const GRID_AXIS_COLOR = [0.5, 0.56, 0.7, 1];
+
+// Generates a sketch-plane grid on the XY plane (z = 0), matching the
+// orthographic top-down view used while editing a sketch. Each grid line is a
+// discrete segment so consecutive lines are never joined.
+const buildSketchGridLines = (extent = 5, step = 0.5) => {
+  const lines = [];
+  const divisions = Math.round(extent / step);
+  for (let i = -divisions; i <= divisions; i++) {
+    const offset = i * step;
+    const color = i === 0 ? GRID_AXIS_COLOR : GRID_LINE_COLOR;
+    lines.push({ color, points: [-extent, offset, 0, extent, offset, 0] });
+    lines.push({ color, points: [offset, -extent, 0, offset, extent, 0] });
+  }
+  return lines;
+};
+
+// Generates a ground-plane grid on the XY plane (z = 0), matching the Z-up
+// camera used by the perspective viewport. Used for the toggleable 3D view grid.
+const buildGroundGridLines = (extent = 5, step = 0.5) => {
+  const lines = [];
+  const divisions = Math.round(extent / step);
+  for (let i = -divisions; i <= divisions; i++) {
+    const offset = i * step;
+    const color = i === 0 ? GRID_AXIS_COLOR : GRID_LINE_COLOR;
+    lines.push({ color, points: [-extent, offset, 0, extent, offset, 0] });
+    lines.push({ color, points: [offset, -extent, 0, offset, extent, 0] });
+  }
+  return lines;
+};
+
 export const createSceneBufferKey = (scene, selectedEntityId = null, hoverEntityId = null) => fnv1a({
   solids: scene?.solids ?? [],
   toolpaths: scene?.toolpaths ?? [],
@@ -100,6 +132,16 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
   });
 
   const lineVertices = [];
+  if (scene?.gizmos?.sketchGrid) {
+    buildSketchGridLines().forEach((line) => {
+      pushLineSegments(lineVertices, line.points, line.color);
+    });
+  }
+  if (scene?.gizmos?.grid) {
+    buildGroundGridLines().forEach((line) => {
+      pushLineSegments(lineVertices, line.points, line.color);
+    });
+  }
   toolpaths.forEach((toolpath) => {
     pushLineSegments(lineVertices, toolpath.points ?? [], colorForToolpath(toolpath, selectedEntityId));
   });

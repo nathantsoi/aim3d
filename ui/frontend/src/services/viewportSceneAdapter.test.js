@@ -28,6 +28,31 @@ describe('viewport scene adapter', () => {
     expect(Array.from(selected.solidVertices.slice(6, 10))).toEqual([1, 0.8199999928474426, 0.23999999463558197, 1]);
   });
 
+  it('adds sketch-plane grid line segments when the grid gizmo is enabled', () => {
+    const scene = createDefaultViewportScene();
+    const baseline = adaptViewportScene(scene);
+
+    scene.gizmos.sketchGrid = true;
+    const withGrid = adaptViewportScene(scene);
+
+    expect(withGrid.segmentCount).toBeGreaterThan(baseline.segmentCount);
+    // 21 lines per axis (extent 5, step 0.5) -> 42 grid segments added.
+    expect(withGrid.segmentCount - baseline.segmentCount).toBe(42);
+    expect(createSceneBufferKey(scene)).not.toBe(createSceneBufferKey(createDefaultViewportScene()));
+  });
+
+  it('adds ground-plane grid line segments when the viewport grid gizmo is enabled', () => {
+    const scene = createDefaultViewportScene();
+    const baseline = adaptViewportScene(scene);
+
+    scene.gizmos.grid = true;
+    const withGrid = adaptViewportScene(scene);
+
+    expect(withGrid.segmentCount).toBeGreaterThan(baseline.segmentCount);
+    expect(withGrid.segmentCount - baseline.segmentCount).toBe(42);
+    expect(createSceneBufferKey(scene)).not.toBe(createSceneBufferKey(createDefaultViewportScene()));
+  });
+
   it('preserves pickable metadata and creates separate hover highlight buffers', () => {
     const scene = createDefaultViewportScene();
     const hoveredKey = createSceneBufferKey(scene, null, 'feat_Extrude_1_face_0');

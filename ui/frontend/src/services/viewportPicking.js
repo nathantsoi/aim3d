@@ -1,3 +1,5 @@
+import { cameraBasis } from './viewportControls';
+
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (v, s) => [v[0] * s, v[1] * s, v[2] * s];
@@ -14,18 +16,7 @@ const normalize = (v) => {
 };
 
 export const createCameraRay = (camera, x, y, width, height) => {
-  const target = camera?.target ?? [0, 0, 0];
-  const distance = camera?.distance ?? 5;
-  const yaw = camera?.yaw ?? 0.7;
-  const pitch = camera?.pitch ?? 0.6;
-  const eye = [
-    target[0] + Math.cos(pitch) * Math.sin(yaw) * distance,
-    target[1] + Math.sin(pitch) * distance,
-    target[2] + Math.cos(pitch) * Math.cos(yaw) * distance
-  ];
-  const forward = normalize(sub(target, eye));
-  const right = normalize(cross(forward, [0, 1, 0]));
-  const up = normalize(cross(right, forward));
+  const { eye, forward, right, up } = cameraBasis(camera);
   const aspect = Math.max(1, width) / Math.max(1, height);
   const tanHalfFov = Math.tan(Math.PI / 8);
   const ndcX = (x / Math.max(1, width)) * 2 - 1;
