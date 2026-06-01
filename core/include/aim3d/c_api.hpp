@@ -31,6 +31,61 @@ void aim3d_document_release(Aim3dDocumentHandle* handle);
 int aim3d_document_save(Aim3dDocumentHandle* handle, const char* path);
 int aim3d_document_import_geometry(Aim3dDocumentHandle* handle, const char* path);
 int aim3d_document_recompute(Aim3dDocumentHandle* handle);
+
+// Parametric modeling API. Returned strings are owned by the caller and must
+// be released with aim3d_string_release.
+
+// Create a sketch on a named origin plane (XY/XZ/YZ). Shorthand kept for
+// back-compat; resolves to a plane reference of kind Origin.
+char* aim3d_document_add_sketch(Aim3dDocumentHandle* handle, const char* plane);
+// Create a sketch on a full plane reference. `kind` is one of
+// "Origin"/"ConstructionPlane"/"PlanarFace"; `origin_plane` is XY/XZ/YZ (used
+// when kind == Origin); `ref_token` is the construction-plane or face token.
+char* aim3d_document_add_sketch_on_plane(
+    Aim3dDocumentHandle* handle,
+    const char* kind,
+    const char* origin_plane,
+    const char* ref_token);
+
+int aim3d_document_add_rectangle(
+    Aim3dDocumentHandle* handle,
+    const char* sketch_token,
+    double x0,
+    double y0,
+    double x1,
+    double y1);
+// Add a generic sketch element. `points` is a flattened [x0,y0,x1,y1,...]
+// array with `point_count` (x,y) pairs. Returns the element token.
+char* aim3d_document_add_sketch_entity(
+    Aim3dDocumentHandle* handle,
+    const char* sketch_token,
+    const char* kind,
+    const double* points,
+    std::size_t point_count,
+    double radius,
+    double value,
+    int construction);
+
+char* aim3d_document_add_extrude(Aim3dDocumentHandle* handle, const char* sketch_token, double distance);
+// Add any solid feature kind (Extrude/Revolve/Sweep/Loft/...). Only Extrude
+// with a rectangle profile evaluates to geometry; others are timeline stubs.
+// `operation` is NewBody/Join/Cut/Intersect. Returns the feature token.
+char* aim3d_document_add_solid_feature(
+    Aim3dDocumentHandle* handle,
+    const char* kind,
+    const char* sketch_token,
+    double value,
+    const char* operation);
+// Register a construction plane/axis/point. `inputs_csv` is a comma-separated
+// list of referenced geometry tokens (may be empty). Returns the object token.
+char* aim3d_document_add_construction(
+    Aim3dDocumentHandle* handle,
+    const char* kind,
+    const char* inputs_csv,
+    double value);
+
+char* aim3d_document_core_state_snapshot(Aim3dDocumentHandle* handle);
+
 std::size_t aim3d_document_body_count(Aim3dDocumentHandle* handle);
 Aim3dBodyHandle* aim3d_document_body_at(Aim3dDocumentHandle* handle, std::size_t index);
 Aim3dBodyHandle* aim3d_document_preview_body(Aim3dDocumentHandle* handle);

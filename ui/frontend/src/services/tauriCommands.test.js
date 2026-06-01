@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyCoreState,
   generateToolpath,
   invokeCommand,
   postProcess,
+  pushCoreSnapshot,
   recomputeDocument,
   runSimulation,
   solveSketch2d
@@ -50,5 +52,18 @@ describe('tauriCommands service', () => {
     expect(invoke).toHaveBeenCalledWith('run_simulation', { gcode: '; gcode' });
     expect(invoke).toHaveBeenCalledWith('recompute_document', {});
     expect(invoke).toHaveBeenCalledWith('post_process', { setupId: 'setup_Main_1' });
+  });
+
+  it('routes the core snapshot bridge commands with their JSON payloads', async () => {
+    const invoke = mockInvoke('{}');
+
+    await applyCoreState('{"features":[]}', '{"features":[]}');
+    await pushCoreSnapshot('{"features":[]}');
+
+    expect(invoke).toHaveBeenCalledWith('apply_core_state', {
+      snapshotJson: '{"features":[]}',
+      stateJson: '{"features":[]}'
+    });
+    expect(invoke).toHaveBeenCalledWith('push_core_snapshot', { snapshotJson: '{"features":[]}' });
   });
 });

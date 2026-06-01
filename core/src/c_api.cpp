@@ -184,6 +184,170 @@ int aim3d_document_recompute(Aim3dDocumentHandle* handle) {
     }
 }
 
+char* aim3d_document_add_sketch(Aim3dDocumentHandle* handle, const char* plane) {
+    if (!handle || !handle->document) {
+        return nullptr;
+    }
+    try {
+        return copyString(handle->document->addSketch(plane ? plane : "XY"));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+char* aim3d_document_add_sketch_on_plane(
+    Aim3dDocumentHandle* handle,
+    const char* kind,
+    const char* origin_plane,
+    const char* ref_token) {
+    if (!handle || !handle->document) {
+        return nullptr;
+    }
+    try {
+        const std::string kindStr = kind ? kind : "Origin";
+        aim3d::SketchPlaneReference plane;
+        if (kindStr == "ConstructionPlane") {
+            plane.kind = aim3d::SketchPlaneKind::ConstructionPlane;
+            plane.constructionPlane.token = ref_token ? ref_token : "";
+        } else if (kindStr == "PlanarFace") {
+            plane.kind = aim3d::SketchPlaneKind::PlanarFace;
+            plane.face.token = ref_token ? ref_token : "";
+        } else {
+            plane.kind = aim3d::SketchPlaneKind::Origin;
+            plane.originPlane = aim3d::originPlaneFromName(origin_plane ? origin_plane : "XY");
+        }
+        return copyString(handle->document->addSketch(plane));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+int aim3d_document_add_rectangle(
+    Aim3dDocumentHandle* handle,
+    const char* sketch_token,
+    double x0,
+    double y0,
+    double x1,
+    double y1) {
+    if (!handle || !handle->document || !sketch_token) {
+        return 0;
+    }
+    try {
+        return handle->document->addRectangleToSketch(sketch_token, x0, y0, x1, y1) ? 1 : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+char* aim3d_document_add_sketch_entity(
+    Aim3dDocumentHandle* handle,
+    const char* sketch_token,
+    const char* kind,
+    const double* points,
+    std::size_t point_count,
+    double radius,
+    double value,
+    int construction) {
+    if (!handle || !handle->document || !sketch_token) {
+        return nullptr;
+    }
+    try {
+        aim3d::SketchElement element;
+        aim3d::SketchElementKind kindValue = aim3d::SketchElementKind::Line;
+        if (kind && aim3d::sketchElementKindFromName(kind, kindValue)) {
+            element.kind = kindValue;
+        }
+        for (std::size_t i = 0; i < point_count && points; ++i) {
+            element.points.push_back({points[i * 2], points[i * 2 + 1]});
+        }
+        element.radius = radius;
+        element.value = value;
+        element.construction = construction != 0;
+        const auto token = handle->document->addSketchEntity(sketch_token, element);
+        return token.empty() ? nullptr : copyString(token);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+char* aim3d_document_add_extrude(Aim3dDocumentHandle* handle, const char* sketch_token, double distance) {
+    if (!handle || !handle->document || !sketch_token) {
+        return nullptr;
+    }
+    try {
+        return copyString(handle->document->addExtrude(sketch_token, distance));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+char* aim3d_document_add_solid_feature(
+    Aim3dDocumentHandle* handle,
+    const char* kind,
+    const char* sketch_token,
+    double value,
+    const char* operation) {
+    if (!handle || !handle->document || !sketch_token) {
+        return nullptr;
+    }
+    try {
+        aim3d::SolidFeatureKind kindValue = aim3d::SolidFeatureKind::Extrude;
+        if (kind) {
+            aim3d::solidFeatureKindFromName(kind, kindValue);
+        }
+        const auto op = aim3d::featureOperationFromName(operation ? operation : "NewBody");
+        return copyString(handle->document->addSolidFeature(kindValue, sketch_token, value, op));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+char* aim3d_document_add_construction(
+    Aim3dDocumentHandle* handle,
+    const char* kind,
+    const char* inputs_csv,
+    double value) {
+    if (!handle || !handle->document) {
+        return nullptr;
+    }
+    try {
+        aim3d::ConstructionKind kindValue = aim3d::ConstructionKind::OffsetPlane;
+        if (kind) {
+            aim3d::constructionKindFromName(kind, kindValue);
+        }
+        std::vector<std::string> inputs;
+        if (inputs_csv && *inputs_csv) {
+            std::string csv(inputs_csv);
+            std::size_t start = 0;
+            while (start <= csv.size()) {
+                const auto comma = csv.find(',', start);
+                const auto end = comma == std::string::npos ? csv.size() : comma;
+                if (end > start) {
+                    inputs.push_back(csv.substr(start, end - start));
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                start = comma + 1;
+            }
+        }
+        return copyString(handle->document->addConstructionObject(kindValue, inputs, value));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+char* aim3d_document_core_state_snapshot(Aim3dDocumentHandle* handle) {
+    if (!handle || !handle->document) {
+        return nullptr;
+    }
+    try {
+        return copyString(handle->document->coreStateSnapshot());
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 std::size_t aim3d_document_body_count(Aim3dDocumentHandle* handle) {
     if (!handle || !handle->document) {
         return 0;

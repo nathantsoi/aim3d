@@ -5,6 +5,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashSet;
+use tauri::Manager;
+
+/// Event name the native core broadcasts whenever the document changes
+/// (new document / sketch / rectangle / extrude). The frontend listens for
+/// this and projects the attached snapshot onto the Pinia store.
+const CORE_CHANGED_EVENT: &str = "core://changed";
 
 #[derive(Serialize, Deserialize)]
 struct IPCResponse {
@@ -363,6 +370,106 @@ fn sync_viewport_scene(state: &mut Value) {
         json!(toolpath_segments + axis_segments);
 }
 
+fn feature_from_snapshot(feature: &Value) -> Value {
+    let feature_type = feature.get("type").cloned().unwrap_or(Value::Null);
+    let label = feature
+        .get("label")
+        .cloned()
+        .unwrap_or_else(|| feature_type.clone());
+    let selection_token = feature
+        .get("selectionToken")
+        .cloned()
+        .unwrap_or_else(|| match feature.get("id").and_then(Value::as_str) {
+            Some(id) => json!(format!("{id}_face_0")),
+            None => Value::Null,
+        });
+    json!({
+        "id": feature.get("id").cloned().unwrap_or(Value::Null),
+        "type": feature_type,
+        "label": label,
+        "value": feature.get("value").cloned().unwrap_or(json!(0)),
+        "unit": feature.get("unit").cloned().unwrap_or_else(|| json!("mm")),
+        "isDirty": feature.get("isDirty").and_then(Value::as_bool).unwrap_or(false),
+        "selectionToken": selection_token
+    })
+}
+
+/// Projects a flat core-state snapshot (emitted by the native C++/Rust core)
+/// onto the UI state. Mirrors `applyCoreSnapshot` in the frontend so the same
+/// merge happens whether a snapshot is applied in JS or routed through Rust:
+/// the core is the source of truth for features and produced solids, while
+/// UI presentation state (camera, gizmos, resolving selection) is preserved.
+fn apply_core_snapshot(state: &mut Value, snapshot: &Value) {
+    if !snapshot.is_object() {
+        return;
+    }
+
+    if let Some(id) = snapshot.get("activeDocumentId").and_then(Value::as_str) {
+        state["activeDocumentId"] = json!(id);
+    }
+    if let Some(path) = snapshot.get("documentPath").and_then(Value::as_str) {
+        state["documentPath"] = json!(path);
+    }
+    if let Some(features) = snapshot.get("features").and_then(Value::as_array) {
+        let projected: Vec<Value> = features.iter().map(feature_from_snapshot).collect();
+        state["features"] = json!(projected);
+    }
+
+    if state.get("viewportScene").is_none() || state["viewportScene"].is_null() {
+        state["viewportScene"] = default_viewport_scene();
+    }
+    if let Some(scene) = snapshot.get("viewportScene") {
+        if let Some(solids) = scene.get("solids").and_then(Value::as_array) {
+            state["viewportScene"]["solids"] = json!(solids);
+        }
+        if let Some(toolpaths) = scene.get("toolpaths").and_then(Value::as_array) {
+            state["viewportScene"]["toolpaths"] = json!(toolpaths);
+        }
+    }
+
+    // Drop a dangling selection that no longer resolves to a live entity.
+    if let Some(selected) = state
+        .get("selectedEntityId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
+        let mut tokens: HashSet<String> = HashSet::new();
+        if let Some(features) = state["features"].as_array() {
+            for feature in features {
+                if let Some(id) = feature.get("id").and_then(Value::as_str) {
+                    tokens.insert(id.to_string());
+                }
+                if let Some(token) = feature.get("selectionToken").and_then(Value::as_str) {
+                    tokens.insert(token.to_string());
+                }
+            }
+        }
+        if let Some(solids) = state["viewportScene"]["solids"].as_array() {
+            for solid in solids {
+                for key in [
+                    solid.get("sourceToken").and_then(Value::as_str),
+                    solid
+                        .get("pickable")
+                        .and_then(|pickable| pickable.get("entityId"))
+                        .and_then(Value::as_str),
+                    solid.get("id").and_then(Value::as_str),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    tokens.insert(key.to_string());
+                }
+            }
+        }
+        if !tokens.contains(&selected) {
+            state["selectedEntityId"] = Value::Null;
+            state["selectedEntity"] = Value::Null;
+        }
+    }
+
+    sync_viewport_scene(state);
+}
+
 #[tauri::command]
 fn dispatch_core_action(action_json: String, state_json: String) -> IPCResponse {
     let action: Value = match serde_json::from_str(&action_json) {
@@ -457,6 +564,9 @@ fn dispatch_core_action(action_json: String, state_json: String) -> IPCResponse 
             state["isSimulating"] = json!(false);
             state["simulationStats"] = json!({ "collisions": 0, "materialRemoved": 1420.5 });
         }
+        "core.loadDocumentState" => {
+            apply_core_snapshot(&mut state, &value);
+        }
         _ => {}
     }
 
@@ -537,10 +647,80 @@ fn post_process(setup_id: String) -> IPCResponse {
     }
 }
 
+/// Merge a core-state snapshot into the supplied UI state and return the
+/// projected result. This is the request/response form of the projection (the
+/// frontend can route a pulled snapshot through the core boundary instead of
+/// merging purely client-side).
+#[tauri::command]
+fn apply_core_state(snapshot_json: String, state_json: String) -> IPCResponse {
+    let snapshot: Value = match serde_json::from_str(&snapshot_json) {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            return IPCResponse {
+                status: "error".to_string(),
+                message: format!("Invalid snapshot JSON: {err}"),
+                data: state_json,
+            };
+        }
+    };
+
+    let mut state: Value = match serde_json::from_str(&state_json) {
+        Ok(state) => state,
+        Err(err) => {
+            return IPCResponse {
+                status: "error".to_string(),
+                message: format!("Invalid state JSON: {err}"),
+                data: "{}".to_string(),
+            };
+        }
+    };
+
+    apply_core_snapshot(&mut state, &snapshot);
+
+    IPCResponse {
+        status: "success".to_string(),
+        message: "Applied core snapshot".to_string(),
+        data: state.to_string(),
+    }
+}
+
+/// Broadcast a core-state snapshot to every window as a `core://changed` event.
+/// This is the push hook a core-as-service transport (or a Python sidecar)
+/// calls so a scripted document/sketch/rectangle/extrude updates the running UI
+/// in real time, without the UI holding any sovereign document state.
+#[tauri::command]
+fn push_core_snapshot(app: tauri::AppHandle, snapshot_json: String) -> IPCResponse {
+    let snapshot: Value = match serde_json::from_str(&snapshot_json) {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            return IPCResponse {
+                status: "error".to_string(),
+                message: format!("Invalid snapshot JSON: {err}"),
+                data: "{}".to_string(),
+            };
+        }
+    };
+
+    match app.emit_all(CORE_CHANGED_EVENT, snapshot) {
+        Ok(()) => IPCResponse {
+            status: "success".to_string(),
+            message: "Broadcast core snapshot".to_string(),
+            data: "{\"emitted\": true}".to_string(),
+        },
+        Err(err) => IPCResponse {
+            status: "error".to_string(),
+            message: format!("Failed to emit core snapshot: {err}"),
+            data: "{}".to_string(),
+        },
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             dispatch_core_action,
+            apply_core_state,
+            push_core_snapshot,
             open_document,
             solve_2d_sketch,
             generate_toolpath,

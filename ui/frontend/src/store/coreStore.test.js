@@ -210,3 +210,113 @@ describe('core store action gateway', () => {
     expect(store.gcode).toContain('op_Pocket_1');
   });
 });
+
+describe('core snapshot projection', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  const sketchRectExtrudeSnapshot = () => ({
+    activeDocumentId: 'doc_2002',
+    documentPath: 'Untitled.a3d',
+    features: [
+      { id: 'feat_Sketch_1', type: 'Sketch', label: 'Sketch1', value: 0, unit: 'mm', isDirty: false, selectionToken: 'feat_Sketch_1_face_0' },
+      { id: 'feat_Extrude_1', type: 'Extrude', label: 'Extrude1', value: 10, unit: 'mm', isDirty: false, selectionToken: 'feat_Extrude_1_face_0' }
+    ],
+    viewportScene: {
+      solids: [
+        {
+          id: 'solid_1',
+          bodyId: 1,
+          sourceToken: 'feat_Extrude_1_face_0',
+          pickable: { entityId: 'feat_Extrude_1_face_0', kind: 'B-rep Exact Face', priority: 10, snapPoints: [] },
+          positions: [0, 0, 0, 2, 0, 0, 2, 1, 0],
+          normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+          colors: [],
+          indices: [0, 1, 2]
+        }
+      ],
+      toolpaths: []
+    }
+  });
+
+  it('projects a core snapshot from a scripted sketch/rectangle/extrude onto the store', () => {
+    const store = useCoreStore();
+
+    store.loadCoreSnapshot(sketchRectExtrudeSnapshot());
+
+    expect(store.activeDocumentId).toBe('doc_2002');
+    expect(store.features.map((feature) => feature.type)).toEqual(['Sketch', 'Extrude']);
+    expect(store.features.find((feature) => feature.id === 'feat_Extrude_1').value).toBe(10);
+    expect(store.viewportScene.solids).toHaveLength(1);
+    expect(store.viewportScene.solids[0].sourceToken).toBe('feat_Extrude_1_face_0');
+    expect(store.viewportScene.diagnostics.triangleCount).toBe(1);
+  });
+
+  it('projects a schemaVersion 2 browser tree (origin, construction, sketches, bodies)', () => {
+    const store = useCoreStore();
+
+    store.loadCoreSnapshot({
+      schemaVersion: 2,
+      activeDocumentId: 'doc_4004',
+      documentPath: 'Untitled.a3d',
+      features: [
+        { id: 'feat_Sketch_1', type: 'Sketch', label: 'feat_Sketch_1', value: 0, unit: 'mm', isDirty: false, plane: { kind: 'Origin', originPlane: 'XY' }, entityCount: 1, selectionToken: 'feat_Sketch_1_face_0' },
+        { id: 'feat_Extrude_1', type: 'Extrude', label: 'Extrude1', value: 10, unit: 'mm', isDirty: false, operation: 'NewBody', sketchId: 'feat_Sketch_1', selectionToken: 'feat_Extrude_1_face_0' }
+      ],
+      browser: {
+        origin: { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true },
+        construction: [{ id: 'con_Plane_1', kind: 'OffsetPlane', category: 'plane', label: 'Plane1', value: 5, visible: true, inputs: ['origin_XY'] }],
+        sketches: [{ id: 'feat_Sketch_1', plane: { kind: 'Origin', originPlane: 'XY' }, visible: true, entities: [{ id: 'sk_ent_1', kind: 'Rectangle2Point', points: [[0, 0], [2, 1]], construction: false }] }],
+        bodies: [{ id: 'body_1', name: 'Body1', sourceFeature: 'feat_Extrude_1' }]
+      },
+      viewportScene: { solids: [], toolpaths: [] }
+    });
+
+    expect(store.schemaVersion).toBe(2);
+    expect(store.browser.origin.planes).toEqual(['origin_XY', 'origin_XZ', 'origin_YZ']);
+    expect(store.browser.construction).toHaveLength(1);
+    expect(store.browser.construction[0].id).toBe('con_Plane_1');
+    expect(store.browser.sketches[0].entities.map((entity) => entity.kind)).toEqual(['Rectangle2Point']);
+    expect(store.browser.bodies[0].sourceFeature).toBe('feat_Extrude_1');
+    expect(store.features.find((feature) => feature.id === 'feat_Extrude_1').operation).toBe('NewBody');
+  });
+
+  it('leaves the browser tree empty for a v1 snapshot without a browser payload', () => {
+    const store = useCoreStore();
+
+    store.loadCoreSnapshot(sketchRectExtrudeSnapshot());
+
+    expect(store.browser.construction).toEqual([]);
+    expect(store.browser.sketches).toEqual([]);
+    expect(store.browser.bodies).toEqual([]);
+  });
+
+  it('projects an empty new-document snapshot as a blank timeline and viewport', () => {
+    const store = useCoreStore();
+
+    store.loadCoreSnapshot({
+      activeDocumentId: 'doc_3003',
+      documentPath: 'Untitled.a3d',
+      features: [],
+      viewportScene: { solids: [], toolpaths: [] }
+    });
+
+    expect(store.features).toEqual([]);
+    expect(store.viewportScene.solids).toEqual([]);
+    expect(store.viewportScene.toolpaths).toEqual([]);
+    expect(store.viewportScene.diagnostics.triangleCount).toBe(0);
+  });
+
+  it('drops a stale selection that the new snapshot no longer contains', () => {
+    const store = useCoreStore();
+
+    store.selectedEntityId = 'feat_Pocket_99_face_0';
+    store.selectedEntity = { id: 'feat_Pocket_99_face_0', type: 'B-rep Exact Face' };
+
+    store.loadCoreSnapshot(sketchRectExtrudeSnapshot());
+
+    expect(store.selectedEntityId).toBeNull();
+    expect(store.selectedEntity).toBeNull();
+  });
+});

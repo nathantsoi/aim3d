@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -176,6 +177,205 @@ def test_adsk_fusion_sketch_profile_extrude_and_timeline():
     assert extrude.bodies.item(0).faces.count == 6
     assert design.timeline.count == 1
     assert design.timeline.item(0).name == extrude.timelineObject.name
+
+
+def test_aim3d_core_parametric_sketch_rectangle_extrude_snapshot():
+    doc = aim_core.documents.create()
+
+    # A fresh document projects an empty model.
+    fresh = doc.core_state_snapshot()
+    assert fresh["features"] == []
+    assert fresh["viewportScene"]["solids"] == []
+
+    sketch_token = doc.add_sketch("XY")
+    assert sketch_token == "feat_Sketch_1"
+    assert doc.add_rectangle(sketch_token, 0.0, 0.0, 2.0, 1.0) is True
+    extrude_token = doc.add_extrude(sketch_token, 10.0)
+    assert extrude_token == "feat_Extrude_1"
+
+    snapshot = doc.core_state_snapshot()
+    feature_types = [feature["type"] for feature in snapshot["features"]]
+    assert feature_types == ["Sketch", "Extrude"]
+    extrude_feature = snapshot["features"][1]
+    assert extrude_feature["id"] == "feat_Extrude_1"
+    assert extrude_feature["value"] == 10
+    assert extrude_feature["selectionToken"] == "feat_Extrude_1_face_0"
+
+    solids = snapshot["viewportScene"]["solids"]
+    assert len(solids) == 1
+    assert solids[0]["sourceToken"] == "feat_Extrude_1_face_0"
+    assert len(solids[0]["positions"]) > 0
+    assert len(solids[0]["indices"]) % 3 == 0
+
+
+def test_aim3d_core_general_feature_model_snapshot_v2():
+    doc = aim_core.documents.create()
+
+    # Construction plane, then a sketch anchored to it via a plane reference.
+    plane_token = doc.add_construction_plane("OffsetPlane", ["origin_XY"], 5.0)
+    assert plane_token == "con_Plane_1"
+    sketch_token = doc.add_sketch({"kind": "ConstructionPlane", "token": plane_token})
+    assert sketch_token == "feat_Sketch_1"
+
+    # Sketch-contained entities (line + rectangle) live inside the sketch.
+    assert doc.add_sketch_entity(sketch_token, {"kind": "Line", "points": [[0, 0], [3, 0]]}) == "sk_ent_1"
+    assert doc.add_rectangle(sketch_token, 0.0, 0.0, 2.0, 1.0) is True
+
+    # Extrude evaluates a body; revolve is a schema-first stub on the timeline.
+    assert doc.add_extrude(sketch_token, 10.0) == "feat_Extrude_1"
+    assert doc.add_revolve(sketch_token, 90.0, "Cut") == "feat_Revolve_1"
+
+    snapshot = doc.core_state_snapshot()
+    assert snapshot["schemaVersion"] == 2
+    assert [feature["type"] for feature in snapshot["features"]] == ["Sketch", "Extrude", "Revolve"]
+
+    browser = snapshot["browser"]
+    assert browser["origin"]["planes"] == ["origin_XY", "origin_XZ", "origin_YZ"]
+    assert browser["construction"][0]["id"] == "con_Plane_1"
+    assert browser["construction"][0]["category"] == "plane"
+
+    sketch = browser["sketches"][0]
+    assert sketch["plane"] == {"kind": "ConstructionPlane", "constructionPlane": "con_Plane_1"}
+    assert [entity["kind"] for entity in sketch["entities"]] == ["Line", "Rectangle2Point"]
+
+    revolve = snapshot["features"][2]
+    assert revolve["operation"] == "Cut"
+
+    # Only the extrude produces a renderable body.
+    assert len(snapshot["viewportScene"]["solids"]) == 1
+    assert len(browser["bodies"]) == 1
+
+
+def test_ui_bridge_emits_core_snapshot_as_json_line():
+    import io
+
+    from aim3d import ui_bridge
+
+    doc = aim_core.documents.create()
+    sketch_token = doc.add_sketch("XY")
+    doc.add_rectangle(sketch_token, 0.0, 0.0, 2.0, 1.0)
+    doc.add_extrude(sketch_token, 10.0)
+
+    stream = io.StringIO()
+    line = ui_bridge.emit_snapshot(doc, stream=stream)
+
+    assert stream.getvalue() == line + "\n"
+    message = json.loads(line)
+    assert message["channel"] == ui_bridge.CORE_SNAPSHOT_CHANNEL
+    assert message["channel"] == "core://changed"
+    assert [feature["type"] for feature in message["snapshot"]["features"]] == ["Sketch", "Extrude"]
+    assert len(message["snapshot"]["viewportScene"]["solids"]) == 1
+
+
+def _ws_client_recv_one(host, port, timeout=5.0):
+    """Minimal browser-equivalent WebSocket client: handshake + read one text frame."""
+    import base64
+    import os
+    import socket
+    import struct
+
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    sock = socket.create_connection((host, port), timeout=timeout)
+    sock.settimeout(timeout)
+    request = (
+        "GET / HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+    sock.sendall(request.encode("ascii"))
+
+    buffer = b""
+
+    def read_more():
+        nonlocal buffer
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise AssertionError("server closed before sending a frame")
+        buffer += chunk
+
+    # Consume the handshake response.
+    while b"\r\n\r\n" not in buffer:
+        read_more()
+    assert b"101 Switching Protocols" in buffer.split(b"\r\n", 1)[0]
+    buffer = buffer.split(b"\r\n\r\n", 1)[1]
+
+    # Read one (unmasked, server->client) text frame.
+    while len(buffer) < 2:
+        read_more()
+    length = buffer[1] & 0x7F
+    consumed = 2
+    if length == 126:
+        while len(buffer) < 4:
+            read_more()
+        length = struct.unpack(">H", buffer[2:4])[0]
+        consumed = 4
+    elif length == 127:
+        while len(buffer) < 10:
+            read_more()
+        length = struct.unpack(">Q", buffer[2:10])[0]
+        consumed = 10
+    while len(buffer) < consumed + length:
+        read_more()
+    payload = buffer[consumed:consumed + length]
+    sock.close()
+    return payload.decode("utf-8")
+
+
+def test_ui_bridge_serves_snapshot_over_websocket():
+    from aim3d import ui_bridge
+
+    doc = aim_core.documents.create()
+    sketch_token = doc.add_sketch("XY")
+    doc.add_rectangle(sketch_token, 0.0, 0.0, 2.0, 1.0)
+    doc.add_extrude(sketch_token, 10.0)
+
+    server = ui_bridge.LiveServer("127.0.0.1", 0)
+    try:
+        sent = server.push(doc)
+        # A GUI that connects after the push still gets the cached latest frame.
+        received = _ws_client_recv_one("127.0.0.1", server.port)
+    finally:
+        server.close()
+
+    assert received == sent
+    message = json.loads(received)
+    assert [feature["type"] for feature in message["features"]] == ["Sketch", "Extrude"]
+    assert len(message["viewportScene"]["solids"]) == 1
+
+
+def test_ui_bridge_endpoint_honors_env(monkeypatch):
+    from aim3d import ui_bridge
+
+    monkeypatch.setenv(ui_bridge.BRIDGE_HOST_ENV, "10.0.0.5")
+    monkeypatch.setenv(ui_bridge.BRIDGE_WS_PORT_ENV, "9999")
+    assert ui_bridge.bridge_endpoint() == ("10.0.0.5", 9999)
+
+
+def test_adsk_fusion_workflow_writes_through_to_core_snapshot():
+    app = adsk.core.Application.get()
+    doc = app.documents.add(0)
+    design = adsk.fusion.Design.cast(doc)
+    root = design.rootComponent
+
+    sketch = root.sketches.add(root.xYConstructionPlane)
+    sketch.sketchCurves.sketchLines.addTwoPointRectangle(
+        adsk.core.Point3D.create(0, 0, 0),
+        adsk.core.Point3D.create(2, 1, 0),
+    )
+    root.features.extrudeFeatures.addSimple(
+        sketch.profiles.item(0),
+        adsk.core.ValueInput.createByString("10 mm"),
+        adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+    )
+
+    # The Fusion-compatible facade mutated the native core (source of truth),
+    # so the core snapshot reflects the timeline and generated solid.
+    snapshot = doc._state.native_doc.core_state_snapshot()
+    assert [feature["type"] for feature in snapshot["features"]] == ["Sketch", "Extrude"]
+    assert len(snapshot["viewportScene"]["solids"]) == 1
 
 
 def test_aim3d_native_sketch_solver_binding():

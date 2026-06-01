@@ -67,6 +67,34 @@ document_release = _bind("aim3d_document_release", None, [c_void_p])
 document_save = _bind("aim3d_document_save", c_int, [c_void_p, c_char_p])
 document_import_geometry = _bind("aim3d_document_import_geometry", c_int, [c_void_p, c_char_p])
 document_recompute = _bind("aim3d_document_recompute", c_int, [c_void_p])
+document_add_sketch = _bind("aim3d_document_add_sketch", c_void_p, [c_void_p, c_char_p])
+document_add_sketch_on_plane = _bind(
+    "aim3d_document_add_sketch_on_plane",
+    c_void_p,
+    [c_void_p, c_char_p, c_char_p, c_char_p],
+)
+document_add_rectangle = _bind(
+    "aim3d_document_add_rectangle",
+    c_int,
+    [c_void_p, c_char_p, c_double, c_double, c_double, c_double],
+)
+document_add_sketch_entity = _bind(
+    "aim3d_document_add_sketch_entity",
+    c_void_p,
+    [c_void_p, c_char_p, c_char_p, ctypes.POINTER(c_double), c_size_t, c_double, c_double, c_int],
+)
+document_add_extrude = _bind("aim3d_document_add_extrude", c_void_p, [c_void_p, c_char_p, c_double])
+document_add_solid_feature = _bind(
+    "aim3d_document_add_solid_feature",
+    c_void_p,
+    [c_void_p, c_char_p, c_char_p, c_double, c_char_p],
+)
+document_add_construction = _bind(
+    "aim3d_document_add_construction",
+    c_void_p,
+    [c_void_p, c_char_p, c_char_p, c_double],
+)
+document_core_state_snapshot = _bind("aim3d_document_core_state_snapshot", c_void_p, [c_void_p])
 document_body_count = _bind("aim3d_document_body_count", c_size_t, [c_void_p])
 document_body_at = _bind("aim3d_document_body_at", c_void_p, [c_void_p, c_size_t])
 document_preview_body = _bind("aim3d_document_preview_body", c_void_p, [c_void_p])
@@ -170,6 +198,17 @@ solve_sketch_2d_raw = _bind(
 
 def _encode_path(path):
     return str(path).encode("utf-8")
+
+
+def consume_string(pointer):
+    """Decode a native-owned ``char*`` and release it. Returns None for null."""
+    if not pointer:
+        return None
+    try:
+        raw = ctypes.cast(pointer, c_char_p).value
+        return raw.decode("utf-8") if raw is not None else None
+    finally:
+        string_release(pointer)
 
 
 class NativeError(RuntimeError):

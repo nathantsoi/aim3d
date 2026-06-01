@@ -5,6 +5,8 @@ import Viewport from './components/Viewport.vue';
 import PropertyGrid from './components/PropertyGrid.vue';
 import RibbonToolbar from './components/RibbonToolbar.vue';
 import TimelineBar from './components/TimelineBar.vue';
+import { useCoreStore } from './store';
+import { connectCoreSnapshotSocket, subscribeCoreSnapshots } from './services/coreSnapshotBridge';
 
 // Define top-level layout coordinator
 const AppShell = defineComponent({
@@ -34,5 +36,14 @@ app.mount('#app');
 const timelineBarApp = createApp(TimelineBar);
 timelineBarApp.use(pinia);
 timelineBarApp.mount('#timeline-bar');
+
+// Project live core-state snapshots onto the store. Primary transport is the
+// WebSocket bridge (a Python script -> broker -> GUI); the in-process Tauri
+// `core://changed` event is also honored for an embedded-core future.
+const coreStore = useCoreStore(pinia);
+connectCoreSnapshotSocket(coreStore);
+subscribeCoreSnapshots(coreStore).catch((error) => {
+  console.warn('[aim3d Frontend] core snapshot subscription unavailable', error);
+});
 
 console.log('[aim3d Frontend] Vue container initialized successfully.');

@@ -294,6 +294,152 @@ ViewportSolidMesh fallbackSolidMesh(EntityId bodyId, const std::string& token) {
     return mesh;
 }
 
+#if AIM3D_HAS_OCCT
+ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& token);
+#endif
+
+// Builds a renderable box mesh (6 faces, 8 corners expanded per-face for flat
+// normals) for a synthetic axis-aligned body. Used to visualize extruded
+// rectangles when no exact B-rep kernel is available.
+ViewportSolidMesh boxSolidMesh(const BRepBody& body, const std::string& token) {
+    ViewportSolidMesh mesh;
+    mesh.id = "solid_" + std::to_string(body.id() == 0 ? 1 : body.id());
+    mesh.bodyId = body.id();
+    mesh.sourceToken = token.empty() ? ("body_" + std::to_string(body.id())) : token;
+    mesh.pickable.entityId = mesh.sourceToken;
+    mesh.pickable.kind = "B-rep Exact Face";
+    mesh.pickable.priority = 10;
+
+    const auto& lo = body.boxMin();
+    const auto& hi = body.boxMax();
+    const float x0 = static_cast<float>(lo[0]);
+    const float y0 = static_cast<float>(lo[1]);
+    const float z0 = static_cast<float>(lo[2]);
+    const float x1 = static_cast<float>(hi[0]);
+    const float y1 = static_cast<float>(hi[1]);
+    const float z1 = static_cast<float>(hi[2]);
+    const float cx = (x0 + x1) * 0.5f;
+    const float cy = (y0 + y1) * 0.5f;
+    const float cz = (z0 + z1) * 0.5f;
+
+    mesh.pickable.snapPoints.push_back(ViewportSolidMesh::SnapPoint{
+        mesh.id + "_center", "center", {cx, cy, cz}
+    });
+
+    struct Face {
+        std::array<std::array<float, 3>, 4> corners;
+        std::array<float, 3> normal;
+    };
+    const std::array<Face, 6> faces = {{
+        {{{{x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0}}}, {0.0f, 0.0f, -1.0f}},
+        {{{{x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}}}, {0.0f, 0.0f, 1.0f}},
+        {{{{x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1}}}, {0.0f, -1.0f, 0.0f}},
+        {{{{x0, y1, z0}, {x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}}}, {0.0f, 1.0f, 0.0f}},
+        {{{{x0, y0, z0}, {x0, y1, z0}, {x0, y1, z1}, {x0, y0, z1}}}, {-1.0f, 0.0f, 0.0f}},
+        {{{{x1, y0, z0}, {x1, y1, z0}, {x1, y1, z1}, {x1, y0, z1}}}, {1.0f, 0.0f, 0.0f}}
+    }};
+
+    for (const auto& face : faces) {
+        const auto base = static_cast<std::uint32_t>(mesh.positions.size() / 3);
+        for (const auto& corner : face.corners) {
+            mesh.positions.insert(mesh.positions.end(), {corner[0], corner[1], corner[2]});
+            mesh.normals.insert(mesh.normals.end(), {face.normal[0], face.normal[1], face.normal[2]});
+            mesh.colors.insert(mesh.colors.end(), {0.2f, 0.72f, 1.0f, 1.0f});
+        }
+        mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    }
+    return mesh;
+}
+
+// Produces the best available renderable mesh for a real body: OCCT
+// tessellation when present, otherwise the synthetic box, otherwise the
+// legacy demo fallback.
+ViewportSolidMesh solidMeshForBody(const BRepBody& body, const std::string& token) {
+#if AIM3D_HAS_OCCT
+    if (body.kernelShapeHandle() && !body.kernelShapeHandle()->shape.IsNull()) {
+        return meshFromOcctBody(body, token);
+    }
+#endif
+    if (body.hasBox()) {
+        return boxSolidMesh(body, token);
+    }
+    return fallbackSolidMesh(body.id(), token);
+}
+
+// Minimal JSON string escaper for tokens/labels (no control chars expected).
+std::string jsonEscape(const std::string& value) {
+    std::string out;
+    out.reserve(value.size() + 2);
+    for (char c : value) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\t': out += "\\t"; break;
+        default: out += c; break;
+        }
+    }
+    return out;
+}
+
+std::string jsonNumber(double value) {
+    if (value == static_cast<long long>(value)) {
+        return std::to_string(static_cast<long long>(value));
+    }
+    std::string s = std::to_string(value);
+    return s;
+}
+
+std::string floatArrayJson(const std::vector<float>& values) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i) out += ",";
+        out += jsonNumber(static_cast<double>(values[i]));
+    }
+    out += "]";
+    return out;
+}
+
+std::string uintArrayJson(const std::vector<std::uint32_t>& values) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i) out += ",";
+        out += std::to_string(values[i]);
+    }
+    out += "]";
+    return out;
+}
+
+std::string solidMeshJson(const ViewportSolidMesh& mesh) {
+    std::string out = "{";
+    out += "\"id\":\"" + jsonEscape(mesh.id) + "\",";
+    out += "\"bodyId\":" + std::to_string(mesh.bodyId) + ",";
+    out += "\"sourceToken\":\"" + jsonEscape(mesh.sourceToken) + "\",";
+    out += "\"pickable\":{";
+    out += "\"entityId\":\"" + jsonEscape(mesh.pickable.entityId) + "\",";
+    out += "\"kind\":\"" + jsonEscape(mesh.pickable.kind) + "\",";
+    out += "\"priority\":" + std::to_string(mesh.pickable.priority) + ",";
+    out += "\"snapPoints\":[";
+    for (std::size_t i = 0; i < mesh.pickable.snapPoints.size(); ++i) {
+        const auto& sp = mesh.pickable.snapPoints[i];
+        if (i) out += ",";
+        out += "{\"id\":\"" + jsonEscape(sp.id) + "\",\"kind\":\"" + jsonEscape(sp.kind) + "\",";
+        out += "\"position\":[" + jsonNumber(sp.position[0]) + "," + jsonNumber(sp.position[1]) + "," + jsonNumber(sp.position[2]) + "]}";
+    }
+    out += "]},";
+    out += "\"positions\":" + floatArrayJson(mesh.positions) + ",";
+    out += "\"normals\":" + floatArrayJson(mesh.normals) + ",";
+    out += "\"colors\":" + floatArrayJson(mesh.colors) + ",";
+    out += "\"indices\":" + uintArrayJson(mesh.indices) + ",";
+    out += "\"transform\":[";
+    for (std::size_t i = 0; i < mesh.transform.size(); ++i) {
+        if (i) out += ",";
+        out += jsonNumber(static_cast<double>(mesh.transform[i]));
+    }
+    out += "]}";
+    return out;
+}
+
 ViewportToolpath fallbackToolpath() {
     ViewportToolpath toolpath;
     toolpath.id = "toolpath_op_Pocket_1";
@@ -383,6 +529,23 @@ BRepBody::BRepBody(EntityId id, const std::string& name) : m_id(id), m_name(name
 const float* BRepBody::getVerticesBuffer(size_t& count) const {
     count = m_vertices.size();
     return m_vertices.data();
+}
+
+void BRepBody::setBox(const std::array<double, 3>& minCorner, const std::array<double, 3>& maxCorner) {
+    m_boxMin = minCorner;
+    m_boxMax = maxCorner;
+    m_hasBox = true;
+    m_shapeType = "Solid";
+    m_vertices = {
+        static_cast<float>(minCorner[0]), static_cast<float>(minCorner[1]), static_cast<float>(minCorner[2]),
+        static_cast<float>(maxCorner[0]), static_cast<float>(minCorner[1]), static_cast<float>(minCorner[2]),
+        static_cast<float>(maxCorner[0]), static_cast<float>(maxCorner[1]), static_cast<float>(minCorner[2]),
+        static_cast<float>(minCorner[0]), static_cast<float>(maxCorner[1]), static_cast<float>(minCorner[2]),
+        static_cast<float>(minCorner[0]), static_cast<float>(minCorner[1]), static_cast<float>(maxCorner[2]),
+        static_cast<float>(maxCorner[0]), static_cast<float>(minCorner[1]), static_cast<float>(maxCorner[2]),
+        static_cast<float>(maxCorner[0]), static_cast<float>(maxCorner[1]), static_cast<float>(maxCorner[2]),
+        static_cast<float>(minCorner[0]), static_cast<float>(maxCorner[1]), static_cast<float>(maxCorner[2])
+    };
 }
 
 BodyInspection BRepBody::inspect() const {
@@ -637,11 +800,7 @@ ViewportScene Document::viewportScene() const {
             continue;
         }
         const auto token = m_topology.makeSubshapeToken(body->id(), TopologyKind::Face, 0).value;
-#if AIM3D_HAS_OCCT
-        scene.solids.push_back(meshFromOcctBody(*body, token));
-#else
-        scene.solids.push_back(fallbackSolidMesh(body->id(), token));
-#endif
+        scene.solids.push_back(solidMeshForBody(*body, token));
     }
 
     if (scene.solids.empty()) {
@@ -660,6 +819,447 @@ ViewportScene Document::viewportScene() const {
     scene.diagnostics.segmentCount += scene.axes.size();
     scene.diagnostics.drawCount = (scene.solids.empty() ? 0 : 1) + (scene.toolpaths.empty() && scene.axes.empty() ? 0 : 1);
     return scene;
+}
+
+namespace {
+
+std::string planeRefJson(const SketchPlaneReference& plane) {
+    std::string out = "{\"kind\":\"";
+    out += sketchPlaneKindName(plane.kind);
+    out += "\"";
+    switch (plane.kind) {
+    case SketchPlaneKind::ConstructionPlane:
+        out += ",\"constructionPlane\":\"" + jsonEscape(plane.constructionPlane.token) + "\"";
+        break;
+    case SketchPlaneKind::PlanarFace:
+        out += ",\"face\":\"" + jsonEscape(plane.face.token) + "\"";
+        break;
+    case SketchPlaneKind::Origin:
+    default:
+        out += ",\"originPlane\":\"";
+        out += originPlaneName(plane.originPlane);
+        out += "\"";
+        break;
+    }
+    out += "}";
+    return out;
+}
+
+std::string sketchEntityJson(const SketchElement& entity) {
+    std::string out = "{";
+    out += "\"id\":\"" + jsonEscape(entity.ref.token) + "\",";
+    out += "\"kind\":\"";
+    out += sketchElementKindName(entity.kind);
+    out += "\",";
+    out += "\"points\":[";
+    for (std::size_t i = 0; i < entity.points.size(); ++i) {
+        if (i) out += ",";
+        out += "[" + jsonNumber(entity.points[i][0]) + "," + jsonNumber(entity.points[i][1]) + "]";
+    }
+    out += "],";
+    out += "\"radius\":" + jsonNumber(entity.radius) + ",";
+    out += "\"value\":" + jsonNumber(entity.value) + ",";
+    out += "\"construction\":" + std::string(entity.construction ? "true" : "false");
+    if (!entity.label.empty()) {
+        out += ",\"label\":\"" + jsonEscape(entity.label) + "\"";
+    }
+    out += "}";
+    return out;
+}
+
+std::string constructionJson(const ConstructionObject& con) {
+    std::string out = "{";
+    out += "\"id\":\"" + jsonEscape(con.ref.token) + "\",";
+    out += "\"kind\":\"";
+    out += constructionKindName(con.kind);
+    out += "\",";
+    out += "\"category\":\"";
+    out += constructionCategory(con.kind);
+    out += "\",";
+    out += "\"label\":\"" + jsonEscape(con.label) + "\",";
+    out += "\"value\":" + jsonNumber(con.value) + ",";
+    out += "\"visible\":" + std::string(con.visible ? "true" : "false") + ",";
+    out += "\"inputs\":[";
+    for (std::size_t i = 0; i < con.inputs.size(); ++i) {
+        if (i) out += ",";
+        out += "\"" + jsonEscape(con.inputs[i]) + "\"";
+    }
+    out += "]}";
+    return out;
+}
+
+} // namespace
+
+std::string Document::addSketch(const SketchPlaneReference& plane) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    SketchFeature sketch;
+    sketch.ref.id = nextEntityId();
+    sketch.ref.token = "feat_Sketch_" + std::to_string(++m_sketchCount);
+    sketch.plane = plane;
+    m_sketches.push_back(sketch);
+    m_timeline.push_back({TimelineCategory::Sketch, sketch.ref.token});
+    m_history.addFeature("Sketch", 0.0);
+    m_dirty = true;
+    return sketch.ref.token;
+}
+
+std::string Document::addSketch(const std::string& plane) {
+    SketchPlaneReference ref;
+    ref.kind = SketchPlaneKind::Origin;
+    ref.originPlane = originPlaneFromName(plane);
+    return addSketch(ref);
+}
+
+std::string Document::addSketchEntity(const std::string& sketchToken, const SketchElement& element) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto* sketch = findSketchByToken(sketchToken);
+    if (!sketch) {
+        return {};
+    }
+    SketchElement stored = element;
+    stored.ref.id = nextEntityId();
+    if (stored.ref.token.empty()) {
+        stored.ref.token = "sk_ent_" + std::to_string(++m_sketchEntityCount);
+    }
+    sketch->entities.push_back(stored);
+    m_dirty = true;
+    return stored.ref.token;
+}
+
+bool Document::addRectangleToSketch(const std::string& sketchToken, double x0, double y0, double x1, double y1) {
+    const double minX = std::min(x0, x1);
+    const double minY = std::min(y0, y1);
+    const double maxX = std::max(x0, x1);
+    const double maxY = std::max(y0, y1);
+    if (maxX <= minX || maxY <= minY) {
+        return false;
+    }
+    SketchElement rect;
+    rect.kind = SketchElementKind::Rectangle2Point;
+    rect.points = {{minX, minY}, {maxX, maxY}};
+    return !addSketchEntity(sketchToken, rect).empty();
+}
+
+bool Document::sketchRectangleBounds(const SketchFeature& sketch, std::array<double, 4>& bounds) const {
+    for (const auto& entity : sketch.entities) {
+        const bool isRect = entity.kind == SketchElementKind::Rectangle2Point
+            || entity.kind == SketchElementKind::Rectangle3Point
+            || entity.kind == SketchElementKind::RectangleCenter;
+        if (!isRect || entity.points.size() < 2 || entity.construction) {
+            continue;
+        }
+        double minX = entity.points[0][0];
+        double minY = entity.points[0][1];
+        double maxX = minX;
+        double maxY = minY;
+        for (const auto& point : entity.points) {
+            minX = std::min(minX, point[0]);
+            minY = std::min(minY, point[1]);
+            maxX = std::max(maxX, point[0]);
+            maxY = std::max(maxY, point[1]);
+        }
+        if (maxX > minX && maxY > minY) {
+            bounds = {minX, minY, maxX, maxY};
+            return true;
+        }
+    }
+    return false;
+}
+
+EntityId Document::evaluateExtrudeBody(const SketchFeature& sketch, double distance) {
+    std::array<double, 4> rect{};
+    if (!sketchRectangleBounds(sketch, rect)) {
+        return 0;
+    }
+    const double zLow = std::min(0.0, distance);
+    const double zHigh = std::max(0.0, distance);
+
+    auto body = std::make_shared<BRepBody>(
+        nextEntityId(),
+        "Body" + std::to_string(m_design->rootComponent()->bRepBodies().size() + 1));
+    body->setBox({rect[0], rect[1], zLow}, {rect[2], rect[3], zHigh});
+
+#if AIM3D_HAS_OCCT
+    const gp_Pnt corner(rect[0], rect[1], zLow);
+    const auto solid = BRepPrimAPI_MakeBox(
+        corner,
+        rect[2] - rect[0],
+        rect[3] - rect[1],
+        zHigh - zLow).Shape();
+    if (!solid.IsNull()) {
+        body->setKernelShape(makeKernelShape(solid));
+        body->setShapeType("Solid");
+    }
+#endif
+
+    m_design->rootComponent()->addBody(body);
+    registerBodyTopology(body);
+    return body->id();
+}
+
+std::string Document::addSolidFeature(
+    SolidFeatureKind kind,
+    const std::string& sketchToken,
+    double value,
+    FeatureOperation operation) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto* sketch = findSketchByToken(sketchToken);
+    if (!sketch) {
+        throw std::invalid_argument("addSolidFeature: unknown sketch token " + sketchToken);
+    }
+
+    SolidFeature feature;
+    feature.ref.id = nextEntityId();
+    feature.kind = kind;
+    feature.operation = operation;
+    feature.profile.sketchToken = sketchToken;
+    feature.profile.profileIndex = 0;
+    feature.sketchId = sketch->ref.id;
+    feature.value = value;
+    feature.unit = "mm";
+
+    const int kindIndex = static_cast<int>(kind);
+    const std::string kindName = solidFeatureKindName(kind);
+    feature.ref.token = "feat_" + kindName + "_" + std::to_string(++m_solidCounts[kindIndex]);
+    feature.label = kindName + std::to_string(m_solidCounts[kindIndex]);
+
+    // Only the rectangle-profile extrude path produces real geometry today.
+    // Other kinds are recorded on the timeline with stub evaluators.
+    if (kind == SolidFeatureKind::Extrude) {
+        if (value == 0.0) {
+            throw std::invalid_argument("addExtrude: distance must be non-zero");
+        }
+        feature.bodyId = evaluateExtrudeBody(*sketch, value);
+    }
+
+    m_solids.push_back(feature);
+    m_timeline.push_back({TimelineCategory::Solid, feature.ref.token});
+    m_history.addFeature(kindName, value);
+    m_dirty = true;
+    return feature.ref.token;
+}
+
+std::string Document::addExtrude(const std::string& sketchToken, double distance, FeatureOperation operation) {
+    return addSolidFeature(SolidFeatureKind::Extrude, sketchToken, distance, operation);
+}
+
+std::string Document::addConstructionObject(
+    ConstructionKind kind,
+    const std::vector<std::string>& inputs,
+    double value) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    ConstructionObject con;
+    con.ref.id = nextEntityId();
+    con.kind = kind;
+    con.inputs = inputs;
+    con.value = value;
+
+    std::string category = constructionCategory(kind);
+    if (!category.empty()) {
+        category[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(category[0])));
+    }
+    const int number = ++m_constructionCount;
+    con.ref.token = "con_" + category + "_" + std::to_string(number);
+    con.label = category + std::to_string(number);
+
+    m_construction.push_back(con);
+    m_dirty = true;
+    return con.ref.token;
+}
+
+std::vector<TimelineFeatureInfo> Document::features() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<TimelineFeatureInfo> infos;
+    infos.reserve(m_timeline.size());
+    for (const auto& entry : m_timeline) {
+        if (entry.category == TimelineCategory::Sketch) {
+            for (const auto& sketch : m_sketches) {
+                if (sketch.ref.token == entry.token) {
+                    infos.push_back({sketch.ref.token, "Sketch", sketch.ref.token, 0.0, "mm", false});
+                    break;
+                }
+            }
+        } else {
+            for (const auto& solid : m_solids) {
+                if (solid.ref.token == entry.token) {
+                    infos.push_back({
+                        solid.ref.token,
+                        solidFeatureKindName(solid.kind),
+                        solid.label,
+                        solid.value,
+                        solid.unit,
+                        solid.dirty});
+                    break;
+                }
+            }
+        }
+    }
+    return infos;
+}
+
+std::vector<SketchFeature> Document::sketches() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_sketches;
+}
+
+std::vector<SolidFeature> Document::solidFeatures() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_solids;
+}
+
+std::vector<ConstructionObject> Document::constructionObjects() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_construction;
+}
+
+SketchFeature* Document::findSketchByToken(const std::string& token) {
+    for (auto& sketch : m_sketches) {
+        if (sketch.ref.token == token) {
+            return &sketch;
+        }
+    }
+    return nullptr;
+}
+
+const SketchFeature* Document::findSketchByToken(const std::string& token) const {
+    for (const auto& sketch : m_sketches) {
+        if (sketch.ref.token == token) {
+            return &sketch;
+        }
+    }
+    return nullptr;
+}
+
+SolidFeature* Document::findSolidByToken(const std::string& token) {
+    for (auto& solid : m_solids) {
+        if (solid.ref.token == token) {
+            return &solid;
+        }
+    }
+    return nullptr;
+}
+
+std::string Document::coreStateSnapshot() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return coreStateSnapshotUnlocked();
+}
+
+std::string Document::coreStateSnapshotUnlocked() const {
+    std::string out = "{";
+    out += "\"schemaVersion\":2,";
+    out += "\"activeDocumentId\":\"doc_" + std::to_string(m_id) + "\",";
+    out += "\"documentPath\":\"" + jsonEscape(m_filePath) + "\",";
+
+    // Flat timeline projection (back-compatible field set + plane/operation).
+    out += "\"features\":[";
+    bool firstFeature = true;
+    for (const auto& entry : m_timeline) {
+        if (entry.category == TimelineCategory::Sketch) {
+            const SketchFeature* sketch = nullptr;
+            for (const auto& candidate : m_sketches) {
+                if (candidate.ref.token == entry.token) { sketch = &candidate; break; }
+            }
+            if (!sketch) continue;
+            if (!firstFeature) out += ",";
+            firstFeature = false;
+            out += "{";
+            out += "\"id\":\"" + jsonEscape(sketch->ref.token) + "\",";
+            out += "\"type\":\"Sketch\",";
+            out += "\"label\":\"" + jsonEscape(sketch->ref.token) + "\",";
+            out += "\"value\":0,";
+            out += "\"unit\":\"mm\",";
+            out += "\"isDirty\":false,";
+            out += "\"plane\":" + planeRefJson(sketch->plane) + ",";
+            out += "\"entityCount\":" + std::to_string(sketch->entities.size()) + ",";
+            out += "\"selectionToken\":\"" + jsonEscape(sketch->ref.token + "_face_0") + "\"";
+            out += "}";
+        } else {
+            const SolidFeature* solid = nullptr;
+            for (const auto& candidate : m_solids) {
+                if (candidate.ref.token == entry.token) { solid = &candidate; break; }
+            }
+            if (!solid) continue;
+            if (!firstFeature) out += ",";
+            firstFeature = false;
+            out += "{";
+            out += "\"id\":\"" + jsonEscape(solid->ref.token) + "\",";
+            out += "\"type\":\"" + std::string(solidFeatureKindName(solid->kind)) + "\",";
+            out += "\"label\":\"" + jsonEscape(solid->label) + "\",";
+            out += "\"value\":" + jsonNumber(solid->value) + ",";
+            out += "\"unit\":\"" + jsonEscape(solid->unit) + "\",";
+            out += "\"isDirty\":" + std::string(solid->dirty ? "true" : "false") + ",";
+            out += "\"operation\":\"" + std::string(featureOperationName(solid->operation)) + "\",";
+            out += "\"sketchId\":\"" + jsonEscape(solid->profile.sketchToken) + "\",";
+            out += "\"selectionToken\":\"" + jsonEscape(solid->ref.token + "_face_0") + "\"";
+            out += "}";
+        }
+    }
+    out += "],";
+
+    // Hierarchical browser tree (Origin, construction, sketches, bodies).
+    out += "\"browser\":{";
+    out += "\"origin\":{\"planes\":[\"origin_XY\",\"origin_XZ\",\"origin_YZ\"],\"visible\":true},";
+    out += "\"construction\":[";
+    for (std::size_t i = 0; i < m_construction.size(); ++i) {
+        if (i) out += ",";
+        out += constructionJson(m_construction[i]);
+    }
+    out += "],";
+    out += "\"sketches\":[";
+    for (std::size_t i = 0; i < m_sketches.size(); ++i) {
+        const auto& sketch = m_sketches[i];
+        if (i) out += ",";
+        out += "{";
+        out += "\"id\":\"" + jsonEscape(sketch.ref.token) + "\",";
+        out += "\"plane\":" + planeRefJson(sketch.plane) + ",";
+        out += "\"visible\":" + std::string(sketch.visible ? "true" : "false") + ",";
+        out += "\"entities\":[";
+        for (std::size_t j = 0; j < sketch.entities.size(); ++j) {
+            if (j) out += ",";
+            out += sketchEntityJson(sketch.entities[j]);
+        }
+        out += "]}";
+    }
+    out += "],";
+    out += "\"bodies\":[";
+    {
+        bool firstBody = true;
+        for (const auto& body : m_design->rootComponent()->bRepBodies()) {
+            if (!body) continue;
+            std::string sourceFeature;
+            for (const auto& solid : m_solids) {
+                if (solid.bodyId == body->id()) { sourceFeature = solid.ref.token; break; }
+            }
+            if (!firstBody) out += ",";
+            firstBody = false;
+            out += "{";
+            out += "\"id\":\"body_" + std::to_string(body->id()) + "\",";
+            out += "\"name\":\"" + jsonEscape(body->name()) + "\",";
+            out += "\"sourceFeature\":\"" + jsonEscape(sourceFeature) + "\"";
+            out += "}";
+        }
+    }
+    out += "]},";
+
+    // Viewport scene (only evaluated solid features produce geometry).
+    out += "\"viewportScene\":{\"solids\":[";
+    bool firstSolid = true;
+    for (const auto& solid : m_solids) {
+        if (solid.bodyId == 0) {
+            continue;
+        }
+        auto body = findBody(solid.bodyId);
+        if (!body) {
+            continue;
+        }
+        if (!firstSolid) out += ",";
+        firstSolid = false;
+        out += solidMeshJson(solidMeshForBody(*body, solid.ref.token + "_face_0"));
+    }
+    out += "],\"toolpaths\":[]}";
+
+    out += "}";
+    return out;
 }
 
 std::shared_ptr<BRepBody> Document::findBody(EntityId bodyId) const {

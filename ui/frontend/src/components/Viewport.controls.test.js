@@ -86,6 +86,19 @@ describe('Viewport camera controls', () => {
     expect(delta).toBeGreaterThan(1e-3);
   });
 
+  it('toggles the debug overlay from viewport settings', async () => {
+    const { wrapper } = await mountViewport();
+
+    expect(wrapper.find('[data-testid="viewport-debug-overlay"]').exists()).toBe(true);
+
+    await wrapper.find('[data-testid="viewport-settings-toggle"]').trigger('click');
+    await wrapper.find('[data-testid="viewport-debug-overlay-toggle"]').setValue(false);
+    await flush();
+
+    expect(wrapper.find('[data-testid="viewport-debug-overlay"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('Graphics Context:');
+  });
+
   it('re-centers the view on the scene from the home button', async () => {
     const { wrapper, store } = await mountViewport();
     store.viewportScene.camera.target = [9, 9, 9];

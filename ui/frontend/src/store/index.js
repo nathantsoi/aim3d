@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import {
   ACTION_TYPES,
+  applyCoreSnapshot,
   createInitialCoreState,
   createUiAction
 } from '../contracts/coreState';
@@ -42,6 +43,15 @@ export const useCoreStore = defineStore('core', {
         ...nextState,
         isDispatching: false
       });
+    },
+
+    // Project a flat core-state snapshot (emitted by the native core when a
+    // script creates a document / sketch / rectangle / extrude) onto the store.
+    // This is the read side of the unidirectional flow: core is source of truth.
+    loadCoreSnapshot(snapshot) {
+      const nextState = applyCoreSnapshot(this.snapshotCoreState(), snapshot);
+      this.applyCoreState(nextState);
+      return nextState;
     },
 
     async dispatchAction(actionInput) {

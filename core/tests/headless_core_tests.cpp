@@ -585,6 +585,102 @@ void test_sketch_solver_c_abi_smoke() {
     assert(result.degrees_of_freedom > 0);
 }
 
+bool snapshot_contains(const std::string& snapshot, const std::string& needle) {
+    return snapshot.find(needle) != std::string::npos;
+}
+
+void test_parametric_sketch_rectangle_extrude_snapshot() {
+    aim3d::Application app;
+    auto doc = app.createDocument();
+
+    // A fresh document projects no features and no solids.
+    const auto empty = doc->coreStateSnapshot();
+    assert(snapshot_contains(empty, "\"features\":[]"));
+    assert(snapshot_contains(empty, "\"solids\":[]"));
+    assert(doc->features().empty());
+
+    const auto sketchToken = doc->addSketch("XY");
+    assert(sketchToken == "feat_Sketch_1");
+    assert(doc->addRectangleToSketch(sketchToken, 0.0, 0.0, 2.0, 1.0));
+
+    // Rectangle alone adds a sketch feature but no solid body yet.
+    const auto sketched = doc->coreStateSnapshot();
+    assert(snapshot_contains(sketched, "\"id\":\"feat_Sketch_1\""));
+    assert(snapshot_contains(sketched, "\"type\":\"Sketch\""));
+    assert(snapshot_contains(sketched, "\"solids\":[]"));
+
+    const auto extrudeToken = doc->addExtrude(sketchToken, 10.0);
+    assert(extrudeToken == "feat_Extrude_1");
+
+    const auto features = doc->features();
+    assert(features.size() == 2);
+    assert(doc->design()->rootComponent()->bRepBodies().size() == 1);
+
+    const auto snapshot = doc->coreStateSnapshot();
+    assert(snapshot_contains(snapshot, "\"id\":\"feat_Extrude_1\""));
+    assert(snapshot_contains(snapshot, "\"type\":\"Extrude\""));
+    assert(snapshot_contains(snapshot, "\"value\":10"));
+    assert(snapshot_contains(snapshot, "feat_Extrude_1_face_0"));
+    assert(!snapshot_contains(snapshot, "\"solids\":[]"));
+
+    // The generated body must produce renderable geometry in the scene.
+    const auto scene = doc->viewportScene();
+    assert(!scene.solids.empty());
+    assert(!scene.solids[0].positions.empty());
+    assert(scene.solids[0].indices.size() % 3 == 0);
+}
+
+void test_general_feature_model_snapshot_v2() {
+    aim3d::Application app;
+    auto doc = app.createDocument();
+
+    // Register a construction plane and sketch onto it (plane reference, not a
+    // bare string). The sketch owns its entities; the rectangle migrates to a
+    // sketch element rather than living on the feature row.
+    const auto planeToken = doc->addConstructionObject(
+        aim3d::ConstructionKind::OffsetPlane, {"origin_XY"}, 5.0);
+    assert(planeToken == "con_Plane_1");
+
+    aim3d::SketchPlaneReference planeRef;
+    planeRef.kind = aim3d::SketchPlaneKind::ConstructionPlane;
+    planeRef.constructionPlane.token = planeToken;
+    const auto sketchToken = doc->addSketch(planeRef);
+    assert(sketchToken == "feat_Sketch_1");
+
+    aim3d::SketchElement line;
+    line.kind = aim3d::SketchElementKind::Line;
+    line.points = {{0.0, 0.0}, {3.0, 0.0}};
+    assert(!doc->addSketchEntity(sketchToken, line).empty());
+    assert(doc->addRectangleToSketch(sketchToken, 0.0, 0.0, 2.0, 1.0));
+
+    // Extrude evaluates a body; the revolve is a schema-first timeline stub.
+    const auto extrudeToken = doc->addExtrude(sketchToken, 10.0);
+    assert(extrudeToken == "feat_Extrude_1");
+    const auto revolveToken = doc->addSolidFeature(
+        aim3d::SolidFeatureKind::Revolve, sketchToken, 90.0, aim3d::FeatureOperation::Cut);
+    assert(revolveToken == "feat_Revolve_1");
+
+    assert(doc->sketches().size() == 1);
+    assert(doc->sketches()[0].entities.size() == 2);
+    assert(doc->solidFeatures().size() == 2);
+    assert(doc->constructionObjects().size() == 1);
+    // Only the extrude produces a body; the revolve stub does not.
+    assert(doc->design()->rootComponent()->bRepBodies().size() == 1);
+
+    const auto snapshot = doc->coreStateSnapshot();
+    assert(snapshot_contains(snapshot, "\"schemaVersion\":2"));
+    assert(snapshot_contains(snapshot, "\"browser\":{"));
+    assert(snapshot_contains(snapshot, "\"origin\":{\"planes\":[\"origin_XY\",\"origin_XZ\",\"origin_YZ\"]"));
+    assert(snapshot_contains(snapshot, "\"id\":\"con_Plane_1\""));
+    assert(snapshot_contains(snapshot, "\"kind\":\"ConstructionPlane\""));
+    assert(snapshot_contains(snapshot, "\"kind\":\"Rectangle2Point\""));
+    assert(snapshot_contains(snapshot, "\"type\":\"Revolve\""));
+    assert(snapshot_contains(snapshot, "\"operation\":\"Cut\""));
+    // Exactly one evaluated solid in the viewport scene.
+    assert(snapshot_contains(snapshot, "feat_Extrude_1_face_0"));
+    assert(!snapshot_contains(snapshot, "\"solids\":[]"));
+}
+
 void test_viewport_scene_has_renderable_buffers() {
     aim3d::Application app;
     auto doc = app.createDocument();
@@ -708,6 +804,8 @@ int main() {
     test_sketch_solver_fixed_and_underconstrained_dof();
     test_sketch_solver_inconsistent_constraints();
     test_sketch_solver_c_abi_smoke();
+    test_parametric_sketch_rectangle_extrude_snapshot();
+    test_general_feature_model_snapshot_v2();
     test_viewport_scene_has_renderable_buffers();
     test_c_api_document_buffers_and_tasks();
     test_c_api_cam_toolpath_buffers();

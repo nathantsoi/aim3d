@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aim3d/design_model.hpp"
 #include "aim3d/history_tree.hpp"
 #include "aim3d/topo_naming.hpp"
 
@@ -116,6 +117,9 @@ struct ViewportScene {
     ViewportDiagnostics diagnostics;
 };
 
+// The general feature model (sketches, solid features, construction objects,
+// and the timeline) lives in design_model.hpp.
+
 class BRepBody {
 public:
     BRepBody(EntityId id, const std::string& name);
@@ -132,7 +136,14 @@ public:
     const float* getVerticesBuffer(size_t& count) const;
     BodyInspection inspect() const;
     std::shared_ptr<KernelShape> kernelShapeHandle() const { return m_kernelShape; }
-    
+
+    // Synthetic axis-aligned box geometry, used to represent extruded
+    // rectangular profiles when no exact B-rep kernel (OCCT) is available.
+    bool hasBox() const { return m_hasBox; }
+    const std::array<double, 3>& boxMin() const { return m_boxMin; }
+    const std::array<double, 3>& boxMax() const { return m_boxMax; }
+    void setBox(const std::array<double, 3>& minCorner, const std::array<double, 3>& maxCorner);
+
 private:
     friend class Document;
     void setKernelShape(std::shared_ptr<KernelShape> shape) { m_kernelShape = std::move(shape); }
@@ -143,6 +154,9 @@ private:
     std::string m_shapeType = "Unknown";
     std::vector<float> m_vertices;
     std::shared_ptr<KernelShape> m_kernelShape;
+    bool m_hasBox = false;
+    std::array<double, 3> m_boxMin = {0.0, 0.0, 0.0};
+    std::array<double, 3> m_boxMax = {0.0, 0.0, 0.0};
 };
 
 class Component {
@@ -241,6 +255,51 @@ public:
     bool exportGeometry(const std::string& path) const;
     std::vector<BodyInspection> inspectBodies() const;
     ViewportScene viewportScene() const;
+
+    // Parametric modeling API (the source of truth for the UI projection).
+    // Each "add" returns the stable feature token (e.g. "feat_Sketch_1").
+
+    // Create a sketch anchored to a plane reference (origin plane, construction
+    // plane, or planar face). The string overload is kept for back-compat and
+    // resolves to the named origin plane (XY/XZ/YZ).
+    std::string addSketch(const SketchPlaneReference& plane);
+    std::string addSketch(const std::string& plane = "XY");
+
+    // Add a generic element (line, circle, rectangle, dimension, ...) to a
+    // sketch. Returns the element token, or empty on failure.
+    std::string addSketchEntity(const std::string& sketchToken, const SketchElement& element);
+    // Convenience: add an axis-aligned 2-point rectangle entity to a sketch.
+    bool addRectangleToSketch(const std::string& sketchToken, double x0, double y0, double x1, double y1);
+
+    // Add a solid feature referencing a sketch profile. Only Extrude with a
+    // rectangle profile currently evaluates to a body; other kinds are
+    // recorded on the timeline with stub evaluators. Returns the feature token.
+    std::string addSolidFeature(
+        SolidFeatureKind kind,
+        const std::string& sketchToken,
+        double value,
+        FeatureOperation operation = FeatureOperation::NewBody);
+    // Convenience for the evaluated extrude path. Returns the feature token.
+    std::string addExtrude(
+        const std::string& sketchToken,
+        double distance,
+        FeatureOperation operation = FeatureOperation::NewBody);
+
+    // Register a construction object (plane/axis/point). Returns its token.
+    std::string addConstructionObject(
+        ConstructionKind kind,
+        const std::vector<std::string>& inputs = {},
+        double value = 0.0);
+
+    // Timeline projection used by the UI ticks and back-compat queries.
+    std::vector<TimelineFeatureInfo> features() const;
+    std::vector<SketchFeature> sketches() const;
+    std::vector<SolidFeature> solidFeatures() const;
+    std::vector<ConstructionObject> constructionObjects() const;
+
+    // Serialized core-state snapshot (schemaVersion 2) consumed by the UI.
+    std::string coreStateSnapshot() const;
+
     const TopologicalNaming& topology() const { return m_topology; }
     const HistoryTree& history() const { return m_history; }
     HistoryTree& history() { return m_history; }
@@ -269,6 +328,17 @@ private:
     bool applySplitEditUnlocked(EntityId bodyId, double splitX, const std::string& featureId, std::shared_ptr<KernelShape> sourceShape);
     bool applyOffsetEditUnlocked(EntityId bodyId, double offset, const std::string& featureId, std::shared_ptr<KernelShape> sourceShape);
 
+    SketchFeature* findSketchByToken(const std::string& token);
+    const SketchFeature* findSketchByToken(const std::string& token) const;
+    SolidFeature* findSolidByToken(const std::string& token);
+    // Computes the axis-aligned bounds of the first closed rectangle profile in
+    // a sketch (used by the extrude evaluator). Returns false when absent.
+    bool sketchRectangleBounds(const SketchFeature& sketch, std::array<double, 4>& bounds) const;
+    // Generates a body for an extrude over a rectangle profile. Returns 0 when
+    // no evaluable profile is present.
+    EntityId evaluateExtrudeBody(const SketchFeature& sketch, double distance);
+    std::string coreStateSnapshotUnlocked() const;
+
     EntityId m_id = 0;
     EntityId m_nextEntityId = 1;
     std::string m_filePath;
@@ -278,6 +348,14 @@ private:
     TopologicalNaming m_topology;
     HistoryTree m_history;
     std::vector<TopologyEditFeature> m_topologyEditFeatures;
+    std::vector<SketchFeature> m_sketches;
+    std::vector<SolidFeature> m_solids;
+    std::vector<ConstructionObject> m_construction;
+    std::vector<TimelineEntry> m_timeline;
+    int m_sketchCount = 0;
+    int m_solidCounts[24] = {0};
+    int m_constructionCount = 0;
+    int m_sketchEntityCount = 0;
     mutable std::mutex m_mutex;
 };
 

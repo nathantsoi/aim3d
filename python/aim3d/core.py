@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 from . import _native
@@ -127,6 +128,132 @@ class Document:
             return True
 
         return await asyncio.to_thread(recompute)
+
+    def add_sketch(self, plane="XY"):
+        """
+        Create a sketch and return its stable feature token.
+
+        ``plane`` is either a string origin plane ("XY"/"XZ"/"YZ") or a dict
+        plane reference, e.g. ``{"kind": "ConstructionPlane", "token": "con_Plane_1"}``
+        or ``{"kind": "PlanarFace", "token": "body_1_face_3"}``.
+        """
+        if isinstance(plane, dict):
+            kind = plane.get("kind", "Origin")
+            origin = plane.get("originPlane", plane.get("origin_plane", "XY"))
+            ref_token = plane.get("token", plane.get("ref", ""))
+        else:
+            kind = "Origin"
+            origin = plane or "XY"
+            ref_token = ""
+        token = _native.consume_string(
+            _native.document_add_sketch_on_plane(
+                self._handle,
+                _native._encode_path(kind),
+                _native._encode_path(origin),
+                _native._encode_path(ref_token),
+            )
+        )
+        if token is None:
+            raise _native.NativeError("Failed to add sketch to document")
+        return token
+
+    def add_rectangle(self, sketch_token, x0, y0, x1, y1):
+        """Add an axis-aligned rectangle profile to the identified sketch."""
+        result = _native.document_add_rectangle(
+            self._handle,
+            _native._encode_path(sketch_token),
+            float(x0),
+            float(y0),
+            float(x1),
+            float(y1),
+        )
+        return result == 1
+
+    def add_sketch_entity(self, sketch_token, entity):
+        """
+        Add a generic sketch element and return its token.
+
+        ``entity`` is a dict like ``{"kind": "Line", "points": [[0, 0], [3, 0]],
+        "radius": 0.0, "value": 0.0, "construction": False}``.
+        """
+        points = entity.get("points", []) or []
+        flat = [float(coord) for point in points for coord in (point[0], point[1])]
+        point_count = len(flat) // 2
+        array_type = _native.c_double * len(flat)
+        buffer = array_type(*flat) if flat else None
+        token = _native.consume_string(
+            _native.document_add_sketch_entity(
+                self._handle,
+                _native._encode_path(sketch_token),
+                _native._encode_path(entity.get("kind", "Line")),
+                buffer,
+                point_count,
+                float(entity.get("radius", 0.0)),
+                float(entity.get("value", 0.0)),
+                1 if entity.get("construction", False) else 0,
+            )
+        )
+        if token is None:
+            raise _native.NativeError("Failed to add sketch entity")
+        return token
+
+    def add_solid_feature(self, kind, sketch_token, value=0.0, operation="NewBody"):
+        """
+        Add a solid feature of any kind referencing a sketch profile.
+
+        Only ``Extrude`` over a rectangle profile evaluates to geometry today;
+        other kinds (Revolve/Sweep/Loft/...) are recorded as timeline stubs.
+        """
+        token = _native.consume_string(
+            _native.document_add_solid_feature(
+                self._handle,
+                _native._encode_path(kind),
+                _native._encode_path(sketch_token),
+                float(value),
+                _native._encode_path(operation),
+            )
+        )
+        if token is None:
+            raise _native.NativeError(f"Failed to add solid feature: {kind}")
+        return token
+
+    def add_extrude(self, sketch_token, distance, operation="NewBody"):
+        """Extrude the sketch's rectangle into a solid; return the feature token."""
+        return self.add_solid_feature("Extrude", sketch_token, distance, operation)
+
+    def add_revolve(self, sketch_token, angle=360.0, operation="NewBody"):
+        """Record a revolve feature (stub evaluator); return the feature token."""
+        return self.add_solid_feature("Revolve", sketch_token, angle, operation)
+
+    def add_sweep(self, sketch_token, value=0.0, operation="NewBody"):
+        """Record a sweep feature (stub evaluator); return the feature token."""
+        return self.add_solid_feature("Sweep", sketch_token, value, operation)
+
+    def add_loft(self, sketch_token, value=0.0, operation="NewBody"):
+        """Record a loft feature (stub evaluator); return the feature token."""
+        return self.add_solid_feature("Loft", sketch_token, value, operation)
+
+    def add_construction_plane(self, kind="OffsetPlane", inputs=(), value=0.0):
+        """Register a construction plane/axis/point; return its token."""
+        inputs_csv = ",".join(str(token) for token in (inputs or []))
+        token = _native.consume_string(
+            _native.document_add_construction(
+                self._handle,
+                _native._encode_path(kind),
+                _native._encode_path(inputs_csv),
+                float(value),
+            )
+        )
+        if token is None:
+            raise _native.NativeError(f"Failed to add construction object: {kind}")
+        return token
+
+    def core_state_snapshot(self):
+        """Return the document's flat core-state snapshot (the UI projection)."""
+        raw = _native.consume_string(_native.document_core_state_snapshot(self._handle))
+        if raw is None:
+            raise _native.NativeError("Failed to read core-state snapshot")
+        return json.loads(raw)
 
     def release(self):
         if self._handle:

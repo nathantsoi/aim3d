@@ -84,6 +84,11 @@ class SketchState:
     constraints: list[tuple[str, Any]] = field(default_factory=list)
     dimensions: list[Any] = field(default_factory=list)
     profiles: list[ProfileState] = field(default_factory=list)
+    # Write-through links to the native core (set when a real document backs the
+    # facade). These let rectangle/extrude operations mutate the source-of-truth.
+    native_doc: Any = None
+    native_token: Any = None
+    extruded: bool = False
 
 
 @dataclass
@@ -149,6 +154,7 @@ class ComponentState:
     sketches: list[SketchState] = field(default_factory=list)
     occurrences: list[OccurrenceState] = field(default_factory=list)
     features: list[FeatureState] = field(default_factory=list)
+    design: Any = None
 
 
 @dataclass
@@ -157,6 +163,12 @@ class DesignState:
     root_component: ComponentState = field(default_factory=ComponentState)
     timeline: list[TimelineObjectState] = field(default_factory=list)
     design_intent: int = 0
+
+    def __post_init__(self):
+        # Link the root component back to its design/document so facade
+        # operations can reach the native core for write-through.
+        if self.root_component is not None:
+            self.root_component.design = self
 
 
 @dataclass

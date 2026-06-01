@@ -55,6 +55,59 @@ def _model_parameter(name, value=None):
     return ModelParameter(ParameterState(name, ParameterValueState(raw, expression), expression))
 
 
+def _plane_name(plane):
+    """Normalize a sketch plane (string or construction-plane stub) to XY/XZ/YZ."""
+    text = plane if isinstance(plane, str) else (getattr(plane, "name", "") or str(plane))
+    lowered = str(text).lower()
+    if "yz" in lowered:
+        return "YZ"
+    if "xz" in lowered:
+        return "XZ"
+    return "XY"
+
+
+def _plane_reference(plane):
+    """
+    Resolve a sketch plane into a core plane reference: a construction-plane or
+    planar-face token when available, otherwise a named origin plane (XY/XZ/YZ).
+    """
+    token = getattr(plane, "native_token", None)
+    if token:
+        return {"kind": "ConstructionPlane", "token": token}
+    face_token = getattr(plane, "native_face_token", None)
+    if face_token:
+        return {"kind": "PlanarFace", "token": face_token}
+    return _plane_name(plane)
+
+
+# Maps adsk ConstructionPlaneInput definitions to core construction kinds.
+_CONSTRUCTION_PLANE_KINDS = {
+    "offset": "OffsetPlane",
+    "setByOffset": "OffsetPlane",
+    "setByAngle": "PlaneAtAngle",
+    "setByThreePoints": "PlaneThroughThreePoints",
+    "setByTwoEdges": "PlaneThroughTwoEdges",
+    "setByTangent": "TangentPlane",
+    "setByTangentAtAngle": "TangentPlane",
+    "setByDistanceOnPath": "PlaneAlongPath",
+}
+
+
+def _component_native_doc(component_state):
+    """Return the native core document backing a component, if write-through capable."""
+    design = getattr(component_state, "design", None) if component_state is not None else None
+    document = getattr(design, "document", None) if design is not None else None
+    native_doc = getattr(document, "native_doc", None) if document is not None else None
+    if native_doc is not None and hasattr(native_doc, "add_sketch"):
+        return native_doc
+    return None
+
+
+def _sketch_state_from_profile(profile):
+    state = getattr(profile, "_state", None)
+    return getattr(state, "sketch", None) if state is not None else None
+
+
 class PhysicalProperties(Base):
     def __init__(self):
         self.area = 1.0
@@ -202,6 +255,8 @@ class ConstructionPlane(Base):
         self.name = name
         self.healthState = FeatureHealthStates.HealthyFeatureHealthState
         self.errorOrWarningMessage = ""
+        self.native_token = None
+        self.native_doc = None
 
     def createForAssemblyContext(self, occurrence):
         return self
@@ -234,6 +289,22 @@ class ConstructionPlanes(BaseCollection):
 
     def add(self, input_object):
         plane = ConstructionPlane(f"ConstructionPlane{self.count + 1}")
+        definition = getattr(input_object, "definition", None)
+        kind = "OffsetPlane"
+        value = 0.0
+        if isinstance(definition, tuple) and definition:
+            kind = _CONSTRUCTION_PLANE_KINDS.get(definition[0], "OffsetPlane")
+            if definition[0] in ("offset", "setByOffset") and len(definition) >= 3:
+                value = _value_number(definition[2], 0.0)
+        component_state = getattr(self._component, "_state", None)
+        native_doc = _component_native_doc(component_state)
+        if native_doc is not None:
+            try:
+                plane.native_token = native_doc.add_construction_plane(kind, [], value)
+                plane.native_doc = native_doc
+            except Exception:
+                plane.native_token = None
+                plane.native_doc = None
         self._items.append(plane)
         return plane
 
@@ -536,6 +607,14 @@ class SketchLines(BaseCollection):
         for a, b in ((p1, p2), (p2, p3), (p3, p4), (p4, p1)):
             lines.add(self.addByTwoPoints(a, b))
         _ensure_profiles(self._sketch_state)
+        state = self._sketch_state
+        native_doc = getattr(state, "native_doc", None)
+        token = getattr(state, "native_token", None)
+        if native_doc is not None and token:
+            try:
+                native_doc.add_rectangle(token, p1.x, p1.y, p3.x, p3.y)
+            except Exception:
+                pass
         return lines
 
     def addThreePointRectangle(self, first, second, third):
@@ -800,6 +879,14 @@ class Sketches(BaseCollection):
         state = SketchState(f"Sketch{len(self._component_state.sketches) + 1 if self._component_state else self.count + 1}", plane)
         if self._component_state is not None:
             self._component_state.sketches.append(state)
+        native_doc = _component_native_doc(self._component_state)
+        if native_doc is not None:
+            try:
+                state.native_token = native_doc.add_sketch(_plane_reference(plane))
+                state.native_doc = native_doc
+            except Exception:
+                state.native_doc = None
+                state.native_token = None
         self._items.append(Sketch(state))
         return Sketch(state)
 
@@ -1048,6 +1135,20 @@ class ExtrudeFeatures(BaseCollection):
             self._component_state.features.append(feature_state)
         if self._design_state is not None:
             self._design_state.timeline.append(timeline_state)
+
+        sketch_state = _sketch_state_from_profile(input_object.profile)
+        native_doc = getattr(sketch_state, "native_doc", None)
+        token = getattr(sketch_state, "native_token", None)
+        if native_doc is not None and token and not getattr(sketch_state, "extruded", False):
+            try:
+                distance = _value_number(input_object.distance, None) if input_object.distance is not None else None
+                if distance is None:
+                    distance = _value_number(getattr(input_object.extentOne, "distance", None), 1.0)
+                native_doc.add_extrude(token, float(distance))
+                sketch_state.extruded = True
+            except Exception:
+                pass
+
         self._items.append(ExtrudeFeature(feature_state))
         return ExtrudeFeature(feature_state)
 
@@ -1351,6 +1452,9 @@ class Design(Base):
         if native_root is not None and not state.root_component.bodies and not state.root_component.occurrences:
             state.root_component = Component(native_root)._state
         self._state = state
+        # Keep the root component linked to its design/document so facade
+        # mutations can write through to the native core (source of truth).
+        self._state.root_component.design = self._state
         self._root_component = Component(self._state.root_component, self._state)
         self._document._state.wrappers["design"] = self
 

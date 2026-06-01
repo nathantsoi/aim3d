@@ -47,3 +47,12 @@ export const runSimulation = (gcode = '') => invokeCommand('run_simulation', { g
 export const recomputeDocument = () => invokeCommand('recompute_document', {});
 
 export const postProcess = (setupId) => invokeCommand('post_process', { setupId });
+
+// Route a core-state snapshot through the core boundary, returning the merged
+// UI state (request/response form of the projection).
+export const applyCoreState = (snapshotJson, stateJson) =>
+  invokeCommand('apply_core_state', { snapshotJson, stateJson });
+
+// Broadcast a core-state snapshot to all windows as a `core://changed` event.
+export const pushCoreSnapshot = (snapshotJson) =>
+  invokeCommand('push_core_snapshot', { snapshotJson });

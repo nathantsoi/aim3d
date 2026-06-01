@@ -46,3 +46,58 @@ describe('Timeline tree deletion', () => {
     });
   });
 });
+
+describe('Timeline model browser (schema v2)', () => {
+  it('renders the origin, construction, sketch entities, and bodies tree', async () => {
+    const { wrapper, store } = mountPanel();
+
+    store.loadCoreSnapshot({
+      schemaVersion: 2,
+      activeDocumentId: 'doc_5005',
+      documentPath: 'Untitled.a3d',
+      features: [
+        { id: 'feat_Sketch_1', type: 'Sketch', label: 'feat_Sketch_1', value: 0, unit: 'mm', isDirty: false, selectionToken: 'feat_Sketch_1_face_0' }
+      ],
+      browser: {
+        origin: { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true },
+        construction: [{ id: 'con_Plane_1', kind: 'OffsetPlane', category: 'plane', label: 'Plane1', value: 5, visible: true, inputs: [] }],
+        sketches: [{ id: 'feat_Sketch_1', plane: { kind: 'Origin', originPlane: 'XY' }, visible: true, entities: [{ id: 'sk_ent_1', kind: 'Rectangle2Point', points: [[0, 0], [2, 1]], construction: false }] }],
+        bodies: [{ id: 'body_1', name: 'Body1', sourceFeature: 'feat_Extrude_1' }]
+      },
+      viewportScene: { solids: [], toolpaths: [] }
+    });
+    await flush();
+
+    expect(wrapper.find('[data-testid="model-browser"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="origin-plane"]')).toHaveLength(3);
+    expect(wrapper.find('[data-testid="construction-node"]').text()).toContain('Plane1');
+    expect(wrapper.find('[data-testid="sketch-entity"]').text()).toContain('Rectangle2Point');
+    expect(wrapper.find('[data-testid="body-node"]').text()).toContain('Body1');
+  });
+
+  it('collapses and expands a sketch to hide its entities', async () => {
+    const { wrapper, store } = mountPanel();
+
+    store.loadCoreSnapshot({
+      schemaVersion: 2,
+      activeDocumentId: 'doc_5006',
+      documentPath: 'Untitled.a3d',
+      features: [],
+      browser: {
+        origin: { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true },
+        construction: [],
+        sketches: [{ id: 'feat_Sketch_1', plane: { kind: 'Origin', originPlane: 'XY' }, visible: true, entities: [{ id: 'sk_ent_1', kind: 'Rectangle2Point', points: [], construction: false }] }],
+        bodies: []
+      },
+      viewportScene: { solids: [], toolpaths: [] }
+    });
+    await flush();
+
+    expect(wrapper.find('[data-testid="sketch-entity"]').exists()).toBe(true);
+
+    await wrapper.find('.sketch-toggle').trigger('click');
+    await flush();
+
+    expect(wrapper.find('[data-testid="sketch-entity"]').exists()).toBe(false);
+  });
+});

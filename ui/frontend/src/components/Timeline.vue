@@ -6,6 +6,79 @@
 
     <section v-if="store.activeMode === 'design'" class="tree-container">
       <div class="tree-title">{{ store.documentPath }}</div>
+
+      <div v-if="hasBrowser" class="browser-tree" data-testid="model-browser">
+        <div class="browser-folder">
+          <span class="folder-label">Origin</span>
+          <div class="folder-children">
+            <div
+              v-for="plane in store.browser.origin.planes"
+              :key="plane"
+              class="browser-leaf"
+              data-testid="origin-plane"
+            >{{ planeLabel(plane) }}</div>
+          </div>
+        </div>
+
+        <div v-if="store.browser.construction.length" class="browser-folder">
+          <span class="folder-label">Construction</span>
+          <div class="folder-children">
+            <div
+              v-for="object in store.browser.construction"
+              :key="object.id"
+              class="browser-leaf"
+              data-testid="construction-node"
+            >
+              <span class="node-type">{{ object.label }}</span>
+              <span class="leaf-kind">{{ object.kind }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="store.browser.sketches.length" class="browser-folder">
+          <span class="folder-label">Sketches</span>
+          <div class="folder-children">
+            <div
+              v-for="sketch in store.browser.sketches"
+              :key="sketch.id"
+              class="browser-sketch"
+              data-testid="browser-sketch"
+            >
+              <button class="sketch-toggle" @click="toggleSketch(sketch.id)">
+                <span class="twisty">{{ isExpanded(sketch.id) ? '▾' : '▸' }}</span>
+                <span class="node-type">{{ sketch.id }}</span>
+                <span class="leaf-kind">{{ planeText(sketch.plane) }}</span>
+              </button>
+              <div v-if="isExpanded(sketch.id)" class="folder-children">
+                <div
+                  v-for="entity in sketch.entities"
+                  :key="entity.id"
+                  class="browser-leaf"
+                  data-testid="sketch-entity"
+                >
+                  <span class="node-type">{{ entity.kind }}</span>
+                  <span v-if="entity.construction" class="leaf-kind">construction</span>
+                </div>
+                <div v-if="!sketch.entities.length" class="browser-leaf empty">No entities</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="store.browser.bodies.length" class="browser-folder">
+          <span class="folder-label">Bodies</span>
+          <div class="folder-children">
+            <div
+              v-for="body in store.browser.bodies"
+              :key="body.id"
+              class="browser-leaf"
+              data-testid="body-node"
+            >{{ body.name }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="hasBrowser" class="timeline-subtitle">Timeline</div>
       <div class="tree-list">
         <div
           v-for="feature in store.features"
@@ -113,13 +186,46 @@
 </template>
 
 <script>
-import { defineComponent } from 'vue';
+import { computed, defineComponent, ref } from 'vue';
 import { useCoreStore } from '../store';
 
 export default defineComponent({
   name: 'Timeline',
   setup() {
     const store = useCoreStore();
+
+    // Sketches are expanded by default; this tracks the ones the user collapsed.
+    const collapsedSketches = ref({});
+
+    const hasBrowser = computed(() => {
+      const browser = store.browser;
+      if (!browser) return false;
+      return Boolean(
+        store.schemaVersion >= 2 ||
+        browser.construction?.length ||
+        browser.sketches?.length ||
+        browser.bodies?.length
+      );
+    });
+
+    const isExpanded = (sketchId) => !collapsedSketches.value[sketchId];
+
+    const toggleSketch = (sketchId) => {
+      collapsedSketches.value = {
+        ...collapsedSketches.value,
+        [sketchId]: isExpanded(sketchId)
+      };
+    };
+
+    const planeLabel = (token) => `${String(token).replace('origin_', '')} plane`;
+
+    const planeText = (plane) => {
+      if (!plane) return '';
+      if (plane.kind === 'Origin') return plane.originPlane;
+      if (plane.kind === 'ConstructionPlane') return plane.constructionPlane;
+      if (plane.kind === 'PlanarFace') return plane.face;
+      return plane.kind;
+    };
 
     const onNodeClick = (entityId) => {
       store.selectEntity(store.selectedEntityId === entityId ? null : entityId);
@@ -135,6 +241,11 @@ export default defineComponent({
 
     return {
       store,
+      hasBrowser,
+      isExpanded,
+      toggleSketch,
+      planeLabel,
+      planeText,
       onNodeClick,
       onDelete,
       onOpenSketch
@@ -170,6 +281,90 @@ export default defineComponent({
   font-size: 0.85rem;
   font-weight: 600;
   color: hsl(220, 10%, 80%);
+}
+
+.browser-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.browser-folder {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.folder-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: hsl(220, 10%, 60%);
+}
+
+.folder-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 1px solid hsla(220, 15%, 25%, 0.4);
+}
+
+.browser-leaf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  color: hsl(220, 10%, 82%);
+  border-radius: 4px;
+}
+
+.browser-leaf.empty {
+  color: hsl(220, 10%, 45%);
+  font-style: italic;
+}
+
+.leaf-kind {
+  color: hsl(220, 10%, 50%);
+  font-size: 0.62rem;
+  font-family: monospace;
+}
+
+.sketch-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.sketch-toggle:hover {
+  background-color: hsl(220, 15%, 15%);
+}
+
+.twisty {
+  color: hsl(220, 10%, 55%);
+  width: 10px;
+}
+
+.timeline-subtitle {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: hsl(220, 10%, 60%);
+  margin-top: 4px;
 }
 
 .tree-list,

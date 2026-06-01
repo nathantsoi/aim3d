@@ -4,7 +4,8 @@ export const ACTION_TYPES = Object.freeze({
   DELETE_ENTITY: 'core.deleteEntity',
   RECOMPUTE_DOCUMENT: 'core.recomputeDocument',
   GENERATE_TOOLPATH: 'cam.generateToolpath',
-  RUN_SIMULATION: 'sim.runSimulation'
+  RUN_SIMULATION: 'sim.runSimulation',
+  LOAD_DOCUMENT_STATE: 'core.loadDocumentState'
 });
 
 const identityTransform = [
@@ -98,9 +99,21 @@ export const createDefaultViewportScene = () => ({
   }
 });
 
+// The hierarchical model-tree browser introduced with snapshot schemaVersion 2
+// (Origin default planes, construction objects, sketches with nested entities,
+// and produced bodies). v1 snapshots leave this at its empty default.
+export const createDefaultBrowser = () => ({
+  origin: { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true },
+  construction: [],
+  sketches: [],
+  bodies: []
+});
+
 export const createInitialCoreState = () => ({
   activeDocumentId: 'doc_1001',
   documentPath: 'Untitled.a3d',
+  schemaVersion: 1,
+  browser: createDefaultBrowser(),
   activeMode: 'design',
   activeWorkspaceTab: 'solid',
   isSketchMode: false,
@@ -398,8 +411,98 @@ const syncViewportScene = (state) => {
   };
 };
 
+const featureFromSnapshot = (feature) => ({
+  id: feature.id,
+  type: feature.type,
+  label: feature.label ?? feature.type,
+  value: feature.value ?? 0,
+  unit: feature.unit ?? 'mm',
+  isDirty: Boolean(feature.isDirty),
+  selectionToken: feature.selectionToken ?? `${feature.id}_face_0`,
+  // Schema v2 enrichments (absent on v1 snapshots).
+  ...(feature.plane !== undefined ? { plane: feature.plane } : {}),
+  ...(feature.operation !== undefined ? { operation: feature.operation } : {}),
+  ...(feature.sketchId !== undefined ? { sketchId: feature.sketchId } : {}),
+  ...(feature.entityCount !== undefined ? { entityCount: feature.entityCount } : {})
+});
+
+// Projects a flat core-state snapshot (emitted by the native C++/Rust core)
+// onto the UI store. The core is the source of truth: features and produced
+// solids are replaced wholesale, while UI-only presentation state (camera,
+// gizmos, selection that still resolves) is preserved.
+export const applyCoreSnapshot = (currentState, snapshot) => {
+  const state = cloneCoreState(currentState);
+  if (!snapshot || typeof snapshot !== 'object') {
+    return state;
+  }
+
+  if (typeof snapshot.activeDocumentId === 'string') {
+    state.activeDocumentId = snapshot.activeDocumentId;
+  }
+  if (typeof snapshot.documentPath === 'string') {
+    state.documentPath = snapshot.documentPath;
+  }
+  if (Number.isFinite(snapshot.schemaVersion)) {
+    state.schemaVersion = snapshot.schemaVersion;
+  }
+  if (Array.isArray(snapshot.features)) {
+    state.features = snapshot.features.map(featureFromSnapshot);
+  }
+
+  // Project the hierarchical browser tree (schemaVersion >= 2). A v1 snapshot
+  // omits `browser`, so the model tree falls back to the flat timeline.
+  if (snapshot.browser && typeof snapshot.browser === 'object') {
+    const fallback = createDefaultBrowser();
+    state.browser = {
+      origin: snapshot.browser.origin ?? fallback.origin,
+      construction: Array.isArray(snapshot.browser.construction) ? snapshot.browser.construction : [],
+      sketches: Array.isArray(snapshot.browser.sketches) ? snapshot.browser.sketches : [],
+      bodies: Array.isArray(snapshot.browser.bodies) ? snapshot.browser.bodies : []
+    };
+  } else if (Array.isArray(snapshot.features)) {
+    // No browser payload: keep the tree empty so it doesn't show stale nodes.
+    state.browser = createDefaultBrowser();
+  }
+
+  if (!state.viewportScene) {
+    state.viewportScene = createDefaultViewportScene();
+  }
+  const snapshotScene = snapshot.viewportScene ?? {};
+  if (Array.isArray(snapshotScene.solids)) {
+    state.viewportScene.solids = snapshotScene.solids;
+  }
+  if (Array.isArray(snapshotScene.toolpaths)) {
+    state.viewportScene.toolpaths = snapshotScene.toolpaths;
+  }
+
+  // Drop a dangling selection that no longer resolves to a live entity.
+  if (state.selectedEntityId) {
+    const tokens = new Set();
+    state.features.forEach((feature) => {
+      tokens.add(feature.id);
+      if (feature.selectionToken) tokens.add(feature.selectionToken);
+    });
+    state.viewportScene.solids.forEach((solid) => {
+      if (solid.sourceToken) tokens.add(solid.sourceToken);
+      if (solid.pickable?.entityId) tokens.add(solid.pickable.entityId);
+      if (solid.id) tokens.add(solid.id);
+    });
+    if (!tokens.has(state.selectedEntityId)) {
+      state.selectedEntityId = null;
+      state.selectedEntity = null;
+    }
+  }
+
+  syncViewportScene(state);
+  return state;
+};
+
 export const applyMockCoreAction = (currentState, action) => {
   const state = cloneCoreState(currentState);
+
+  if (action.type === ACTION_TYPES.LOAD_DOCUMENT_STATE) {
+    return applyCoreSnapshot(currentState, action.value);
+  }
 
   if (action.type === ACTION_TYPES.SELECT_ENTITY) {
     state.selectedEntityId = action.value;

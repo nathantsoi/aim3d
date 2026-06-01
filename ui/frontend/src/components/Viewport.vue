@@ -11,7 +11,7 @@
       {{ fallbackMessage }}
     </div>
 
-    <div class="viewport-overlay glass">
+    <div v-if="debugOverlayVisible" class="viewport-overlay glass" data-testid="viewport-debug-overlay">
       <div class="stat-row">
         <span class="label">Graphics Context:</span>
         <span class="value accent-text">{{ diagnostics.webgpuAvailable ? 'WebGPU' : 'Unavailable' }}</span>
@@ -48,6 +48,15 @@
               data-testid="viewport-grid-toggle"
               :checked="gridEnabled"
               @change="store.toggleViewportGrid()"
+            />
+          </label>
+          <label class="settings-row">
+            <span>Show debug info</span>
+            <input
+              type="checkbox"
+              data-testid="viewport-debug-overlay-toggle"
+              :checked="debugOverlayVisible"
+              @change="debugOverlayVisible = !debugOverlayVisible"
             />
           </label>
         </div>
@@ -120,6 +129,7 @@ export default defineComponent({
     const store = useCoreStore();
     const hoverTargetId = ref(null);
     const settingsOpen = ref(false);
+    const debugOverlayVisible = ref(true);
 
     const gridEnabled = computed(() => Boolean(store.viewportScene?.gizmos?.grid));
 
@@ -386,6 +396,7 @@ export default defineComponent({
       fallbackMessage,
       store,
       settingsOpen,
+      debugOverlayVisible,
       gridEnabled,
       navCubeStyle,
       goHome,
