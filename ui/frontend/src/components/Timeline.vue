@@ -20,14 +20,44 @@
           </div>
         </div>
 
-        <div v-if="store.browser.construction.length" class="browser-folder">
-          <span class="folder-label">Construction</span>
+        <div v-if="constructionGroups.planes.length" class="browser-folder">
+          <span class="folder-label">Planes</span>
           <div class="folder-children">
             <div
-              v-for="object in store.browser.construction"
+              v-for="object in constructionGroups.planes"
               :key="object.id"
               class="browser-leaf"
               data-testid="construction-node"
+            >
+              <span class="node-type">{{ object.label }}</span>
+              <span class="leaf-kind">{{ object.kind }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="constructionGroups.axes.length" class="browser-folder">
+          <span class="folder-label">Axes</span>
+          <div class="folder-children">
+            <div
+              v-for="object in constructionGroups.axes"
+              :key="object.id"
+              class="browser-leaf"
+              data-testid="construction-axis-node"
+            >
+              <span class="node-type">{{ object.label }}</span>
+              <span class="leaf-kind">{{ object.kind }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="constructionGroups.points.length" class="browser-folder">
+          <span class="folder-label">Points</span>
+          <div class="folder-children">
+            <div
+              v-for="object in constructionGroups.points"
+              :key="object.id"
+              class="browser-leaf"
+              data-testid="construction-point-node"
             >
               <span class="node-type">{{ object.label }}</span>
               <span class="leaf-kind">{{ object.kind }}</span>
@@ -197,6 +227,15 @@ export default defineComponent({
     // Sketches are expanded by default; this tracks the ones the user collapsed.
     const collapsedSketches = ref({});
 
+    const constructionGroups = computed(() => {
+      const items = store.browser?.construction ?? [];
+      return {
+        planes: items.filter((item) => item.category === 'plane' || item.category === 'ucs'),
+        axes: items.filter((item) => item.category === 'axis'),
+        points: items.filter((item) => item.category === 'point')
+      };
+    });
+
     const hasBrowser = computed(() => {
       const browser = store.browser;
       if (!browser) return false;
@@ -242,6 +281,7 @@ export default defineComponent({
     return {
       store,
       hasBrowser,
+      constructionGroups,
       isExpanded,
       toggleSketch,
       planeLabel,

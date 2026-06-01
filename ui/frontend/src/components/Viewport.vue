@@ -235,6 +235,16 @@ export default defineComponent({
       }
       const pickResult = pickAtEvent(event);
       applyPickDiagnostics(pickResult);
+      if (store.pendingSketchCreation && pickResult.hit?.entityId) {
+        if (store.applyViewportPickToSketch(pickResult.hit.entityId)) {
+          return;
+        }
+      }
+      if (store.pendingConstruction && pickResult.hit?.entityId) {
+        if (store.applyViewportPickToConstruction(pickResult.hit.entityId)) {
+          return;
+        }
+      }
       await store.selectEntity(pickResult.hit?.entityId ?? null);
     };
 

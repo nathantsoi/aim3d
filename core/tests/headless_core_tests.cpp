@@ -630,6 +630,37 @@ void test_parametric_sketch_rectangle_extrude_snapshot() {
     assert(scene.solids[0].indices.size() % 3 == 0);
 }
 
+void test_construction_plane_axis_point_geometry() {
+    aim3d::Application app;
+    auto doc = app.createDocument();
+
+    const auto planeToken = doc->addConstructionObject(
+        aim3d::ConstructionKind::OffsetPlane, {"origin_XY"}, 10.0);
+    assert(planeToken == "con_Plane_1");
+
+    const auto axisToken = doc->addConstructionObject(
+        aim3d::ConstructionKind::AxisThroughTwoPoints, {}, 0.0);
+    assert(axisToken == "con_Axis_1");
+
+    const auto pointToken = doc->addConstructionObject(
+        aim3d::ConstructionKind::PointAtVertex, {}, 0.0);
+    assert(pointToken == "con_Point_1");
+
+    const auto objects = doc->constructionObjects();
+    assert(objects.size() == 3);
+    assert(objects[0].label == "Plane 1");
+    assert(objects[1].label == "Axis 1");
+    assert(objects[2].label == "Point 1");
+    assert(objects[0].origin[2] == 10.0);
+
+    const auto snapshot = doc->coreStateSnapshot();
+    assert(snapshot_contains(snapshot, "\"category\":\"plane\""));
+    assert(snapshot_contains(snapshot, "\"category\":\"axis\""));
+    assert(snapshot_contains(snapshot, "\"category\":\"point\""));
+    assert(snapshot_contains(snapshot, "\"construction\":["));
+    assert(snapshot_contains(snapshot, "\"points\":["));
+}
+
 void test_general_feature_model_snapshot_v2() {
     aim3d::Application app;
     auto doc = app.createDocument();
@@ -806,6 +837,7 @@ int main() {
     test_sketch_solver_c_abi_smoke();
     test_parametric_sketch_rectangle_extrude_snapshot();
     test_general_feature_model_snapshot_v2();
+    test_construction_plane_axis_point_geometry();
     test_viewport_scene_has_renderable_buffers();
     test_c_api_document_buffers_and_tasks();
     test_c_api_cam_toolpath_buffers();

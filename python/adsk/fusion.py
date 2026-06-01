@@ -92,6 +92,24 @@ _CONSTRUCTION_PLANE_KINDS = {
     "setByDistanceOnPath": "PlaneAlongPath",
 }
 
+_CONSTRUCTION_AXIS_KINDS = {
+    "setByPerpendicularAtPoint": "AxisPerpendicularToFace",
+    "perpendicular": "AxisPerpendicularToFace",
+    "setByTwoPlanes": "AxisThroughTwoPlanes",
+    "setByTwoPoints": "AxisThroughTwoPoints",
+    "setByEdge": "AxisThroughEdge",
+    "setByCylinderConeTorus": "AxisThroughCylinderConeTorus",
+}
+
+_CONSTRUCTION_POINT_KINDS = {
+    "setByVertex": "PointAtVertex",
+    "setByTwoEdges": "PointThroughTwoEdges",
+    "setByThreePlanes": "PointThroughThreePlanes",
+    "setByCenter": "PointAtCenter",
+    "setByEdgeAndPlane": "PointAtEdgeAndPlane",
+    "setByPath": "PointAlongPath",
+}
+
 
 def _component_native_doc(component_state):
     """Return the native core document backing a component, if write-through capable."""
@@ -323,14 +341,90 @@ class ConstructionAxisInput(Base):
         raise AttributeError(name)
 
 
+class ConstructionAxis(Base):
+    def __init__(self, name):
+        self.name = name
+        self.healthState = FeatureHealthStates.HealthyFeatureHealthState
+        self.errorOrWarningMessage = ""
+        self.native_token = None
+        self.native_doc = None
+
+
 class ConstructionAxes(BaseCollection):
+    def __init__(self, component):
+        self._component = component
+        super().__init__([])
+
     def createInput(self):
         return ConstructionAxisInput()
 
     def add(self, input_object):
-        axis = SimpleNamespace(name=f"ConstructionAxis{self.count + 1}", input=input_object)
+        axis = ConstructionAxis(f"ConstructionAxis{self.count + 1}")
+        definition = getattr(input_object, "definition", None)
+        kind = "AxisThroughTwoPoints"
+        if isinstance(definition, tuple) and definition:
+            kind = _CONSTRUCTION_AXIS_KINDS.get(definition[0], kind)
+        component_state = getattr(self._component, "_state", None)
+        native_doc = _component_native_doc(component_state)
+        if native_doc is not None:
+            try:
+                axis.native_token = native_doc.add_construction_axis(kind, [], 0.0)
+                axis.native_doc = native_doc
+            except Exception:
+                axis.native_token = None
+                axis.native_doc = None
         self._items.append(axis)
         return axis
+
+
+class ConstructionPointInput(Base):
+    def setByVertex(self, vertex):
+        self.definition = ("setByVertex", vertex)
+        return True
+
+    def __getattr__(self, name):
+        if name.startswith("setBy"):
+            def setter(*args, **kwargs):
+                self.definition = (name, args, kwargs)
+                return True
+            return setter
+        raise AttributeError(name)
+
+
+class ConstructionPoint(Base):
+    def __init__(self, name):
+        self.name = name
+        self.healthState = FeatureHealthStates.HealthyFeatureHealthState
+        self.errorOrWarningMessage = ""
+        self.native_token = None
+        self.native_doc = None
+
+
+class ConstructionPoints(BaseCollection):
+    def __init__(self, component):
+        self._component = component
+        super().__init__([])
+
+    def createInput(self):
+        return ConstructionPointInput()
+
+    def add(self, input_object):
+        point = ConstructionPoint(f"ConstructionPoint{self.count + 1}")
+        definition = getattr(input_object, "definition", None)
+        kind = "PointAtVertex"
+        if isinstance(definition, tuple) and definition:
+            kind = _CONSTRUCTION_POINT_KINDS.get(definition[0], kind)
+        component_state = getattr(self._component, "_state", None)
+        native_doc = _component_native_doc(component_state)
+        if native_doc is not None:
+            try:
+                point.native_token = native_doc.add_construction_point(kind, [], 0.0)
+                point.native_doc = native_doc
+            except Exception:
+                point.native_token = None
+                point.native_doc = None
+        self._items.append(point)
+        return point
 
 
 class BRepVertex(Base):
@@ -1258,7 +1352,8 @@ class Component(Base):
         self._design_state = design_state
         self._occurrences = Occurrences(self._state)
         self._construction_planes = ConstructionPlanes(self)
-        self._construction_axes = ConstructionAxes()
+        self._construction_axes = ConstructionAxes(self)
+        self._construction_points = ConstructionPoints(self)
         self.xYConstructionPlane = ConstructionPlane("xYConstructionPlane")
         self.xZConstructionPlane = ConstructionPlane("xZConstructionPlane")
         self.yZConstructionPlane = ConstructionPlane("yZConstructionPlane")
@@ -1266,7 +1361,7 @@ class Component(Base):
         self.yConstructionAxis = UniversalStub("yConstructionAxis")
         self.zConstructionAxis = UniversalStub("zConstructionAxis")
         self.originConstructionPoint = UniversalStub("originConstructionPoint")
-        self.constructionPoints = GenericFeatures("constructionPoints", self._state, self._design_state)
+        self.constructionPoints = self._construction_points
         self.joints = GenericFeatures("joints", self._state, self._design_state)
         self.asBuiltJoints = GenericFeatures("asBuiltJoints", self._state, self._design_state)
         self.jointOrigins = GenericFeatures("jointOrigins", self._state, self._design_state)

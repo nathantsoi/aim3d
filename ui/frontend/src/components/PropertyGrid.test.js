@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
@@ -18,7 +18,7 @@ const mountPanel = () => {
       plugins: [pinia]
     }
   });
-  return { wrapper, store: useCoreStore() };
+  return { wrapper, store: useCoreStore(pinia) };
 };
 
 describe('PropertyGrid', () => {
@@ -74,6 +74,29 @@ describe('PropertyGrid', () => {
       path: 'toolDiameter',
       value: 7.5
     });
+  });
+
+  it('shows sketch plane selection before creating a new sketch', async () => {
+    const { wrapper, store } = mountPanel();
+    const initialSketchCount = store.browser.sketches.length;
+
+    store.beginSketchCreation();
+    await flush();
+
+    expect(wrapper.find('[data-testid="sketch-create-panel"]').exists()).toBe(true);
+    expect(wrapper.find('.property-grid').exists()).toBe(false);
+    expect(store.isSketchMode).toBe(false);
+
+    store.updateSketchCreationDraft({ plane: 'origin_XZ' });
+    await wrapper.find('[data-testid="sketch-create-confirm"]').trigger('click');
+    await flushPromises();
+    await flush();
+
+    expect(store.pendingSketchCreation).toBeNull();
+    expect(store.browser.sketches.length).toBe(initialSketchCount + 1);
+    expect(store.browser.sketches.at(-1).plane).toEqual({ kind: 'Origin', originPlane: 'XZ' });
+    expect(store.isSketchMode).toBe(true);
+    expect(wrapper.find('[data-testid="sketch-palette"]').exists()).toBe(true);
   });
 
   it('switches the right panel to the sketch palette in sketch mode', async () => {

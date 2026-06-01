@@ -246,6 +246,20 @@ def test_aim3d_core_general_feature_model_snapshot_v2():
     assert len(browser["bodies"]) == 1
 
 
+def test_aim3d_core_construction_plane_axis_point():
+    doc = aim_core.documents.create()
+
+    assert doc.add_construction_plane("OffsetPlane", ["origin_XY"], 10.0) == "con_Plane_1"
+    assert doc.add_construction_axis("AxisThroughTwoPoints") == "con_Axis_1"
+    assert doc.add_construction_point("PointAtVertex") == "con_Point_1"
+
+    snapshot = doc.core_state_snapshot()
+    categories = [item["category"] for item in snapshot["browser"]["construction"]]
+    assert categories == ["plane", "axis", "point"]
+    assert snapshot["browser"]["construction"][0]["label"] == "Plane 1"
+    assert len(snapshot["viewportScene"]["construction"]) == 3
+
+
 def test_ui_bridge_emits_core_snapshot_as_json_line():
     import io
 

@@ -127,6 +127,23 @@ describe('core store action gateway', () => {
     expect(store.setups.some((setup) => setup.id === 'setup_Main_1')).toBe(true);
   });
 
+  it('shows sketch plane selection before creating a new sketch', async () => {
+    const store = useCoreStore();
+    const initialSketchCount = store.browser.sketches.length;
+
+    store.beginSketchCreation();
+    expect(store.pendingSketchCreation).toBeTruthy();
+    expect(store.isSketchMode).toBe(false);
+    expect(store.viewportScene.gizmos.sketchGrid).toBe(true);
+
+    await store.confirmSketchCreation();
+
+    expect(store.pendingSketchCreation).toBeNull();
+    expect(store.browser.sketches.length).toBe(initialSketchCount + 1);
+    expect(store.isSketchMode).toBe(true);
+    expect(store.activeSketchId).toBe(store.browser.sketches.at(-1).id);
+  });
+
   it('enters and finishes sketch mode and toggles palette options', () => {
     const store = useCoreStore();
 
@@ -290,6 +307,23 @@ describe('core snapshot projection', () => {
     expect(store.browser.construction).toEqual([]);
     expect(store.browser.sketches).toEqual([]);
     expect(store.browser.bodies).toEqual([]);
+  });
+
+  it('creates construction geometry after the CONSTRUCT command is confirmed', async () => {
+    const store = useCoreStore();
+    store.beginConstructionCommand('OffsetPlane', 'Offset Plane');
+    expect(store.pendingConstruction).toBeTruthy();
+    expect(store.viewportScene.previewConstruction?.renderMode).toBe('planeFill');
+
+    await store.confirmConstructionCommand();
+
+    expect(store.pendingConstruction).toBeNull();
+    expect(store.browser.construction).toHaveLength(1);
+    expect(store.browser.construction[0].kind).toBe('OffsetPlane');
+    expect(store.browser.construction[0].category).toBe('plane');
+    expect(store.viewportScene.construction).toHaveLength(1);
+    expect(store.viewportScene.construction[0].renderMode).toBe('planeFill');
+    expect(store.viewportScene.construction[0].positions.length).toBe(12);
   });
 
   it('projects an empty new-document snapshot as a blank timeline and viewport', () => {

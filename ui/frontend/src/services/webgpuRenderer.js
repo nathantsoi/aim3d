@@ -43,6 +43,14 @@ fn solid_main(input: SolidIn) -> Out {
 }
 
 @vertex
+fn plane_main(input: SolidIn) -> Out {
+  var out: Out;
+  out.position = uniforms.viewProj * vec4<f32>(input.position, 1.0);
+  out.color = input.color;
+  return out;
+}
+
+@vertex
 fn line_main(input: LineIn) -> Out {
   var out: Out;
   out.position = uniforms.viewProj * vec4<f32>(input.position, 1.0);
@@ -220,6 +228,35 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' }
   });
 
+  const constructionPlanePipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: {
+      module: shader,
+      entryPoint: 'plane_main',
+      buffers: [{
+        arrayStride: 40,
+        attributes: [
+          { shaderLocation: 0, offset: 0, format: 'float32x3' },
+          { shaderLocation: 1, offset: 12, format: 'float32x3' },
+          { shaderLocation: 2, offset: 24, format: 'float32x4' }
+        ]
+      }]
+    },
+    fragment: {
+      module: shader,
+      entryPoint: 'fragment_main',
+      targets: [{
+        format,
+        blend: {
+          color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
+          alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
+        }
+      }]
+    },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'less-equal' }
+  });
+
   const linePipeline = device.createRenderPipeline({
     layout: pipelineLayout,
     vertex: {
@@ -264,12 +301,24 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     if (nextAdapted.key === lastKey) return;
     buffers.solidVertex?.destroy?.();
     buffers.solidIndex?.destroy?.();
+    buffers.constructionVertex?.destroy?.();
+    buffers.constructionIndex?.destroy?.();
     buffers.lineVertex?.destroy?.();
     adapted = nextAdapted;
     lastKey = nextAdapted.key;
     buffers = {
       solidVertex: createBuffer(device, adapted.solidVertices, GPU_BUFFER_USAGE.VERTEX | GPU_BUFFER_USAGE.COPY_DST),
       solidIndex: createBuffer(device, adapted.solidIndices, GPU_BUFFER_USAGE.INDEX | GPU_BUFFER_USAGE.COPY_DST),
+      constructionVertex: createBuffer(
+        device,
+        adapted.constructionVertices,
+        GPU_BUFFER_USAGE.VERTEX | GPU_BUFFER_USAGE.COPY_DST
+      ),
+      constructionIndex: createBuffer(
+        device,
+        adapted.constructionIndices,
+        GPU_BUFFER_USAGE.INDEX | GPU_BUFFER_USAGE.COPY_DST
+      ),
       lineVertex: createBuffer(device, adapted.lineVertices, GPU_BUFFER_USAGE.VERTEX | GPU_BUFFER_USAGE.COPY_DST)
     };
   };
@@ -299,6 +348,12 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       pass.setVertexBuffer(0, buffers.solidVertex);
       pass.setIndexBuffer(buffers.solidIndex, 'uint32');
       pass.drawIndexed(adapted.solidIndices.length);
+    }
+    if (buffers.constructionVertex && buffers.constructionIndex && adapted.constructionIndices.length) {
+      pass.setPipeline(constructionPlanePipeline);
+      pass.setVertexBuffer(0, buffers.constructionVertex);
+      pass.setIndexBuffer(buffers.constructionIndex, 'uint32');
+      pass.drawIndexed(adapted.constructionIndices.length);
     }
     if (buffers.lineVertex && adapted.lineVertices.length) {
       pass.setPipeline(linePipeline);
@@ -330,6 +385,8 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     destroy() {
       buffers.solidVertex?.destroy?.();
       buffers.solidIndex?.destroy?.();
+      buffers.constructionVertex?.destroy?.();
+      buffers.constructionIndex?.destroy?.();
       buffers.lineVertex?.destroy?.();
       depthTexture?.destroy?.();
       uniformBuffer?.destroy?.();

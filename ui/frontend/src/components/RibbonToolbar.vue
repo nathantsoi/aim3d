@@ -44,46 +44,59 @@
           data-testid="command-group"
           @click.stop
         >
-          <button class="group-button" @click="toggleGroup(group.id)">
+          <button
+            :ref="(el) => setGroupButtonRef(group.id, el)"
+            class="group-button"
+            @click="toggleGroup(group.id)"
+          >
             <span class="group-label">{{ group.label }}</span>
             <span class="caret">&#9662;</span>
           </button>
-          <div v-if="openGroupId === group.id" class="dropdown group-dropdown" data-testid="group-dropdown">
-            <template v-if="group.commands.length">
-              <template v-for="command in group.commands" :key="command.id">
-                <button
-                  class="dropdown-item command-item"
-                  :class="{ preview: !command.action && !command.submenu && !command.hasSubmenu }"
-                  data-testid="command-item"
-                  @click="onCommand(group, command)"
-                >
-                  <span class="command-label">{{ command.label }}</span>
-                  <span v-if="command.hotkey" class="command-hotkey">{{ command.hotkey }}</span>
-                  <span
-                    v-else-if="command.submenu || command.hasSubmenu"
-                    class="command-submenu"
-                    :class="{ open: openSubmenuId === command.id }"
-                    >&#9656;</span
-                  >
-                  <span v-else-if="!command.action" class="command-preview-tag">preview</span>
-                </button>
-                <button
-                  v-for="sub in openSubmenuId === command.id ? command.submenu : []"
-                  :key="sub.id"
-                  class="dropdown-item command-item submenu-item preview"
-                  data-testid="submenu-item"
-                  @click="onSubCommand(group, command, sub)"
-                >
-                  <span class="command-label">{{ sub.label }}</span>
-                  <span v-if="sub.hotkey" class="command-hotkey">{{ sub.hotkey }}</span>
-                </button>
-              </template>
-            </template>
-            <div v-else class="dropdown-empty" data-testid="group-placeholder">Coming soon</div>
-          </div>
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="openGroupId && openGroup"
+        class="dropdown group-dropdown group-dropdown--fixed"
+        :style="groupDropdownStyle"
+        data-testid="group-dropdown"
+        @click.stop
+      >
+        <template v-if="openGroup.commands.length">
+          <template v-for="command in openGroup.commands" :key="command.id">
+            <button
+              class="dropdown-item command-item"
+              :class="{ preview: !command.action && !command.submenu && !command.hasSubmenu }"
+              data-testid="command-item"
+              @click="onCommand(openGroup, command)"
+            >
+              <span class="command-label">{{ command.label }}</span>
+              <span v-if="command.hotkey" class="command-hotkey">{{ command.hotkey }}</span>
+              <span
+                v-else-if="command.submenu || command.hasSubmenu"
+                class="command-submenu"
+                :class="{ open: openSubmenuId === command.id }"
+                >&#9656;</span
+              >
+              <span v-else-if="!command.action" class="command-preview-tag">preview</span>
+            </button>
+            <button
+              v-for="sub in openSubmenuId === command.id ? command.submenu : []"
+              :key="sub.id"
+              class="dropdown-item command-item submenu-item preview"
+              data-testid="submenu-item"
+              @click="onSubCommand(openGroup, command, sub)"
+            >
+              <span class="command-label">{{ sub.label }}</span>
+              <span v-if="sub.hotkey" class="command-hotkey">{{ sub.hotkey }}</span>
+            </button>
+          </template>
+        </template>
+        <div v-else class="dropdown-empty" data-testid="group-placeholder">Coming soon</div>
+      </div>
+    </Teleport>
 
     <button
       v-if="store.isSketchMode"
@@ -102,7 +115,7 @@
 </template>
 
 <script>
-import { computed, defineComponent, ref } from 'vue';
+import { computed, defineComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useCoreStore } from '../store';
 import { RIBBON_MODES, RIBBON_MODE_ORDER, SKETCH_TAB } from '../config/ribbon';
 import {
@@ -121,6 +134,8 @@ export default defineComponent({
     const openGroupId = ref(null);
     const openSubmenuId = ref(null);
     const lastResult = ref('');
+    const groupButtonRefs = ref({});
+    const groupDropdownStyle = ref({});
 
     const activeMode = computed(() => RIBBON_MODES[store.activeMode] ?? RIBBON_MODES.design);
     const activeModeLabel = computed(() => activeMode.value.label);
@@ -136,6 +151,33 @@ export default defineComponent({
       () => tabs.value.find((tab) => tab.id === store.activeWorkspaceTab) ?? tabs.value[0]
     );
     const groups = computed(() => activeTab.value?.groups ?? []);
+    const openGroup = computed(() => groups.value.find((group) => group.id === openGroupId.value) ?? null);
+
+    const setGroupButtonRef = (groupId, el) => {
+      if (el) {
+        groupButtonRefs.value[groupId] = el;
+      } else {
+        delete groupButtonRefs.value[groupId];
+      }
+    };
+
+    const updateGroupDropdownPosition = () => {
+      const groupId = openGroupId.value;
+      if (!groupId) {
+        groupDropdownStyle.value = {};
+        return;
+      }
+      const button = groupButtonRefs.value[groupId];
+      if (!button) {
+        return;
+      }
+      const rect = button.getBoundingClientRect();
+      groupDropdownStyle.value = {
+        top: `${rect.bottom + 6}px`,
+        left: `${rect.left}px`,
+        minWidth: `${Math.max(rect.width, 220)}px`
+      };
+    };
 
     const closeMenus = () => {
       modeMenuOpen.value = false;
@@ -153,7 +195,22 @@ export default defineComponent({
       modeMenuOpen.value = false;
       openSubmenuId.value = null;
       openGroupId.value = openGroupId.value === groupId ? null : groupId;
+      if (openGroupId.value) {
+        nextTick(updateGroupDropdownPosition);
+      } else {
+        groupDropdownStyle.value = {};
+      }
     };
+
+    onMounted(() => {
+      window.addEventListener('resize', updateGroupDropdownPosition);
+      window.addEventListener('scroll', closeMenus, true);
+    });
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('resize', updateGroupDropdownPosition);
+      window.removeEventListener('scroll', closeMenus, true);
+    });
 
     const onSelectMode = (modeId) => {
       store.setMode(modeId);
@@ -162,9 +219,9 @@ export default defineComponent({
 
     const runCommandAction = (command) => {
       switch (command.action) {
-        case 'enterSketch':
-          store.enterSketchMode();
-          lastResult.value = 'Entered sketch mode';
+        case 'beginSketch':
+          store.beginSketchCreation();
+          lastResult.value = 'Select sketch plane';
           return null;
         case 'solveSketch':
           return solveSketch2d();
@@ -190,10 +247,17 @@ export default defineComponent({
       }
     };
 
-    const onSubCommand = (group, command, sub) => {
-      // Sub-tools are visual-only for now: surface intent for debugging.
-      console.debug(`[ribbon] ${store.activeMode}/${group.id}/${command.id}/${sub.id}`);
+    const onSubCommand = async (group, command, sub) => {
       closeMenus();
+
+      if (sub.action === 'beginConstruction') {
+        store.beginConstructionCommand(sub.constructKind, sub.label);
+        lastResult.value = `Define ${sub.label}`;
+        return;
+      }
+
+      // Sub-tools without actions are visual-only for now.
+      console.debug(`[ribbon] ${store.activeMode}/${group.id}/${command.id}/${sub.id}`);
     };
 
     const onCommand = async (group, command) => {
@@ -229,6 +293,9 @@ export default defineComponent({
       modeMenuOpen,
       openGroupId,
       openSubmenuId,
+      openGroup,
+      groupDropdownStyle,
+      setGroupButtonRef,
       lastResult,
       activeModeLabel,
       tabs,
@@ -332,6 +399,13 @@ export default defineComponent({
   padding-bottom: 2px;
 }
 
+/* Dropdowns are teleported to <body> with position:fixed so they are not
+   clipped by overflow-x:auto on .group-bar (which forces overflow-y:auto). */
+.group-dropdown--fixed {
+  position: fixed;
+  z-index: 1000;
+}
+
 .group {
   position: relative;
   flex-shrink: 0;
@@ -365,9 +439,6 @@ export default defineComponent({
 }
 
 .dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
   min-width: 220px;
   background-color: hsla(220, 15%, 16%, 0.98);
   backdrop-filter: blur(16px);
@@ -375,9 +446,15 @@ export default defineComponent({
   border-radius: 8px;
   box-shadow: 0 12px 32px hsla(220, 30%, 4%, 0.55);
   padding: 6px;
-  z-index: 20;
   max-height: 60vh;
   overflow-y: auto;
+}
+
+.mode-selector .dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
 }
 
 .mode-dropdown {

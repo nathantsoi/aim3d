@@ -248,6 +248,16 @@ class Document:
             raise _native.NativeError(f"Failed to add construction object: {kind}")
         return token
 
+    add_construction = add_construction_plane
+
+    def add_construction_axis(self, kind="AxisThroughTwoPoints", inputs=(), value=0.0):
+        """Register a construction axis; return its token."""
+        return self.add_construction(kind, inputs, value)
+
+    def add_construction_point(self, kind="PointAtVertex", inputs=(), value=0.0):
+        """Register a construction point; return its token."""
+        return self.add_construction(kind, inputs, value)
+
     def core_state_snapshot(self):
         """Return the document's flat core-state snapshot (the UI projection)."""
         raw = _native.consume_string(_native.document_core_state_snapshot(self._handle))

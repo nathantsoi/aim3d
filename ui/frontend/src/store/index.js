@@ -7,13 +7,24 @@ import {
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
 import { RIBBON_MODES } from '../config/ribbon';
+import {
+  buildConstructionParams,
+  canConfirmConstructionDraft,
+  defaultFieldValues,
+  getConstructionCommandDef,
+  mapViewportPickToField
+} from '../config/constructionCommands';
+import { constructionViewportMesh } from '../contracts/constructionGeometry';
+import { mapViewportPickToSketchPlane, planeReferenceFromToken } from '../contracts/sketchPlane';
 
 export const useCoreStore = defineStore('core', {
   state: () => ({
     ...createInitialCoreState(),
     isDispatching: false,
     lastDispatchedAction: null,
-    actionLog: []
+    actionLog: [],
+    pendingConstruction: null,
+    pendingSketchCreation: null
   }),
 
   getters: {
@@ -33,6 +44,8 @@ export const useCoreStore = defineStore('core', {
         isDispatching,
         lastDispatchedAction,
         actionLog,
+        pendingConstruction,
+        pendingSketchCreation,
         ...coreState
       } = this.$state;
       return coreState;
@@ -74,8 +87,74 @@ export const useCoreStore = defineStore('core', {
       if (this.isSketchMode) {
         this.finishSketch();
       }
+      this.cancelSketchCreation();
+      this.cancelConstructionCommand();
       this.activeMode = mode;
       this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
+    },
+
+    beginSketchCreation() {
+      this.cancelConstructionCommand();
+      this.pendingSketchCreation = {
+        label: 'Create Sketch',
+        values: { plane: 'origin_XY' },
+        activeFieldKey: 'plane'
+      };
+      this.syncSketchPlanePreview();
+    },
+
+    setSketchPlaneActiveField() {
+      if (!this.pendingSketchCreation) return;
+      this.pendingSketchCreation.activeFieldKey = 'plane';
+    },
+
+    updateSketchCreationDraft(patch) {
+      if (!this.pendingSketchCreation) return;
+      this.pendingSketchCreation.values = { ...this.pendingSketchCreation.values, ...patch };
+      this.syncSketchPlanePreview();
+    },
+
+    syncSketchPlanePreview() {
+      if (!this.pendingSketchCreation || this.isSketchMode) return;
+      if (!this.viewportScene?.gizmos) return;
+      this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+    },
+
+    cancelSketchCreation() {
+      this.pendingSketchCreation = null;
+      if (!this.isSketchMode && this.viewportScene?.gizmos) {
+        this.viewportScene.gizmos.sketchGrid = false;
+      }
+    },
+
+    async confirmSketchCreation() {
+      if (!this.pendingSketchCreation?.values?.plane) return;
+      const plane = planeReferenceFromToken(this.pendingSketchCreation.values.plane);
+      this.pendingSketchCreation = null;
+      await this.createSketch(plane);
+      const sketchId = this.browser.sketches[this.browser.sketches.length - 1]?.id;
+      if (sketchId) {
+        this.enterSketchMode(sketchId);
+      }
+    },
+
+    applyViewportPickToSketch(entityId) {
+      if (!this.pendingSketchCreation) return false;
+      const mapped = mapViewportPickToSketchPlane(entityId, this.browser);
+      if (!mapped) return false;
+      this.updateSketchCreationDraft({ plane: mapped });
+      return true;
+    },
+
+    createSketch(plane) {
+      return this.dispatchAction({
+        type: ACTION_TYPES.CREATE_SKETCH,
+        targetId: this.activeDocumentId,
+        targetKind: 'sketch',
+        path: null,
+        value: { plane },
+        meta: { plane }
+      });
     },
 
     setWorkspaceTab(tabId) {
@@ -188,6 +267,94 @@ export const useCoreStore = defineStore('core', {
         targetKind,
         path: null,
         value: null
+      });
+    },
+
+    beginConstructionCommand(kind, label = '') {
+      this.cancelSketchCreation();
+      const def = getConstructionCommandDef(kind);
+      if (!def) return;
+      this.pendingConstruction = {
+        kind,
+        label: label || def.label,
+        values: defaultFieldValues(def),
+        activeFieldKey: def.fields[0]?.key ?? null
+      };
+      this.syncConstructionPreview();
+    },
+
+    setConstructionActiveField(fieldKey) {
+      if (!this.pendingConstruction) return;
+      this.pendingConstruction.activeFieldKey = fieldKey;
+    },
+
+    updateConstructionDraft(patch) {
+      if (!this.pendingConstruction) return;
+      this.pendingConstruction.values = { ...this.pendingConstruction.values, ...patch };
+      this.syncConstructionPreview();
+    },
+
+    syncConstructionPreview() {
+      if (!this.pendingConstruction) return;
+      if (!this.viewportScene) return;
+      const { inputs, value } = buildConstructionParams(this.pendingConstruction);
+      const previewObject = {
+        id: '__preview__',
+        kind: this.pendingConstruction.kind,
+        value,
+        inputs,
+        visible: true
+      };
+      this.viewportScene.previewConstruction = constructionViewportMesh(previewObject, { preview: true });
+    },
+
+    cancelConstructionCommand() {
+      this.pendingConstruction = null;
+      if (this.viewportScene) {
+        this.viewportScene.previewConstruction = null;
+      }
+    },
+
+    async confirmConstructionCommand() {
+      if (!canConfirmConstructionDraft(this.pendingConstruction)) return;
+      const { inputs, value } = buildConstructionParams(this.pendingConstruction);
+      const kind = this.pendingConstruction.kind;
+      this.pendingConstruction = null;
+      if (this.viewportScene) {
+        this.viewportScene.previewConstruction = null;
+      }
+      await this.createConstruction(kind, value, inputs);
+    },
+
+    applyViewportPickToConstruction(entityId) {
+      if (!this.pendingConstruction?.activeFieldKey) return false;
+      const def = getConstructionCommandDef(this.pendingConstruction.kind);
+      const field = def?.fields.find((item) => item.key === this.pendingConstruction.activeFieldKey);
+      if (!field) return false;
+      const mapped = mapViewportPickToField(entityId, field.type, this.browser);
+      if (!mapped) return false;
+      this.updateConstructionDraft({ [field.key]: mapped });
+      const next = def.fields.find((item) => {
+        if (item.key === field.key) return false;
+        if (item.type === 'number') {
+          return !Number.isFinite(Number(this.pendingConstruction.values[item.key]));
+        }
+        return !this.pendingConstruction.values[item.key];
+      });
+      if (next) {
+        this.pendingConstruction.activeFieldKey = next.key;
+      }
+      return true;
+    },
+
+    createConstruction(kind, value = 0, inputs = ['origin_XY']) {
+      return this.dispatchAction({
+        type: ACTION_TYPES.CREATE_CONSTRUCTION,
+        targetId: this.activeDocumentId,
+        targetKind: 'construction',
+        path: null,
+        value: { kind, value, inputs },
+        meta: { kind, value, inputs }
       });
     },
 

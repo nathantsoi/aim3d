@@ -88,6 +88,17 @@ struct ViewportAxis {
     std::vector<float> points;
 };
 
+// Renderable construction geometry (planes, axes, points) for the viewport.
+struct ViewportConstruction {
+    std::string id;
+    std::string token;
+    std::string category;  // plane, axis, point, ucs
+    std::string kind;
+    std::array<float, 4> color = {0.45f, 0.75f, 1.0f, 0.85f};
+    std::vector<float> points;
+    bool visible = true;
+};
+
 struct ViewportCamera {
     std::array<float, 3> target = {0.0f, 0.0f, 0.0f};
     float distance = 5.2f;
@@ -113,6 +124,7 @@ struct ViewportScene {
     std::vector<ViewportSolidMesh> solids;
     std::vector<ViewportToolpath> toolpaths;
     std::vector<ViewportAxis> axes;
+    std::vector<ViewportConstruction> construction;
     ViewportCamera camera;
     ViewportDiagnostics diagnostics;
 };
@@ -354,7 +366,10 @@ private:
     std::vector<TimelineEntry> m_timeline;
     int m_sketchCount = 0;
     int m_solidCounts[24] = {0};
-    int m_constructionCount = 0;
+    int m_constructionPlaneCount = 0;
+    int m_constructionAxisCount = 0;
+    int m_constructionPointCount = 0;
+    int m_constructionUcsCount = 0;
     int m_sketchEntityCount = 0;
     mutable std::mutex m_mutex;
 };

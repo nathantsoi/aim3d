@@ -1,8 +1,12 @@
+import { constructionViewportMesh, createConstructionObject } from './constructionGeometry.js';
+
 export const ACTION_TYPES = Object.freeze({
   SELECT_ENTITY: 'ui.selectEntity',
   UPDATE_FIELD: 'ui.updateField',
   DELETE_ENTITY: 'core.deleteEntity',
   RECOMPUTE_DOCUMENT: 'core.recomputeDocument',
+  CREATE_CONSTRUCTION: 'core.createConstruction',
+  CREATE_SKETCH: 'core.createSketch',
   GENERATE_TOOLPATH: 'cam.generateToolpath',
   RUN_SIMULATION: 'sim.runSimulation',
   LOAD_DOCUMENT_STATE: 'core.loadDocumentState'
@@ -68,6 +72,7 @@ export const createDefaultViewportScene = () => ({
       ]
     }
   ],
+  construction: [],
   gizmos: {
     axes: [
       { id: 'axis_x', label: 'X', color: [0.95, 0.18, 0.2, 1], points: [0, 0, 0, 1.1, 0, 0] },
@@ -403,11 +408,17 @@ const syncViewportScene = (state) => {
     0
   );
   const axisSegments = state.viewportScene.gizmos?.axes?.length ?? 0;
+  const constructionSegments = (state.viewportScene.construction ?? []).reduce((count, item) => {
+    if (item.renderMode === 'planeFill' || item.category === 'plane' || item.category === 'ucs') {
+      return count;
+    }
+    return count + Math.max(0, Math.floor((item.points?.length ?? 0) / 6));
+  }, 0);
 
   state.viewportScene.diagnostics = {
     ...state.viewportScene.diagnostics,
     triangleCount,
-    segmentCount: toolpathSegments + axisSegments
+    segmentCount: toolpathSegments + axisSegments + constructionSegments
   };
 };
 
@@ -474,6 +485,19 @@ export const applyCoreSnapshot = (currentState, snapshot) => {
   if (Array.isArray(snapshotScene.toolpaths)) {
     state.viewportScene.toolpaths = snapshotScene.toolpaths;
   }
+  if (Array.isArray(snapshotScene.construction)) {
+    state.viewportScene.construction = snapshotScene.construction;
+  } else if (!state.viewportScene.construction) {
+    state.viewportScene.construction = [];
+  }
+
+  // Always derive renderable construction lines from the browser tree so planes
+  // stay visible even when a snapshot omits viewportScene.construction meshes.
+  if (state.browser?.construction?.length) {
+    state.viewportScene.construction = state.browser.construction
+      .filter((item) => item.visible !== false)
+      .map((item) => constructionViewportMesh(item));
+  }
 
   // Drop a dangling selection that no longer resolves to a live entity.
   if (state.selectedEntityId) {
@@ -529,6 +553,66 @@ export const applyMockCoreAction = (currentState, action) => {
     state.operations.forEach((operation) => {
       operation.isDirty = false;
     });
+    syncViewportScene(state);
+  }
+
+  if (action.type === ACTION_TYPES.CREATE_SKETCH) {
+    if (!state.browser) {
+      state.browser = createDefaultBrowser();
+    }
+    const plane = action.meta?.plane ?? action.value?.plane ?? { kind: 'Origin', originPlane: 'XY' };
+    const sketchCount = state.browser.sketches.length + 1;
+    const sketchId = `feat_Sketch_${sketchCount}`;
+    const label = `Sketch ${sketchCount}`;
+    const sketch = {
+      id: sketchId,
+      plane,
+      visible: true,
+      entities: []
+    };
+    state.browser.sketches = [...state.browser.sketches, sketch];
+    state.features = [
+      ...state.features,
+      {
+        id: sketchId,
+        type: 'Sketch',
+        label,
+        value: 0,
+        unit: 'mm',
+        isDirty: false,
+        plane,
+        entityCount: 0,
+        selectionToken: `${sketchId}_face_0`
+      }
+    ];
+    if (Number.isFinite(state.schemaVersion) && state.schemaVersion < 2) {
+      state.schemaVersion = 2;
+    }
+    syncViewportScene(state);
+  }
+
+  if (action.type === ACTION_TYPES.CREATE_CONSTRUCTION) {
+    if (!state.browser) {
+      state.browser = createDefaultBrowser();
+    }
+    const kind = action.meta?.kind ?? action.value?.kind ?? 'OffsetPlane';
+    const value = action.meta?.value ?? action.value?.value ?? 0;
+    const inputs = action.meta?.inputs ?? action.value?.inputs ?? ['origin_XY'];
+    const object = createConstructionObject(kind, value, inputs, state.browser.construction);
+    state.browser.construction = [...state.browser.construction, object];
+    if (!state.viewportScene) {
+      state.viewportScene = createDefaultViewportScene();
+    }
+    if (!Array.isArray(state.viewportScene.construction)) {
+      state.viewportScene.construction = [];
+    }
+    state.viewportScene.construction = [
+      ...state.viewportScene.construction,
+      constructionViewportMesh(object)
+    ];
+    if (Number.isFinite(state.schemaVersion) && state.schemaVersion < 2) {
+      state.schemaVersion = 2;
+    }
     syncViewportScene(state);
   }
 

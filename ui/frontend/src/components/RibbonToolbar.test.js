@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
@@ -6,13 +6,21 @@ import { useCoreStore } from '../store';
 import RibbonToolbar from './RibbonToolbar.vue';
 
 afterEach(() => {
+  activeWrapper?.unmount();
+  activeWrapper = null;
   delete window.__TAURI__;
   vi.restoreAllMocks();
 });
 
+let activeWrapper = null;
+
 const mountRibbon = () => {
   const pinia = createPinia();
-  const wrapper = mount(RibbonToolbar, { global: { plugins: [pinia] } });
+  const wrapper = mount(RibbonToolbar, {
+    global: { plugins: [pinia] },
+    attachTo: document.body
+  });
+  activeWrapper = wrapper;
   return { wrapper, store: useCoreStore() };
 };
 
@@ -21,14 +29,20 @@ const openGroup = async (wrapper, label) => {
     .findAll('[data-testid="command-group"]')
     .find((node) => node.find('.group-label').text() === label);
   await group.find('.group-button').trigger('click');
+  await nextTick();
+  await flushPromises();
   return group;
 };
 
+const groupDropdown = () => document.querySelector('[data-testid="group-dropdown"]');
+
 const clickCommand = async (group, label) => {
-  const command = group
-    .findAll('[data-testid="command-item"]')
-    .find((node) => node.find('.command-label').text() === label);
-  await command.trigger('click');
+  const root = groupDropdown() ?? group.element;
+  const command = [...root.querySelectorAll('[data-testid="command-item"]')].find(
+    (node) => node.querySelector('.command-label')?.textContent === label
+  );
+  expect(command).toBeTruthy();
+  await command.click();
 };
 
 describe('RibbonToolbar command wiring', () => {
@@ -82,13 +96,14 @@ describe('RibbonToolbar command wiring', () => {
     await nextTick();
 
     expect(group.findAll('[data-testid="submenu-item"]').length).toBe(0);
+    expect(document.querySelectorAll('[data-testid="submenu-item"]').length).toBe(0);
 
     await clickCommand(group, 'Rectangle');
     await nextTick();
 
-    const subLabels = group
-      .findAll('[data-testid="submenu-item"]')
-      .map((node) => node.find('.command-label').text());
+    const subLabels = [...groupDropdown().querySelectorAll('[data-testid="submenu-item"]')].map(
+      (node) => node.querySelector('.command-label')?.textContent
+    );
     expect(subLabels).toEqual(['2-Point Rectangle', '3-Point Rectangle', 'Center Rectangle']);
   });
 
@@ -104,5 +119,34 @@ describe('RibbonToolbar command wiring', () => {
     await Promise.resolve();
 
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('creates an offset plane from the CONSTRUCT submenu', async () => {
+    const { wrapper, store } = mountRibbon();
+    await nextTick();
+
+    const group = await openGroup(wrapper, 'CONSTRUCT');
+    await clickCommand(group, 'Planes');
+    await nextTick();
+
+    const offsetPlane = [...groupDropdown().querySelectorAll('[data-testid="submenu-item"]')].find(
+      (node) => node.querySelector('.command-label')?.textContent === 'Offset Plane'
+    );
+    expect(offsetPlane).toBeTruthy();
+    await offsetPlane.click();
+    await Promise.resolve();
+
+    expect(store.pendingConstruction?.kind).toBe('OffsetPlane');
+    expect(store.browser.construction).toHaveLength(0);
+    expect(store.viewportScene.previewConstruction).toBeTruthy();
+
+    await store.confirmConstructionCommand();
+    await Promise.resolve();
+
+    expect(store.pendingConstruction).toBeNull();
+    expect(store.browser.construction.some((item) => item.kind === 'OffsetPlane')).toBe(true);
+    const planeMesh = store.viewportScene.construction[0];
+    expect(planeMesh.renderMode).toBe('planeFill');
+    expect(planeMesh.positions?.length).toBe(12);
   });
 });

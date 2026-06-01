@@ -53,6 +53,34 @@ describe('viewport scene adapter', () => {
     expect(createSceneBufferKey(scene)).not.toBe(createSceneBufferKey(createDefaultViewportScene()));
   });
 
+  it('renders construction planes as semi-transparent filled quads', () => {
+    const scene = {
+      solids: [],
+      toolpaths: [],
+      construction: [
+        {
+          id: 'construction_fill_con_Plane_1',
+          token: 'con_Plane_1',
+          category: 'plane',
+          kind: 'OffsetPlane',
+          visible: true,
+          renderMode: 'planeFill',
+          color: [1, 0.55, 0.15, 0.35],
+          positions: [-1, -1, 10, 1, -1, 10, 1, 1, 10, -1, 1, 10],
+          normals: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+          indices: [0, 1, 2, 0, 2, 3]
+        }
+      ],
+      gizmos: { axes: [] }
+    };
+
+    const adapted = adaptViewportScene(scene);
+    expect(adapted.constructionIndices.length).toBe(6);
+    expect(adapted.constructionVertices.length).toBe(4 * 10);
+    expect(adapted.lineVertices.length).toBe(0);
+    expect(adapted.triangleCount).toBe(2);
+  });
+
   it('preserves pickable metadata and creates separate hover highlight buffers', () => {
     const scene = createDefaultViewportScene();
     const hoveredKey = createSceneBufferKey(scene, null, 'feat_Extrude_1_face_0');

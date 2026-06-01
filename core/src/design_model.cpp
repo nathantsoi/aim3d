@@ -1,6 +1,7 @@
 #include "aim3d/design_model.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <unordered_map>
 
@@ -240,6 +241,122 @@ const char* constructionCategory(ConstructionKind kind) {
         }
     }
     return "plane";
+}
+
+namespace {
+
+using Vec3 = std::array<double, 3>;
+
+Vec3 add(const Vec3& a, const Vec3& b) {
+    return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+}
+
+Vec3 scale(const Vec3& v, double s) {
+    return {v[0] * s, v[1] * s, v[2] * s};
+}
+
+Vec3 normalize(const Vec3& v) {
+    const double len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (len <= 1.0e-12) {
+        return {0.0, 0.0, 1.0};
+    }
+    return {v[0] / len, v[1] / len, v[2] / len};
+}
+
+Vec3 cross(const Vec3& a, const Vec3& b) {
+    return {
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0]
+    };
+}
+
+// Resolve a default origin plane from an input token like "origin_XY".
+void originPlaneFrame(const std::string& token, Vec3& origin, Vec3& axisU, Vec3& axisV, Vec3& normal) {
+    origin = {0.0, 0.0, 0.0};
+    axisU = {1.0, 0.0, 0.0};
+    axisV = {0.0, 1.0, 0.0};
+    normal = {0.0, 0.0, 1.0};
+    const std::string lowered = toLower(token);
+    if (lowered.find("yz") != std::string::npos) {
+        axisU = {0.0, 1.0, 0.0};
+        axisV = {0.0, 0.0, 1.0};
+        normal = {1.0, 0.0, 0.0};
+    } else if (lowered.find("xz") != std::string::npos) {
+        axisU = {1.0, 0.0, 0.0};
+        axisV = {0.0, 0.0, 1.0};
+        normal = {0.0, 1.0, 0.0};
+    }
+}
+
+} // namespace
+
+void evaluateConstructionGeometry(ConstructionObject& object) {
+    const std::string category = constructionCategory(object.kind);
+    object.extent = 4.0;
+
+    if (category == "plane" || object.kind == ConstructionKind::UCS) {
+        const std::string ref = object.inputs.empty() ? "origin_XY" : object.inputs.front();
+        Vec3 origin{};
+        Vec3 axisU{};
+        Vec3 axisV{};
+        Vec3 normal{};
+        originPlaneFrame(ref, origin, axisU, axisV, normal);
+
+        if (object.kind == ConstructionKind::PlaneAtAngle) {
+            const double radians = object.value * 3.141592653589793 / 180.0;
+            const double c = std::cos(radians);
+            const double s = std::sin(radians);
+            axisV = normalize(add(scale(axisV, c), scale(normal, s)));
+            normal = normalize(cross(axisU, axisV));
+        } else if (object.kind == ConstructionKind::OffsetPlane
+            || object.kind == ConstructionKind::Midplane
+            || object.kind == ConstructionKind::TangentPlane) {
+            origin = add(origin, scale(normal, object.value));
+        } else if (object.kind == ConstructionKind::PerpendicularPlane) {
+            normal = normalize(axisU);
+            axisU = {0.0, 0.0, 1.0};
+            axisV = normalize(cross(normal, axisU));
+            axisU = normalize(cross(axisV, normal));
+        }
+
+        object.origin = origin;
+        object.axisU = axisU;
+        object.axisV = axisV;
+        object.normal = normal;
+        return;
+    }
+
+    if (category == "axis") {
+        object.origin = {0.0, 0.0, 0.0};
+        object.axisU = {1.0, 0.0, 0.0};
+        object.normal = {1.0, 0.0, 0.0};
+        object.extent = 3.0;
+        if (object.kind == ConstructionKind::AxisPerpendicularToFace) {
+            object.axisU = {0.0, 0.0, 1.0};
+            object.normal = {0.0, 0.0, 1.0};
+        } else if (object.kind == ConstructionKind::AxisThroughTwoPlanes) {
+            object.axisU = {0.0, 1.0, 0.0};
+            object.normal = {0.0, 1.0, 0.0};
+        }
+        return;
+    }
+
+    if (category == "point") {
+        object.origin = {0.0, 0.0, 0.0};
+        object.extent = 0.15;
+        if (object.kind == ConstructionKind::PointAtCenter) {
+            object.origin = {1.0, 0.5, 0.0};
+        } else if (object.kind == ConstructionKind::PointAlongPath) {
+            object.origin = {0.5, 0.5, 0.5};
+        }
+        return;
+    }
+
+    object.origin = {0.0, 0.0, 0.0};
+    object.axisU = {1.0, 0.0, 0.0};
+    object.axisV = {0.0, 1.0, 0.0};
+    object.normal = {0.0, 0.0, 1.0};
 }
 
 } // namespace aim3d

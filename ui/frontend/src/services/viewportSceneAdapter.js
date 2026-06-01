@@ -1,3 +1,5 @@
+import { CONSTRUCTION_PLANE_FILL_COLOR } from '../contracts/constructionGeometry.js';
+
 const SELECTED_SOLID_COLOR = [1, 0.82, 0.24, 1];
 const HOVERED_SOLID_COLOR = [0.5, 0.95, 1, 1];
 const STALE_TOOLPATH_COLOR = [0.92, 0.42, 0.22, 1];
@@ -22,7 +24,8 @@ const colorForToolpath = (toolpath, selectedEntityId) => {
   return toolpath.color ?? [1, 0.74, 0.18, 1];
 };
 
-const pushLineSegments = (vertices, points, color) => {
+// Toolpaths are continuous polylines: each xyz connects to the next.
+const pushPolylineSegments = (vertices, points, color) => {
   for (let i = 0; i + 5 < points.length; i += 3) {
     vertices.push(
       points[i], points[i + 1], points[i + 2], color[0], color[1], color[2], color[3],
@@ -31,12 +34,40 @@ const pushLineSegments = (vertices, points, color) => {
   }
 };
 
+// Construction axes/points and grid gizmos store independent segments:
+// [x0,y0,z0, x1,y1,z1, ...].
+const pushSegmentPairs = (vertices, points, color) => {
+  for (let i = 0; i + 5 < points.length; i += 6) {
+    vertices.push(
+      points[i], points[i + 1], points[i + 2], color[0], color[1], color[2], color[3],
+      points[i + 3], points[i + 4], points[i + 5], color[0], color[1], color[2], color[3]
+    );
+  }
+};
+
+const pushPlaneFill = (vertices, indices, item, vertexOffset) => {
+  const positions = item.positions ?? [];
+  const normals = item.normals ?? [];
+  const color = item.color ?? CONSTRUCTION_PLANE_FILL_COLOR;
+  const base = vertexOffset;
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    const normal = normals.length ? normals.slice(i, i + 3) : [0, 0, 1];
+    vertices.push(
+      positions[i], positions[i + 1], positions[i + 2],
+      normal[0], normal[1], normal[2],
+      color[0], color[1], color[2], color[3]
+    );
+  }
+  (item.indices ?? []).forEach((index) => indices.push(index + base));
+  return Math.floor(positions.length / 3);
+};
+
+const isPlaneFillItem = (item) =>
+  item.renderMode === 'planeFill' || item.category === 'plane' || item.category === 'ucs';
+
 const GRID_LINE_COLOR = [0.32, 0.36, 0.46, 0.85];
 const GRID_AXIS_COLOR = [0.5, 0.56, 0.7, 1];
 
-// Generates a sketch-plane grid on the XY plane (z = 0), matching the
-// orthographic top-down view used while editing a sketch. Each grid line is a
-// discrete segment so consecutive lines are never joined.
 const buildSketchGridLines = (extent = 5, step = 0.5) => {
   const lines = [];
   const divisions = Math.round(extent / step);
@@ -49,8 +80,6 @@ const buildSketchGridLines = (extent = 5, step = 0.5) => {
   return lines;
 };
 
-// Generates a ground-plane grid on the XY plane (z = 0), matching the Z-up
-// camera used by the perspective viewport. Used for the toggleable 3D view grid.
 const buildGroundGridLines = (extent = 5, step = 0.5) => {
   const lines = [];
   const divisions = Math.round(extent / step);
@@ -66,6 +95,8 @@ const buildGroundGridLines = (extent = 5, step = 0.5) => {
 export const createSceneBufferKey = (scene, selectedEntityId = null, hoverEntityId = null) => fnv1a({
   solids: scene?.solids ?? [],
   toolpaths: scene?.toolpaths ?? [],
+  construction: scene?.construction ?? [],
+  previewConstruction: scene?.previewConstruction ?? null,
   gizmos: scene?.gizmos ?? {},
   selectedEntityId,
   hoverEntityId
@@ -89,12 +120,19 @@ const pickableForSolid = (solid, solidIndex, vertexOffset) => {
 export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId = null) => {
   const solids = scene?.solids ?? [];
   const toolpaths = scene?.toolpaths ?? [];
+  const construction = [
+    ...(scene?.construction ?? []),
+    ...(scene?.previewConstruction ? [scene.previewConstruction] : [])
+  ];
   const axes = scene?.gizmos?.axes ?? [];
 
   const solidVertices = [];
   const solidIndices = [];
+  const constructionVertices = [];
+  const constructionIndices = [];
   const pickables = [];
   let vertexOffset = 0;
+  let constructionVertexOffset = 0;
 
   solids.forEach((solid, solidIndex) => {
     const positions = solid.positions ?? [];
@@ -131,32 +169,56 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     vertexOffset += Math.floor(positions.length / 3);
   });
 
+  construction.forEach((item) => {
+    if (item.visible === false) return;
+    if (isPlaneFillItem(item)) {
+      constructionVertexOffset += pushPlaneFill(
+        constructionVertices,
+        constructionIndices,
+        item,
+        constructionVertexOffset
+      );
+      return;
+    }
+  });
+
   const lineVertices = [];
   if (scene?.gizmos?.sketchGrid) {
     buildSketchGridLines().forEach((line) => {
-      pushLineSegments(lineVertices, line.points, line.color);
+      pushSegmentPairs(lineVertices, line.points, line.color);
     });
   }
   if (scene?.gizmos?.grid) {
     buildGroundGridLines().forEach((line) => {
-      pushLineSegments(lineVertices, line.points, line.color);
+      pushSegmentPairs(lineVertices, line.points, line.color);
     });
   }
   toolpaths.forEach((toolpath) => {
-    pushLineSegments(lineVertices, toolpath.points ?? [], colorForToolpath(toolpath, selectedEntityId));
+    pushPolylineSegments(lineVertices, toolpath.points ?? [], colorForToolpath(toolpath, selectedEntityId));
+  });
+  construction.forEach((item) => {
+    if (item.visible === false || isPlaneFillItem(item)) return;
+    pushSegmentPairs(lineVertices, item.points ?? [], item.color ?? [0.95, 0.85, 0.25, 1]);
   });
   axes.forEach((axis) => {
-    pushLineSegments(lineVertices, axis.points ?? [], axis.color ?? [1, 1, 1, 1]);
+    pushSegmentPairs(lineVertices, axis.points ?? [], axis.color ?? [1, 1, 1, 1]);
   });
+
+  const constructionTriangleCount = Math.floor(constructionIndices.length / 3);
 
   return {
     key: createSceneBufferKey(scene, selectedEntityId, hoverEntityId),
     solidVertices: new Float32Array(solidVertices),
     solidIndices: new Uint32Array(solidIndices),
+    constructionVertices: new Float32Array(constructionVertices),
+    constructionIndices: new Uint32Array(constructionIndices),
     lineVertices: new Float32Array(lineVertices),
     pickables,
-    triangleCount: Math.floor(solidIndices.length / 3),
+    triangleCount: Math.floor(solidIndices.length / 3) + constructionTriangleCount,
     segmentCount: Math.floor(lineVertices.length / 14),
-    drawCount: (solidIndices.length ? 1 : 0) + (lineVertices.length ? 1 : 0)
+    drawCount:
+      (solidIndices.length ? 1 : 0) +
+      (constructionIndices.length ? 1 : 0) +
+      (lineVertices.length ? 1 : 0)
   };
 };

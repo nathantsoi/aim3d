@@ -16,7 +16,7 @@ const designCreateGroup = {
   id: 'create',
   label: 'CREATE',
   commands: [
-    { id: 'create-sketch', label: 'Create Sketch', action: 'enterSketch' },
+    { id: 'create-sketch', label: 'Create Sketch', action: 'beginSketch' },
     { id: 'create-form', label: 'Create Form' },
     { id: 'derive', label: 'Derive' },
     { id: 'automated-modeling', label: 'Automated Modeling' },
@@ -42,6 +42,51 @@ const designCreateGroup = {
     { id: 'create-base-feature', label: 'Create Base Feature' },
     { id: 'create-pcb', label: 'Create PCB', hasSubmenu: true },
     { id: 'joint-origin', label: 'Joint Origin' }
+  ]
+};
+
+const designConstructGroup = {
+  id: 'construct',
+  label: 'CONSTRUCT',
+  commands: [
+    {
+      id: 'construct-planes',
+      label: 'Planes',
+      submenu: [
+        { id: 'ucs', label: 'User Coordinate System', action: 'beginConstruction', constructKind: 'UCS' },
+        { id: 'offset-plane', label: 'Offset Plane', action: 'beginConstruction', constructKind: 'OffsetPlane' },
+        { id: 'plane-at-angle', label: 'Plane at Angle', action: 'beginConstruction', constructKind: 'PlaneAtAngle' },
+        { id: 'tangent-plane', label: 'Tangent Plane', action: 'beginConstruction', constructKind: 'TangentPlane' },
+        { id: 'midplane', label: 'Midplane', action: 'beginConstruction', constructKind: 'Midplane' },
+        { id: 'perpendicular-plane', label: 'Perpendicular Plane', action: 'beginConstruction', constructKind: 'PerpendicularPlane' },
+        { id: 'plane-through-two-edges', label: 'Plane Through Two Edges', action: 'beginConstruction', constructKind: 'PlaneThroughTwoEdges' },
+        { id: 'plane-through-three-points', label: 'Plane Through Three Points', action: 'beginConstruction', constructKind: 'PlaneThroughThreePoints' },
+        { id: 'plane-along-path', label: 'Plane Along Path', action: 'beginConstruction', constructKind: 'PlaneAlongPath' }
+      ]
+    },
+    {
+      id: 'construct-axes',
+      label: 'Axes',
+      submenu: [
+        { id: 'axis-through-cylinder-cone-torus', label: 'Axis Through Cylinder/Cone/Torus', action: 'beginConstruction', constructKind: 'AxisThroughCylinderConeTorus' },
+        { id: 'axis-perpendicular-to-face', label: 'Axis Perpendicular To Face', action: 'beginConstruction', constructKind: 'AxisPerpendicularToFace' },
+        { id: 'axis-through-two-planes', label: 'Axis Through Two Planes', action: 'beginConstruction', constructKind: 'AxisThroughTwoPlanes' },
+        { id: 'axis-through-two-points', label: 'Axis Through Two Points', action: 'beginConstruction', constructKind: 'AxisThroughTwoPoints' },
+        { id: 'axis-through-edge', label: 'Axis Through Edge', action: 'beginConstruction', constructKind: 'AxisThroughEdge' }
+      ]
+    },
+    {
+      id: 'construct-points',
+      label: 'Points',
+      submenu: [
+        { id: 'point-at-vertex', label: 'Point At Vertex', action: 'beginConstruction', constructKind: 'PointAtVertex' },
+        { id: 'point-through-two-edges', label: 'Point Through Two Edges', action: 'beginConstruction', constructKind: 'PointThroughTwoEdges' },
+        { id: 'point-through-three-planes', label: 'Point Through Three Planes', action: 'beginConstruction', constructKind: 'PointThroughThreePlanes' },
+        { id: 'point-at-center', label: 'Point At Center Of Circle/Sphere/Torus', action: 'beginConstruction', constructKind: 'PointAtCenter' },
+        { id: 'point-at-edge-and-plane', label: 'Point At Edge And Plane', action: 'beginConstruction', constructKind: 'PointAtEdgeAndPlane' },
+        { id: 'point-along-path', label: 'Point Along Path', action: 'beginConstruction', constructKind: 'PointAlongPath' }
+      ]
+    }
   ]
 };
 
@@ -178,15 +223,9 @@ export const RIBBON_MODES = {
         label: 'SOLID',
         groups: [
           designCreateGroup,
-          ...placeholderGroups([
-            'MODIFY',
-            'CONFIGURE',
-            'CONSTRUCT',
-            'INSPECT',
-            'INSERT',
-            'ASSEMBLE',
-            'SELECT'
-          ])
+          ...placeholderGroups(['MODIFY', 'CONFIGURE']),
+          designConstructGroup,
+          ...placeholderGroups(['INSPECT', 'INSERT', 'ASSEMBLE', 'SELECT'])
         ]
       },
       { id: 'surface', label: 'SURFACE', groups: placeholderGroups(['CREATE', 'MODIFY']) },

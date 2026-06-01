@@ -204,7 +204,17 @@ struct ConstructionObject {
     double value = 0.0;               // offset/angle parameter
     bool visible = true;
     std::string label;
+    // Evaluated geometry (stub placement until full kernel refs are wired).
+    std::array<double, 3> origin = {0.0, 0.0, 0.0};
+    std::array<double, 3> axisU = {1.0, 0.0, 0.0};   // in-plane U or axis direction
+    std::array<double, 3> axisV = {0.0, 1.0, 0.0};   // in-plane V (planes only)
+    std::array<double, 3> normal = {0.0, 0.0, 1.0};  // plane normal
+    double extent = 2.0;                              // half-size of plane grid / axis length
 };
+
+// Assign stub world-space geometry for a construction object from its kind,
+// inputs, and scalar parameter (offset, angle, etc.).
+void evaluateConstructionGeometry(ConstructionObject& object);
 
 // ---- Sketch feature ----------------------------------------------------
 

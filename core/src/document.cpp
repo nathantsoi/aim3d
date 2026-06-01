@@ -791,6 +791,10 @@ std::vector<BodyInspection> Document::inspectBodies() const {
     return inspections;
 }
 
+namespace {
+ViewportConstruction constructionViewportMesh(const ConstructionObject& con);
+} // namespace
+
 ViewportScene Document::viewportScene() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     ViewportScene scene;
@@ -810,6 +814,13 @@ ViewportScene Document::viewportScene() const {
     scene.toolpaths.push_back(fallbackToolpath());
     scene.axes = defaultAxes();
 
+    for (const auto& con : m_construction) {
+        if (!con.visible) {
+            continue;
+        }
+        scene.construction.push_back(constructionViewportMesh(con));
+    }
+
     for (const auto& solid : scene.solids) {
         scene.diagnostics.triangleCount += solid.indices.size() / 3;
     }
@@ -817,7 +828,8 @@ ViewportScene Document::viewportScene() const {
         scene.diagnostics.segmentCount += toolpath.points.size() >= 6 ? (toolpath.points.size() / 3) - 1 : 0;
     }
     scene.diagnostics.segmentCount += scene.axes.size();
-    scene.diagnostics.drawCount = (scene.solids.empty() ? 0 : 1) + (scene.toolpaths.empty() && scene.axes.empty() ? 0 : 1);
+    scene.diagnostics.segmentCount += scene.construction.size();
+    scene.diagnostics.drawCount = (scene.solids.empty() ? 0 : 1) + (scene.toolpaths.empty() && scene.axes.empty() && scene.construction.empty() ? 0 : 1);
     return scene;
 }
 
@@ -879,12 +891,99 @@ std::string constructionJson(const ConstructionObject& con) {
     out += "\"label\":\"" + jsonEscape(con.label) + "\",";
     out += "\"value\":" + jsonNumber(con.value) + ",";
     out += "\"visible\":" + std::string(con.visible ? "true" : "false") + ",";
+    out += "\"origin\":[" + jsonNumber(con.origin[0]) + "," + jsonNumber(con.origin[1]) + "," + jsonNumber(con.origin[2]) + "],";
+    out += "\"axisU\":[" + jsonNumber(con.axisU[0]) + "," + jsonNumber(con.axisU[1]) + "," + jsonNumber(con.axisU[2]) + "],";
+    out += "\"axisV\":[" + jsonNumber(con.axisV[0]) + "," + jsonNumber(con.axisV[1]) + "," + jsonNumber(con.axisV[2]) + "],";
+    out += "\"normal\":[" + jsonNumber(con.normal[0]) + "," + jsonNumber(con.normal[1]) + "," + jsonNumber(con.normal[2]) + "],";
+    out += "\"extent\":" + jsonNumber(con.extent) + ",";
     out += "\"inputs\":[";
     for (std::size_t i = 0; i < con.inputs.size(); ++i) {
         if (i) out += ",";
         out += "\"" + jsonEscape(con.inputs[i]) + "\"";
     }
     out += "]}";
+    return out;
+}
+
+void appendLine(std::vector<float>& points, float x0, float y0, float z0, float x1, float y1, float z1) {
+    points.insert(points.end(), {x0, y0, z0, x1, y1, z1});
+}
+
+ViewportConstruction constructionViewportMesh(const ConstructionObject& con) {
+    ViewportConstruction mesh;
+    mesh.id = "construction_" + con.ref.token;
+    mesh.token = con.ref.token;
+    mesh.category = constructionCategory(con.kind);
+    mesh.kind = constructionKindName(con.kind);
+    mesh.visible = con.visible;
+
+    const float ox = static_cast<float>(con.origin[0]);
+    const float oy = static_cast<float>(con.origin[1]);
+    const float oz = static_cast<float>(con.origin[2]);
+    const float ux = static_cast<float>(con.axisU[0]);
+    const float uy = static_cast<float>(con.axisU[1]);
+    const float uz = static_cast<float>(con.axisU[2]);
+    const float vx = static_cast<float>(con.axisV[0]);
+    const float vy = static_cast<float>(con.axisV[1]);
+    const float vz = static_cast<float>(con.axisV[2]);
+    const float e = static_cast<float>(con.extent);
+
+    if (mesh.category == std::string("plane") || con.kind == ConstructionKind::UCS) {
+        mesh.color = {0.35f, 0.72f, 1.0f, 0.9f};
+        const float corners[4][3] = {
+            {ox - ux * e - vx * e, oy - uy * e - vy * e, oz - uz * e - vz * e},
+            {ox + ux * e - vx * e, oy + uy * e - vy * e, oz + uz * e - vz * e},
+            {ox + ux * e + vx * e, oy + uy * e + vy * e, oz + uz * e + vz * e},
+            {ox - ux * e + vx * e, oy - uy * e + vy * e, oz - uz * e + vz * e},
+        };
+        for (int i = 0; i < 4; ++i) {
+            const int j = (i + 1) % 4;
+            appendLine(mesh.points, corners[i][0], corners[i][1], corners[i][2], corners[j][0], corners[j][1], corners[j][2]);
+        }
+        appendLine(mesh.points, corners[0][0], corners[0][1], corners[0][2], corners[2][0], corners[2][1], corners[2][2]);
+        appendLine(mesh.points, corners[1][0], corners[1][1], corners[1][2], corners[3][0], corners[3][1], corners[3][2]);
+        if (con.kind == ConstructionKind::UCS) {
+            mesh.color = {1.0f, 0.55f, 0.2f, 1.0f};
+            appendLine(mesh.points, ox, oy, oz, ox + ux, oy + uy, oz + uz);
+            appendLine(mesh.points, ox, oy, oz, ox + vx, oy + vy, oz + vz);
+            appendLine(mesh.points, ox, oy, oz, ox + static_cast<float>(con.normal[0]), oy + static_cast<float>(con.normal[1]), oz + static_cast<float>(con.normal[2]));
+        }
+        return mesh;
+    }
+
+    if (mesh.category == std::string("axis")) {
+        mesh.color = {0.95f, 0.85f, 0.25f, 1.0f};
+        appendLine(mesh.points, ox - ux * e, oy - uy * e, oz - uz * e, ox + ux * e, oy + uy * e, oz + uz * e);
+        return mesh;
+    }
+
+    if (mesh.category == std::string("point")) {
+        mesh.color = {1.0f, 0.45f, 0.2f, 1.0f};
+        const float s = e;
+        appendLine(mesh.points, ox - s, oy, oz, ox + s, oy, oz);
+        appendLine(mesh.points, ox, oy - s, oz, ox, oy + s, oz);
+        appendLine(mesh.points, ox, oy, oz - s, ox, oy, oz + s);
+        return mesh;
+    }
+
+    return mesh;
+}
+
+std::string constructionViewportJson(const ViewportConstruction& mesh) {
+    std::string out = "{";
+    out += "\"id\":\"" + jsonEscape(mesh.id) + "\",";
+    out += "\"token\":\"" + jsonEscape(mesh.token) + "\",";
+    out += "\"category\":\"" + jsonEscape(mesh.category) + "\",";
+    out += "\"kind\":\"" + jsonEscape(mesh.kind) + "\",";
+    out += "\"visible\":" + std::string(mesh.visible ? "true" : "false") + ",";
+    out += "\"color\":[";
+    for (std::size_t i = 0; i < mesh.color.size(); ++i) {
+        if (i) out += ",";
+        out += jsonNumber(static_cast<double>(mesh.color[i]));
+    }
+    out += "],";
+    out += "\"points\":" + floatArrayJson(mesh.points);
+    out += "}";
     return out;
 }
 
@@ -1054,13 +1153,35 @@ std::string Document::addConstructionObject(
     con.inputs = inputs;
     con.value = value;
 
-    std::string category = constructionCategory(kind);
-    if (!category.empty()) {
-        category[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(category[0])));
+    const std::string category = constructionCategory(kind);
+    int number = 0;
+    std::string tokenPrefix;
+    std::string labelPrefix;
+    if (kind == ConstructionKind::UCS) {
+        number = ++m_constructionUcsCount;
+        tokenPrefix = "Ucs";
+        labelPrefix = "UCS ";
+    } else if (category == std::string("plane")) {
+        number = ++m_constructionPlaneCount;
+        tokenPrefix = "Plane";
+        labelPrefix = "Plane ";
+    } else if (category == std::string("axis")) {
+        number = ++m_constructionAxisCount;
+        tokenPrefix = "Axis";
+        labelPrefix = "Axis ";
+    } else if (category == std::string("point")) {
+        number = ++m_constructionPointCount;
+        tokenPrefix = "Point";
+        labelPrefix = "Point ";
+    } else {
+        number = ++m_constructionPlaneCount;
+        tokenPrefix = "Plane";
+        labelPrefix = "Plane ";
     }
-    const int number = ++m_constructionCount;
-    con.ref.token = "con_" + category + "_" + std::to_string(number);
-    con.label = category + std::to_string(number);
+
+    con.ref.token = "con_" + tokenPrefix + "_" + std::to_string(number);
+    con.label = labelPrefix + std::to_string(number);
+    evaluateConstructionGeometry(con);
 
     m_construction.push_back(con);
     m_dirty = true;
@@ -1256,7 +1377,17 @@ std::string Document::coreStateSnapshotUnlocked() const {
         firstSolid = false;
         out += solidMeshJson(solidMeshForBody(*body, solid.ref.token + "_face_0"));
     }
-    out += "],\"toolpaths\":[]}";
+    out += "],\"toolpaths\":[],\"construction\":[";
+    bool firstConstruction = true;
+    for (const auto& con : m_construction) {
+        if (!con.visible) {
+            continue;
+        }
+        if (!firstConstruction) out += ",";
+        firstConstruction = false;
+        out += constructionViewportJson(constructionViewportMesh(con));
+    }
+    out += "]}";
 
     out += "}";
     return out;
