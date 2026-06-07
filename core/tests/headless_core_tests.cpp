@@ -1,9 +1,11 @@
 #include "aim3d/application.hpp"
 #include "aim3d/c_api.hpp"
 #include "aim3d/cam_ir.hpp"
+#include "aim3d/controller.hpp"
 #include "aim3d/document.hpp"
 #include "aim3d/sketch_solver.hpp"
 #include "aim3d/topo_naming.hpp"
+#include "aim3d/lightweight_simulator.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -804,6 +806,115 @@ void test_c_api_cam_toolpath_buffers() {
     aim3d_operation_release(operation);
 }
 
+void test_controller_machine_profile_validation() {
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    assert(profile.validate().empty());
+
+    profile.axes[0].stepsPerMm = 0.0;
+    const auto diagnostics = profile.validate();
+    assert(!diagnostics.empty());
+    assert(diagnostics[0].severity == aim3d::ControllerDiagnosticSeverity::Error);
+}
+
+void test_controller_parser_modal_subset() {
+    aim3d::LinuxCncCompatParser parser;
+    const auto program = parser.parse(
+        "G21 G90 G54\n"
+        "T1 M6\n"
+        "S8000 M3\n"
+        "G0 X0 Y0 Z5\n"
+        "G1 X10 Y0 Z-1 F600\n"
+        "X10 Y10\n"
+        "G2 X20 Y10 I5 J0\n"
+        "M8\n"
+        "M30\n");
+
+    assert(program.valid());
+    assert(program.records.size() >= 8);
+    bool sawModalLinear = false;
+    bool sawArc = false;
+    for (const auto& record : program.records) {
+        if (record.type == aim3d::ControllerRecordType::LinearFeed && near(record.targetMm[1], 10.0)) {
+            sawModalLinear = true;
+        }
+        if (record.type == aim3d::ControllerRecordType::ArcCW) {
+            sawArc = true;
+        }
+    }
+    assert(sawModalLinear);
+    assert(sawArc);
+}
+
+void test_controller_parser_rejects_unsupported_codes() {
+    aim3d::LinuxCncCompatParser parser;
+    const auto program = parser.parse("G21\nG81 X0 Y0 Z-5 R1 F100\nM30\n");
+
+    assert(!program.valid());
+    bool sawUnsupported = false;
+    for (const auto& diagnostic : program.diagnostics) {
+        if (diagnostic.code == "gcode.unsupported.g") {
+            sawUnsupported = true;
+        }
+    }
+    assert(sawUnsupported);
+}
+
+void test_controller_planner_soft_limits_and_segments() {
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    aim3d::LinuxCncCompatParser parser;
+    auto program = parser.parse("G21 G90\nG0 X0 Y0 Z5\nG1 X10 Y0 Z0 F600\nM30\n");
+    std::vector<aim3d::ControllerDiagnostic> diagnostics;
+    aim3d::TrajectoryPlanner planner(profile);
+    const auto segments = planner.plan(program, diagnostics);
+    assert(!segments.empty());
+    assert(segments.front().sourceLine > 0);
+
+    program = parser.parse("G21 G90\nG0 X999 Y0 Z0\nM30\n");
+    diagnostics.clear();
+    const auto rejected = planner.plan(program, diagnostics);
+    assert(rejected.empty());
+    bool sawSoftLimit = false;
+    for (const auto& diagnostic : diagnostics) {
+        if (diagnostic.code == "planner.soft_limit") {
+            sawSoftLimit = true;
+        }
+    }
+    assert(sawSoftLimit);
+}
+
+void test_spe_protocol_emulator_fail_closed() {
+    aim3d::SpeProtocolEmulator spe(2);
+    assert(spe.status().state == aim3d::SpeState::Disarmed);
+
+    spe.tick(false, false);
+    assert(spe.status().state == aim3d::SpeState::Fault);
+    assert(spe.status().watchdogFault);
+
+    spe.hostHeartbeat();
+    spe.tick(false, false);
+    spe.submitCommand(aim3d::SpeCommandMailbox{aim3d::SpeCommand::EstopReset, {0, 0, 0}});
+    assert(spe.status().state == aim3d::SpeState::Disarmed);
+
+    spe.hostHeartbeat();
+    spe.tick(false, false);
+    spe.submitCommand(aim3d::SpeCommandMailbox{aim3d::SpeCommand::Arm, {0, 0, 0}});
+    assert(spe.status().state == aim3d::SpeState::Armed);
+
+    assert(spe.ring().push(aim3d::SpeSegment{{80, 0, 0}, 10000, 0, 2}));
+    assert(spe.ring().push(aim3d::SpeSegment{{0, 80, 0}, 10000, 0, 2}));
+    assert(!spe.ring().push(aim3d::SpeSegment{{0, 0, 80}, 10000, 0, 2}));
+
+    spe.hostHeartbeat();
+    spe.tick(false, false);
+    assert(spe.status().positionSteps[0] == 80);
+    spe.submitCommand(aim3d::SpeCommandMailbox{aim3d::SpeCommand::FeedHold, {0, 0, 0}});
+    assert(spe.status().state == aim3d::SpeState::FeedHold);
+
+    spe.hostHeartbeat();
+    spe.tick(true, false);
+    assert(spe.status().state == aim3d::SpeState::Fault);
+}
+
 }
 
 int main() {
@@ -841,5 +952,63 @@ int main() {
     test_viewport_scene_has_renderable_buffers();
     test_c_api_document_buffers_and_tasks();
     test_c_api_cam_toolpath_buffers();
+    test_controller_machine_profile_validation();
+    test_controller_parser_modal_subset();
+    test_controller_parser_rejects_unsupported_codes();
+    test_controller_planner_soft_limits_and_segments();
+    test_spe_protocol_emulator_fail_closed();
+    
+    // Run LightweightSimulator tests
+    {
+        aim3d::LightweightSimulator sim;
+        sim.initialize(100.0, 100.0, 25.0, 10, 10);
+        assert(sim.resolutionX() == 10);
+        assert(sim.resolutionY() == 10);
+        assert(sim.heightmap().size() == 100);
+
+        for (float h : sim.heightmap()) {
+            assert(h == 0.0f);
+        }
+
+        sim.cutLinear({10.0, 50.0, -5.0}, {90.0, 50.0, -5.0}, 10.0, false);
+        std::size_t idx = 5 + 5 * 10;
+        assert(sim.heightmap()[idx] == -5.0f);
+
+        std::vector<float> positions;
+        std::vector<float> normals;
+        std::vector<uint32_t> indices;
+        sim.getMesh(positions, normals, indices);
+
+        assert(!positions.empty());
+        assert(!normals.empty());
+        assert(!indices.empty());
+        assert(positions.size() == 10 * 10 * 2 * 3);
+        assert(normals.size() == positions.size());
+
+        // Test C FFI API
+        Aim3dSimulatorHandle* handle = aim3d_simulator_create();
+        assert(handle != nullptr);
+
+        int toolIds[] = {1};
+        double toolRadii[] = {3.0};
+        int toolIsBall[] = {0};
+
+        int ok = aim3d_simulator_run(
+            handle,
+            "G21 G90\n"
+            "T1 M6\n"
+            "G0 X10 Y10 Z5\n"
+            "G1 X90 Y10 Z-2 F600\n"
+            "M30\n",
+            100.0, 100.0, 25.0, 20, 20,
+            toolIds, toolRadii, toolIsBall, 1
+        );
+        assert(ok == 1);
+        assert(aim3d_simulator_vertex_count(handle) == 20 * 20 * 2);
+        assert(aim3d_simulator_index_count(handle) > 0);
+
+        aim3d_simulator_release(handle);
+    }
+
     return 0;
 }

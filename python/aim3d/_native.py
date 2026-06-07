@@ -129,6 +129,38 @@ buffer_dtype = _bind("aim3d_buffer_dtype", c_int, [c_void_p])
 buffer_pointer = _bind("aim3d_buffer_pointer", c_uint64, [c_void_p])
 buffer_release = _bind("aim3d_buffer_release", None, [c_void_p])
 
+simulator_create = _bind("aim3d_simulator_create", c_void_p, [])
+simulator_release = _bind("aim3d_simulator_release", None, [c_void_p])
+simulator_run = _bind(
+    "aim3d_simulator_run",
+    c_int,
+    [
+        c_void_p,
+        c_char_p,
+        c_double,
+        c_double,
+        c_double,
+        c_int,
+        c_int,
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_double),
+        ctypes.POINTER(c_int),
+        c_int,
+    ],
+)
+simulator_vertex_count = _bind("aim3d_simulator_vertex_count", c_size_t, [c_void_p])
+simulator_index_count = _bind("aim3d_simulator_index_count", c_size_t, [c_void_p])
+simulator_copy_mesh = _bind(
+    "aim3d_simulator_copy_mesh",
+    None,
+    [
+        c_void_p,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_uint32),
+    ],
+)
+
 
 class SketchPointC(ctypes.Structure):
     _fields_ = [

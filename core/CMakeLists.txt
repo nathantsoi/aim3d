@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.18)
 # Core header search paths
 include_directories(include)
 
-# Gather source files
+# Gather source files (including lightweight_simulator.cpp)
 file(GLOB CORE_SOURCES
     src/*.cpp
 )

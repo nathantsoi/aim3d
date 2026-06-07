@@ -1,8 +1,8 @@
 #include "aim3d/c_api.hpp"
-
 #include "aim3d/application.hpp"
 #include "aim3d/cam_ir.hpp"
 #include "aim3d/document.hpp"
+#include "aim3d/lightweight_simulator.hpp"
 
 #include <atomic>
 #include <cstring>
@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 
 struct Aim3dDocumentHandle {
     std::shared_ptr<aim3d::Document> document;
@@ -574,6 +575,149 @@ std::uintptr_t aim3d_buffer_pointer(Aim3dBufferHandle* handle) {
 
 void aim3d_buffer_release(Aim3dBufferHandle* handle) {
     delete handle;
+}
+
+struct Aim3dSimulatorHandle {
+    aim3d::LightweightSimulator simulator;
+    std::vector<float> positions;
+    std::vector<float> normals;
+    std::vector<uint32_t> indices;
+};
+
+Aim3dSimulatorHandle* aim3d_simulator_create(void) {
+    return new Aim3dSimulatorHandle();
+}
+
+void aim3d_simulator_release(Aim3dSimulatorHandle* handle) {
+    delete handle;
+}
+
+int aim3d_simulator_run(
+    Aim3dSimulatorHandle* handle,
+    const char* gcode, 
+    double stockX, 
+    double stockY, 
+    double stockZ, 
+    int resX, 
+    int resY,
+    const int* toolIds,
+    const double* toolRadii,
+    const int* toolIsBall,
+    int toolCount) {
+    
+    if (!handle || !gcode) return 0;
+    
+    try {
+        aim3d::LinuxCncCompatParser parser;
+        const auto program = parser.parse(gcode);
+        if (!program.valid()) return 0;
+        
+        std::unordered_map<int, double> radii;
+        std::unordered_map<int, bool> ballFlags;
+        for (int i = 0; i < toolCount; ++i) {
+            radii[toolIds[i]] = toolRadii[i];
+            ballFlags[toolIds[i]] = (toolIsBall[i] != 0);
+        }
+        
+        handle->simulator.initialize(stockX, stockY, stockZ, resX, resY);
+        
+        std::array<double, 3> currentPos = {0.0, 0.0, 0.0};
+        bool hasPosition = false;
+        int activeTool = 0;
+        for (const auto& record : program.records) {
+            activeTool = record.tool;
+            double radius = radii.count(activeTool) ? radii.at(activeTool) : 3.0;
+            bool isBall = ballFlags.count(activeTool) ? ballFlags.at(activeTool) : false;
+
+            if (record.type == aim3d::ControllerRecordType::Rapid) {
+                currentPos = record.targetMm;
+                hasPosition = true;
+            } else if (record.type == aim3d::ControllerRecordType::LinearFeed) {
+                if (hasPosition) {
+                    handle->simulator.cutLinear(currentPos, record.targetMm, radius, isBall);
+                }
+                currentPos = record.targetMm;
+                hasPosition = true;
+            } else if (record.type == aim3d::ControllerRecordType::ArcCW || record.type == aim3d::ControllerRecordType::ArcCCW) {
+                if (hasPosition) {
+                    double startX = currentPos[0];
+                    double startY = currentPos[1];
+                    double endX = record.targetMm[0];
+                    double endY = record.targetMm[1];
+                    double cx = startX + record.arcCenterOffsetMm[0];
+                    double cy = startY + record.arcCenterOffsetMm[1];
+                    double rStart = std::hypot(startX - cx, startY - cy);
+                    double rEnd = std::hypot(endX - cx, endY - cy);
+                    double r = (rStart + rEnd) * 0.5;
+
+                    if (r > 1e-4) {
+                        double startAngle = std::atan2(startY - cy, startX - cx);
+                        double endAngle = std::atan2(endY - cy, endX - cx);
+
+                        bool isCW = (record.type == aim3d::ControllerRecordType::ArcCW);
+                        double sweep = endAngle - startAngle;
+                        if (isCW) {
+                            if (sweep > 0) sweep -= 2.0 * M_PI;
+                        } else {
+                            if (sweep < 0) sweep += 2.0 * M_PI;
+                        }
+
+                        int numSegments = 16;
+                        std::array<double, 3> lastPt = currentPos;
+                        for (int step = 1; step <= numSegments; ++step) {
+                            double ratio = (double)step / numSegments;
+                            double angle = startAngle + ratio * sweep;
+                            double z = currentPos[2] + ratio * (record.targetMm[2] - currentPos[2]);
+                            std::array<double, 3> pt = {
+                                cx + r * std::cos(angle),
+                                cy + r * std::sin(angle),
+                                z
+                            };
+                            handle->simulator.cutLinear(lastPt, pt, radius, isBall);
+                            lastPt = pt;
+                        }
+                    } else {
+                        handle->simulator.cutLinear(currentPos, record.targetMm, radius, isBall);
+                    }
+                }
+                currentPos = record.targetMm;
+                hasPosition = true;
+            }
+        }
+        
+        handle->positions.clear();
+        handle->normals.clear();
+        handle->indices.clear();
+        handle->simulator.getMesh(handle->positions, handle->normals, handle->indices);
+        return 1;
+    } catch (...) {
+        return 0;
+    }
+}
+
+std::size_t aim3d_simulator_vertex_count(Aim3dSimulatorHandle* handle) {
+    return handle ? handle->positions.size() / 3 : 0;
+}
+
+std::size_t aim3d_simulator_index_count(Aim3dSimulatorHandle* handle) {
+    return handle ? handle->indices.size() : 0;
+}
+
+void aim3d_simulator_copy_mesh(
+    Aim3dSimulatorHandle* handle,
+    float* outPos, 
+    float* outNorm, 
+    uint32_t* outInd) {
+    if (!handle) return;
+    if (outPos && !handle->positions.empty()) {
+        std::memcpy(outPos, handle->positions.data(), handle->positions.size() * sizeof(float));
+    }
+    if (outNorm && !handle->normals.empty()) {
+        std::memcpy(outNorm, handle->normals.data(), handle->normals.size() * sizeof(float));
+    }
+    if (outInd && !handle->indices.empty()) {
+        std::memcpy(outInd, handle->indices.data(), handle->indices.size() * sizeof(uint32_t));
+    }
 }
 
 } // extern "C"
