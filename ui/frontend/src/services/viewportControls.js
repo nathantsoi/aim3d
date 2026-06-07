@@ -146,6 +146,9 @@ export const solidCentroid = (solid) => {
   return [sx / count, sy / count, sz / count];
 };
 
+export const sceneHasSolidGeometry = (scene) =>
+  (scene?.solids ?? []).some((solid) => (solid.positions?.length ?? 0) >= 3);
+
 // Centroid of the solid whose center lies closest to the ray, or null when the
 // scene has no geometry. Used to choose an orbit pivot near the cursor even
 // when the cursor isn't directly over an object.

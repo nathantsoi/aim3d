@@ -6,7 +6,11 @@ const tauriInvoke = () => {
 };
 
 export const dispatchCoreAction = async (action, currentState) => {
-  if (action.type === 'core.createConstruction' || action.type === 'core.createSketch') {
+  if (
+    action.type === 'core.createConstruction' ||
+    action.type === 'core.createSketch' ||
+    action.type === 'core.createSketchEntity'
+  ) {
     await Promise.resolve();
     return applyMockCoreAction(currentState, action);
   }

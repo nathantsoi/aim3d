@@ -7,6 +7,7 @@ export const ACTION_TYPES = Object.freeze({
   RECOMPUTE_DOCUMENT: 'core.recomputeDocument',
   CREATE_CONSTRUCTION: 'core.createConstruction',
   CREATE_SKETCH: 'core.createSketch',
+  CREATE_SKETCH_ENTITY: 'core.createSketchEntity',
   GENERATE_TOOLPATH: 'cam.generateToolpath',
   RUN_SIMULATION: 'sim.runSimulation',
   LOAD_DOCUMENT_STATE: 'core.loadDocumentState'
@@ -80,7 +81,13 @@ export const createDefaultViewportScene = () => ({
       { id: 'axis_z', label: 'Z', color: [0.28, 0.48, 1, 1], points: [0, 0, 0, 0, 0, 1.1] }
     ],
     grid: false,
-    workOrigin: [0, 0, 0]
+    workOrigin: [0, 0, 0],
+    debug: {
+      enabled: false,
+      orbitPivot: null,
+      orbitActive: false,
+      mainCamera: null
+    }
   },
   camera: {
     target: [0, 0, 0],
@@ -124,6 +131,10 @@ export const createInitialCoreState = () => ({
   isSketchMode: false,
   activeSketchId: null,
   preSketchCamera: null,
+  sketchParameters: [
+    { name: 'd1', value: 10, unit: 'mm' },
+    { name: 'd2', value: 25, unit: 'mm' }
+  ],
   sketchPalette: {
     sketchGrid: true,
     snap: true,
@@ -587,6 +598,25 @@ export const applyMockCoreAction = (currentState, action) => {
     ];
     if (Number.isFinite(state.schemaVersion) && state.schemaVersion < 2) {
       state.schemaVersion = 2;
+    }
+    syncViewportScene(state);
+  }
+
+  if (action.type === ACTION_TYPES.CREATE_SKETCH_ENTITY) {
+    if (!state.browser) {
+      state.browser = createDefaultBrowser();
+    }
+    const sketchId = action.meta?.sketchId ?? action.targetId;
+    const entity = action.value;
+    const sketch = state.browser.sketches.find((item) => item.id === sketchId);
+    if (sketch && entity) {
+      const entityId = `sk_ent_${sketch.entities.length + 1}`;
+      sketch.entities = [...sketch.entities, { ...entity, id: entityId }];
+      const feature = state.features.find((item) => item.id === sketchId);
+      if (feature) {
+        feature.entityCount = sketch.entities.length;
+        feature.isDirty = true;
+      }
     }
     syncViewportScene(state);
   }

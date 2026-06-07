@@ -1,4 +1,5 @@
 import { CONSTRUCTION_PLANE_FILL_COLOR } from '../contracts/constructionGeometry.js';
+import { buildCameraGizmoLines, buildCameraLookAxisLine, buildOrbitPivotLines } from './viewportDebugGizmos.js';
 
 const SELECTED_SOLID_COLOR = [1, 0.82, 0.24, 1];
 const HOVERED_SOLID_COLOR = [0.5, 0.95, 1, 1];
@@ -68,14 +69,31 @@ const isPlaneFillItem = (item) =>
 const GRID_LINE_COLOR = [0.32, 0.36, 0.46, 0.85];
 const GRID_AXIS_COLOR = [0.5, 0.56, 0.7, 1];
 
-const buildSketchGridLines = (extent = 5, step = 0.5) => {
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const scale = (v, s) => [v[0] * s, v[1] * s, v[2] * s];
+
+const worldPointOnPlane = (frame, u, v) => {
+  const { origin, axisU, axisV } = frame;
+  return add(add(origin, scale(axisU, u)), scale(axisV, v));
+};
+
+const buildSketchGridLines = (frame, extent = 5, step = 0.5) => {
   const lines = [];
   const divisions = Math.round(extent / step);
+  const planeFrame = frame ?? {
+    origin: [0, 0, 0],
+    axisU: [1, 0, 0],
+    axisV: [0, 1, 0]
+  };
   for (let i = -divisions; i <= divisions; i++) {
     const offset = i * step;
     const color = i === 0 ? GRID_AXIS_COLOR : GRID_LINE_COLOR;
-    lines.push({ color, points: [-extent, offset, 0, extent, offset, 0] });
-    lines.push({ color, points: [offset, -extent, 0, offset, extent, 0] });
+    const a = worldPointOnPlane(planeFrame, -extent, offset);
+    const b = worldPointOnPlane(planeFrame, extent, offset);
+    const c = worldPointOnPlane(planeFrame, offset, -extent);
+    const d = worldPointOnPlane(planeFrame, offset, extent);
+    lines.push({ color, points: [a[0], a[1], a[2], b[0], b[1], b[2]] });
+    lines.push({ color, points: [c[0], c[1], c[2], d[0], d[1], d[2]] });
   }
   return lines;
 };
@@ -97,6 +115,7 @@ export const createSceneBufferKey = (scene, selectedEntityId = null, hoverEntity
   toolpaths: scene?.toolpaths ?? [],
   construction: scene?.construction ?? [],
   previewConstruction: scene?.previewConstruction ?? null,
+  sketchOverlay: scene?.sketchOverlay ?? null,
   gizmos: scene?.gizmos ?? {},
   selectedEntityId,
   hoverEntityId
@@ -183,10 +202,20 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
   });
 
   const lineVertices = [];
+  const overlayLineVertices = [];
   if (scene?.gizmos?.sketchGrid) {
-    buildSketchGridLines().forEach((line) => {
-      pushSegmentPairs(lineVertices, line.points, line.color);
+    const gridFrame = scene.gizmos.sketchGridFrame;
+    const gridExtent = gridFrame?.extent ?? 5;
+    buildSketchGridLines(gridFrame, gridExtent).forEach((line) => {
+      pushSegmentPairs(overlayLineVertices, line.points, line.color);
     });
+  }
+  if (scene?.sketchOverlay?.points?.length) {
+    pushSegmentPairs(
+      overlayLineVertices,
+      scene.sketchOverlay.points,
+      scene.sketchOverlay.color ?? [0.35, 0.9, 1, 0.85]
+    );
   }
   if (scene?.gizmos?.grid) {
     buildGroundGridLines().forEach((line) => {
@@ -204,6 +233,22 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     pushSegmentPairs(lineVertices, axis.points ?? [], axis.color ?? [1, 1, 1, 1]);
   });
 
+  const debug = scene?.gizmos?.debug;
+  if (debug?.enabled) {
+    buildOrbitPivotLines(debug.orbitPivot, { active: debug.orbitActive }).forEach((line) => {
+      pushSegmentPairs(lineVertices, line.points, line.color);
+    });
+    if (debug.mainCamera) {
+      buildCameraGizmoLines(debug.mainCamera).forEach((line) => {
+        pushSegmentPairs(lineVertices, line.points, line.color);
+      });
+    } else {
+      buildCameraLookAxisLine(scene?.camera).forEach((line) => {
+        pushSegmentPairs(lineVertices, line.points, line.color);
+      });
+    }
+  }
+
   const constructionTriangleCount = Math.floor(constructionIndices.length / 3);
 
   return {
@@ -213,12 +258,15 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     constructionVertices: new Float32Array(constructionVertices),
     constructionIndices: new Uint32Array(constructionIndices),
     lineVertices: new Float32Array(lineVertices),
+    overlayLineVertices: new Float32Array(overlayLineVertices),
     pickables,
     triangleCount: Math.floor(solidIndices.length / 3) + constructionTriangleCount,
-    segmentCount: Math.floor(lineVertices.length / 14),
+    segmentCount:
+      Math.floor(lineVertices.length / 14) + Math.floor(overlayLineVertices.length / 14),
     drawCount:
       (solidIndices.length ? 1 : 0) +
       (constructionIndices.length ? 1 : 0) +
-      (lineVertices.length ? 1 : 0)
+      (lineVertices.length ? 1 : 0) +
+      (overlayLineVertices.length ? 1 : 0)
   };
 };

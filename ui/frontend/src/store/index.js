@@ -15,7 +15,24 @@ import {
   mapViewportPickToField
 } from '../config/constructionCommands';
 import { constructionViewportMesh } from '../contracts/constructionGeometry';
-import { mapViewportPickToSketchPlane, planeReferenceFromToken } from '../contracts/sketchPlane';
+import {
+  buildSketchElementFromDraft,
+  canConfirmSketchElement,
+  defaultSketchFieldValues,
+  getSketchCommandDef
+} from '../config/sketchCommands';
+import {
+  resolveSketchNumeric,
+  sketchElementPreviewMesh,
+  sketchEntitiesViewportMesh
+} from '../contracts/sketchGeometry';
+import {
+  intersectRayWithSketchPlane,
+  mapViewportPickToSketchPlane,
+  planeFrameFromReference,
+  planeReferenceFromToken,
+  sketchCameraSettings
+} from '../contracts/sketchPlane';
 
 export const useCoreStore = defineStore('core', {
   state: () => ({
@@ -24,7 +41,8 @@ export const useCoreStore = defineStore('core', {
     lastDispatchedAction: null,
     actionLog: [],
     pendingConstruction: null,
-    pendingSketchCreation: null
+    pendingSketchCreation: null,
+    pendingSketchElement: null
   }),
 
   getters: {
@@ -46,6 +64,7 @@ export const useCoreStore = defineStore('core', {
         actionLog,
         pendingConstruction,
         pendingSketchCreation,
+        pendingSketchElement,
         ...coreState
       } = this.$state;
       return coreState;
@@ -89,6 +108,7 @@ export const useCoreStore = defineStore('core', {
       }
       this.cancelSketchCreation();
       this.cancelConstructionCommand();
+      this.cancelSketchElement();
       this.activeMode = mode;
       this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
     },
@@ -100,6 +120,9 @@ export const useCoreStore = defineStore('core', {
         values: { plane: 'origin_XY' },
         activeFieldKey: 'plane'
       };
+      if (this.viewportScene?.camera && !this.preSketchCamera) {
+        this.preSketchCamera = { ...this.viewportScene.camera };
+      }
       this.syncSketchPlanePreview();
     },
 
@@ -118,12 +141,29 @@ export const useCoreStore = defineStore('core', {
       if (!this.pendingSketchCreation || this.isSketchMode) return;
       if (!this.viewportScene?.gizmos) return;
       this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+      const planeRef = planeReferenceFromToken(this.pendingSketchCreation.values.plane);
+      this.viewportScene.gizmos.sketchGridFrame = planeFrameFromReference(planeRef, this.browser);
+      const camera = this.viewportScene.camera;
+      if (camera) {
+        Object.assign(camera, sketchCameraSettings(planeRef, this.browser));
+      }
     },
 
     cancelSketchCreation() {
       this.pendingSketchCreation = null;
       if (!this.isSketchMode && this.viewportScene?.gizmos) {
         this.viewportScene.gizmos.sketchGrid = false;
+        delete this.viewportScene.gizmos.sketchGridFrame;
+      }
+      const camera = this.viewportScene?.camera;
+      if (!this.isSketchMode && this.preSketchCamera && camera) {
+        Object.assign(camera, this.preSketchCamera);
+        if (!('projection' in this.preSketchCamera)) {
+          camera.projection = 'perspective';
+        }
+        delete camera.sketchUp;
+        delete camera.orthoSize;
+        this.preSketchCamera = null;
       }
     },
 
@@ -161,29 +201,40 @@ export const useCoreStore = defineStore('core', {
       this.activeWorkspaceTab = tabId;
     },
 
+    activeSketchPlaneRef() {
+      const sketch = this.browser.sketches.find((item) => item.id === this.activeSketchId);
+      return sketch?.plane ?? { kind: 'Origin', originPlane: 'XY' };
+    },
+
+    resolveSketchNumeric(raw) {
+      return resolveSketchNumeric(raw, this.sketchParameters ?? []);
+    },
+
     enterSketchMode(sketchId = null) {
+      this.cancelSketchElement();
       this.activeMode = 'design';
       this.isSketchMode = true;
       this.activeSketchId = sketchId;
       this.activeWorkspaceTab = 'sketch';
 
+      const planeRef = this.activeSketchPlaneRef();
       const camera = this.viewportScene?.camera;
       if (camera) {
-        // Remember the current view, then snap to an orthographic view looking
-        // straight down the sketch-plane normal (XY plane, +Z eye).
-        this.preSketchCamera = { ...camera };
-        camera.yaw = 0;
-        camera.pitch = 0;
-        camera.projection = 'orthographic';
+        if (!this.preSketchCamera) {
+          this.preSketchCamera = { ...camera };
+        }
+        Object.assign(camera, sketchCameraSettings(planeRef, this.browser));
       }
 
-      // Reveal the construction grid on the sketch plane (respecting the palette toggle).
       if (this.viewportScene?.gizmos) {
         this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+        this.viewportScene.gizmos.sketchGridFrame = planeFrameFromReference(planeRef, this.browser);
       }
+      this.syncSketchViewportOverlay();
     },
 
     finishSketch() {
+      this.cancelSketchElement();
       this.isSketchMode = false;
       this.activeSketchId = null;
       this.activeWorkspaceTab = RIBBON_MODES.design.tabs[0]?.id ?? null;
@@ -194,11 +245,166 @@ export const useCoreStore = defineStore('core', {
         if (!('projection' in this.preSketchCamera)) {
           camera.projection = 'perspective';
         }
+        delete camera.sketchUp;
+        delete camera.orthoSize;
       }
       this.preSketchCamera = null;
 
       if (this.viewportScene?.gizmos) {
         this.viewportScene.gizmos.sketchGrid = false;
+        delete this.viewportScene.gizmos.sketchGridFrame;
+      }
+      if (this.viewportScene) {
+        this.viewportScene.sketchOverlay = null;
+      }
+    },
+
+    beginSketchElement(kind, label = '') {
+      if (!this.isSketchMode || !this.activeSketchId) return;
+      this.cancelConstructionCommand();
+      const def = getSketchCommandDef(kind);
+      if (!def) return;
+      this.pendingSketchElement = {
+        sketchId: this.activeSketchId,
+        kind,
+        label: label || def.label,
+        values: defaultSketchFieldValues(def),
+        activeFieldKey: def.fields[0]?.key ?? null
+      };
+      this.syncSketchElementPreview();
+    },
+
+    setSketchElementActiveField(fieldKey) {
+      if (!this.pendingSketchElement) return;
+      this.pendingSketchElement.activeFieldKey = fieldKey;
+    },
+
+    updateSketchElementDraft(patch) {
+      if (!this.pendingSketchElement) return;
+      this.pendingSketchElement.values = { ...this.pendingSketchElement.values, ...patch };
+      this.syncSketchElementPreview();
+    },
+
+    addSketchParameter(name, value = 10) {
+      const trimmed = String(name ?? '').trim();
+      if (!trimmed) return;
+      if (this.sketchParameters.some((item) => item.name === trimmed)) return;
+      this.sketchParameters = [...this.sketchParameters, { name: trimmed, value, unit: 'mm' }];
+    },
+
+    syncSketchElementPreview() {
+      if (!this.viewportScene) return;
+      const preview = this.pendingSketchElement
+        ? sketchElementPreviewMesh(
+            this.pendingSketchElement,
+            this.activeSketchPlaneRef(),
+            this.browser,
+            (raw) => this.resolveSketchNumeric(raw)
+          )
+        : null;
+      const sketch = this.browser.sketches.find((item) => item.id === this.activeSketchId);
+      const committed = sketch
+        ? sketchEntitiesViewportMesh(sketch.entities, this.activeSketchPlaneRef(), this.browser)
+        : null;
+      const meshes = [committed, preview].filter(Boolean);
+      if (!meshes.length) {
+        this.viewportScene.sketchOverlay = null;
+        return;
+      }
+      const points = meshes.flatMap((mesh) => mesh.points);
+      this.viewportScene.sketchOverlay = {
+        id: 'sketch_overlay',
+        color: preview?.color ?? committed?.color,
+        points
+      };
+    },
+
+    syncSketchViewportOverlay() {
+      if (!this.isSketchMode) return;
+      this.syncSketchElementPreview();
+    },
+
+    cancelSketchElement() {
+      this.pendingSketchElement = null;
+      if (this.isSketchMode) {
+        this.syncSketchViewportOverlay();
+      } else if (this.viewportScene) {
+        this.viewportScene.sketchOverlay = null;
+      }
+    },
+
+    async confirmSketchElement() {
+      if (!canConfirmSketchElement(this.pendingSketchElement, (raw) => this.resolveSketchNumeric(raw))) {
+        return;
+      }
+      const sketchId = this.pendingSketchElement.sketchId;
+      const element = buildSketchElementFromDraft(this.pendingSketchElement, (raw) =>
+        this.resolveSketchNumeric(raw)
+      );
+      this.pendingSketchElement = null;
+      await this.createSketchEntity(sketchId, element);
+      this.syncSketchViewportOverlay();
+    },
+
+    createSketchEntity(sketchId, element) {
+      return this.dispatchAction({
+        type: ACTION_TYPES.CREATE_SKETCH_ENTITY,
+        targetId: sketchId,
+        targetKind: 'sketch',
+        path: null,
+        value: element,
+        meta: { sketchId, kind: element.kind }
+      });
+    },
+
+    applyViewportSketchPick(ray) {
+      if (!this.pendingSketchElement || !this.isSketchMode) return false;
+      const hit = intersectRayWithSketchPlane(ray, this.activeSketchPlaneRef(), this.browser);
+      if (!hit) return false;
+
+      const def = getSketchCommandDef(this.pendingSketchElement.kind);
+      const field = def?.fields.find((item) => item.key === this.pendingSketchElement.activeFieldKey);
+      if (!field) return false;
+
+      if (field.type === 'point') {
+        this.updateSketchElementDraft({ [field.key]: hit.uv });
+        this.advanceSketchElementField(field.key);
+        return true;
+      }
+
+      if (field.type === 'dimension' && field.bindRadius) {
+        const center = this.pendingSketchElement.values.center;
+        if (Array.isArray(center)) {
+          const du = hit.uv[0] - center[0];
+          const dv = hit.uv[1] - center[1];
+          const radius = Math.hypot(du, dv);
+          if (radius > 1e-6) {
+            this.updateSketchElementDraft({ [field.key]: radius });
+            return true;
+          }
+        }
+      }
+
+      return false;
+    },
+
+    advanceSketchElementField(completedKey) {
+      const def = getSketchCommandDef(this.pendingSketchElement?.kind);
+      if (!def) return;
+      const next = def.fields.find((item) => {
+        if (item.key === completedKey) return false;
+        if (item.type === 'point') {
+          const value = this.pendingSketchElement.values[item.key];
+          return !(Array.isArray(value) && value.length === 2);
+        }
+        if (item.type === 'dimension') {
+          const resolved = this.resolveSketchNumeric(this.pendingSketchElement.values[item.key]);
+          return !(Number.isFinite(resolved) && resolved > 0);
+        }
+        return true;
+      });
+      if (next) {
+        this.pendingSketchElement.activeFieldKey = next.key;
       }
     },
 
@@ -208,6 +414,41 @@ export const useCoreStore = defineStore('core', {
         this.viewportScene.gizmos = { grid: false };
       }
       this.viewportScene.gizmos.grid = !this.viewportScene.gizmos.grid;
+    },
+
+    toggleViewportDebugMode() {
+      if (!this.viewportScene) return;
+      if (!this.viewportScene.gizmos) {
+        this.viewportScene.gizmos = {};
+      }
+      if (!this.viewportScene.gizmos.debug) {
+        this.viewportScene.gizmos.debug = {
+          enabled: false,
+          orbitPivot: null,
+          orbitActive: false,
+          mainCamera: null
+        };
+      }
+      this.viewportScene.gizmos.debug.enabled = !this.viewportScene.gizmos.debug.enabled;
+    },
+
+    setViewportOrbitDebug({ pivot, active }) {
+      if (!this.viewportScene?.gizmos) return;
+      if (!this.viewportScene.gizmos.debug) {
+        this.viewportScene.gizmos.debug = {
+          enabled: false,
+          orbitPivot: null,
+          orbitActive: false,
+          mainCamera: null
+        };
+      }
+      const debug = this.viewportScene.gizmos.debug;
+      if (pivot !== undefined) {
+        debug.orbitPivot = pivot ? [...pivot] : null;
+      }
+      if (active !== undefined) {
+        debug.orbitActive = active;
+      }
     },
 
     toggleSketchOption(key) {

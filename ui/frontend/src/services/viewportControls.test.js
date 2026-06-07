@@ -12,6 +12,7 @@ import {
   projectToScreen,
   solidsBounds,
   solidCentroid,
+  sceneHasSolidGeometry,
   zoomDistance
 } from './viewportControls';
 
@@ -125,6 +126,11 @@ describe('viewport controls (Z-up, -Y forward)', () => {
 
   it('returns no orbit pivot when the scene has no geometry', () => {
     expect(closestSolidToRay({ solids: [] }, { origin: [0, 0, 5], direction: [0, 0, -1] })).toBeNull();
+  });
+
+  it('detects whether the scene contains solid geometry', () => {
+    expect(sceneHasSolidGeometry({ solids: [] })).toBe(false);
+    expect(sceneHasSolidGeometry(createDefaultViewportScene())).toBe(true);
   });
 
   it('projects points in front of the camera onto the canvas', () => {

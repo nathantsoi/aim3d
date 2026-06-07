@@ -1,5 +1,5 @@
 import { adaptViewportScene } from './viewportSceneAdapter';
-import { cameraEye, cameraUp } from './viewportControls';
+import { createViewProjectionMatrix } from './viewportProjection';
 
 const GPU_BUFFER_USAGE = globalThis.GPUBufferUsage ?? {
   VERTEX: 1,
@@ -63,82 +63,6 @@ fn fragment_main(input: Out) -> @location(0) vec4<f32> {
   return input.color;
 }
 `;
-
-const mat4Multiply = (a, b) => {
-  const out = new Float32Array(16);
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 4; col++) {
-      out[row * 4 + col] =
-        a[row * 4 + 0] * b[0 * 4 + col] +
-        a[row * 4 + 1] * b[1 * 4 + col] +
-        a[row * 4 + 2] * b[2 * 4 + col] +
-        a[row * 4 + 3] * b[3 * 4 + col];
-    }
-  }
-  return out;
-};
-
-const perspective = (fovy, aspect, near, far) => {
-  const f = 1 / Math.tan(fovy / 2);
-  const nf = 1 / (near - far);
-  return new Float32Array([
-    f / aspect, 0, 0, 0,
-    0, f, 0, 0,
-    0, 0, (far + near) * nf, -1,
-    0, 0, (2 * far * near) * nf, 0
-  ]);
-};
-
-const orthographic = (size, aspect, near, far) => {
-  const right = Math.max(0.001, size * aspect);
-  const top = Math.max(0.001, size);
-  const nf = 1 / (near - far);
-  return new Float32Array([
-    1 / right, 0, 0, 0,
-    0, 1 / top, 0, 0,
-    0, 0, 2 * nf, 0,
-    0, 0, (far + near) * nf, 1
-  ]);
-};
-
-const normalize = (v) => {
-  const length = Math.hypot(v[0], v[1], v[2]) || 1;
-  return [v[0] / length, v[1] / length, v[2] / length];
-};
-
-const cross = (a, b) => [
-  a[1] * b[2] - a[2] * b[1],
-  a[2] * b[0] - a[0] * b[2],
-  a[0] * b[1] - a[1] * b[0]
-];
-
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-
-const lookAt = (eye, center, up) => {
-  const z = normalize([eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]]);
-  const x = normalize(cross(up, z));
-  const y = cross(z, x);
-  return new Float32Array([
-    x[0], y[0], z[0], 0,
-    x[1], y[1], z[1], 0,
-    x[2], y[2], z[2], 0,
-    -dot(x, eye), -dot(y, eye), -dot(z, eye), 1
-  ]);
-};
-
-const cameraMatrix = (camera, width, height) => {
-  const target = camera?.target ?? [0, 0, 0];
-  const distance = camera?.distance ?? 5;
-  const eye = cameraEye(camera);
-  const aspect = Math.max(1, width) / Math.max(1, height);
-  const near = camera?.near ?? 0.01;
-  const far = camera?.far ?? 100;
-  const projection =
-    camera?.projection === 'orthographic'
-      ? orthographic(distance * 0.5, aspect, near, far)
-      : perspective(Math.PI / 4, aspect, near, far);
-  return mat4Multiply(lookAt(eye, target, cameraUp(camera)), projection);
-};
 
 const createBuffer = (device, data, usage) => {
   if (!data?.byteLength) return null;
@@ -279,6 +203,28 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'less-equal' }
   });
 
+  const overlayLinePipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: {
+      module: shader,
+      entryPoint: 'line_main',
+      buffers: [{
+        arrayStride: 28,
+        attributes: [
+          { shaderLocation: 0, offset: 0, format: 'float32x3' },
+          { shaderLocation: 1, offset: 12, format: 'float32x4' }
+        ]
+      }]
+    },
+    fragment: {
+      module: shader,
+      entryPoint: 'fragment_main',
+      targets: [{ format }]
+    },
+    primitive: { topology: 'line-list' },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'always' }
+  });
+
   const resize = () => {
     const nextWidth = Math.max(1, Math.floor(canvas.clientWidth * (globalThis.devicePixelRatio || 1)));
     const nextHeight = Math.max(1, Math.floor(canvas.clientHeight * (globalThis.devicePixelRatio || 1)));
@@ -304,6 +250,7 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     buffers.constructionVertex?.destroy?.();
     buffers.constructionIndex?.destroy?.();
     buffers.lineVertex?.destroy?.();
+    buffers.overlayLineVertex?.destroy?.();
     adapted = nextAdapted;
     lastKey = nextAdapted.key;
     buffers = {
@@ -319,13 +266,19 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
         adapted.constructionIndices,
         GPU_BUFFER_USAGE.INDEX | GPU_BUFFER_USAGE.COPY_DST
       ),
-      lineVertex: createBuffer(device, adapted.lineVertices, GPU_BUFFER_USAGE.VERTEX | GPU_BUFFER_USAGE.COPY_DST)
+      lineVertex: createBuffer(device, adapted.lineVertices, GPU_BUFFER_USAGE.VERTEX | GPU_BUFFER_USAGE.COPY_DST),
+      overlayLineVertex: createBuffer(
+        device,
+        adapted.overlayLineVertices,
+        GPU_BUFFER_USAGE.VERTEX | GPU_BUFFER_USAGE.COPY_DST
+      )
     };
   };
 
-  const render = (scene) => {
+  const render = (scene, options = {}) => {
     resize();
-    device.queue.writeBuffer(uniformBuffer, 0, cameraMatrix(scene?.camera, width, height));
+    const viewCamera = options.camera ?? scene?.camera;
+    device.queue.writeBuffer(uniformBuffer, 0, createViewProjectionMatrix(viewCamera, width, height));
 
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -360,6 +313,11 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       pass.setVertexBuffer(0, buffers.lineVertex);
       pass.draw(adapted.lineVertices.length / 7);
     }
+    if (buffers.overlayLineVertex && adapted.overlayLineVertices.length) {
+      pass.setPipeline(overlayLinePipeline);
+      pass.setVertexBuffer(0, buffers.overlayLineVertex);
+      pass.draw(adapted.overlayLineVertices.length / 7);
+    }
     pass.end();
     device.queue.submit([encoder.finish()]);
 
@@ -388,6 +346,7 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       buffers.constructionVertex?.destroy?.();
       buffers.constructionIndex?.destroy?.();
       buffers.lineVertex?.destroy?.();
+      buffers.overlayLineVertex?.destroy?.();
       depthTexture?.destroy?.();
       uniformBuffer?.destroy?.();
     }

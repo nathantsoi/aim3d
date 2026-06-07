@@ -123,22 +123,39 @@ const sketchCreateGroup = {
   id: 'create',
   label: 'CREATE',
   commands: [
-    { id: 'line', label: 'Line', hotkey: 'L' },
+    { id: 'line', label: 'Line', hotkey: 'L', action: 'beginSketchElement', sketchKind: 'Line' },
     { id: 'midpoint-line', label: 'Midpoint Line' },
     {
       id: 'rectangle',
       label: 'Rectangle',
       submenu: [
-        { id: 'rectangle-2-point', label: '2-Point Rectangle', hotkey: 'R' },
+        {
+          id: 'rectangle-2-point',
+          label: '2-Point Rectangle',
+          hotkey: 'R',
+          action: 'beginSketchElement',
+          sketchKind: 'Rectangle2Point'
+        },
         { id: 'rectangle-3-point', label: '3-Point Rectangle' },
-        { id: 'rectangle-center', label: 'Center Rectangle' }
+        {
+          id: 'rectangle-center',
+          label: 'Center Rectangle',
+          action: 'beginSketchElement',
+          sketchKind: 'RectangleCenter'
+        }
       ]
     },
     {
       id: 'circle',
       label: 'Circle',
       submenu: [
-        { id: 'circle-center-diameter', label: 'Center Diameter Circle', hotkey: 'C' },
+        {
+          id: 'circle-center-diameter',
+          label: 'Center Diameter Circle',
+          hotkey: 'C',
+          action: 'beginSketchElement',
+          sketchKind: 'CircleCenterDiameter'
+        },
         { id: 'circle-2-point', label: '2-Point Circle' },
         { id: 'circle-3-point', label: '3-Point Circle' },
         { id: 'circle-2-tangent', label: '2-Tangent Circle' },

@@ -2,6 +2,7 @@
   <div class="panel-context">
     <SketchCreatePanel v-if="store.pendingSketchCreation" />
     <ConstructionCommandPanel v-else-if="store.pendingConstruction" />
+    <SketchElementCommandPanel v-else-if="store.pendingSketchElement" />
     <SketchPalette v-else-if="store.isSketchMode" />
     <div v-else class="property-grid">
     <div class="panel-header">
@@ -188,10 +189,11 @@ import { useCoreStore } from '../store';
 import SketchPalette from './SketchPalette.vue';
 import ConstructionCommandPanel from './ConstructionCommandPanel.vue';
 import SketchCreatePanel from './SketchCreatePanel.vue';
+import SketchElementCommandPanel from './SketchElementCommandPanel.vue';
 
 export default defineComponent({
   name: 'PropertyGrid',
-  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel },
+  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel },
   setup() {
     const store = useCoreStore();
     const parseNumber = (value) => Number.parseFloat(value);

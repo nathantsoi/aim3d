@@ -33,9 +33,16 @@ describe('viewport scene adapter', () => {
     const baseline = adaptViewportScene(scene);
 
     scene.gizmos.sketchGrid = true;
+    scene.gizmos.sketchGridFrame = {
+      origin: [0, 0, 0],
+      axisU: [1, 0, 0],
+      axisV: [0, 1, 0],
+      extent: 5
+    };
     const withGrid = adaptViewportScene(scene);
 
     expect(withGrid.segmentCount).toBeGreaterThan(baseline.segmentCount);
+    expect(withGrid.overlayLineVertices.length).toBeGreaterThan(0);
     // 21 lines per axis (extent 5, step 0.5) -> 42 grid segments added.
     expect(withGrid.segmentCount - baseline.segmentCount).toBe(42);
     expect(createSceneBufferKey(scene)).not.toBe(createSceneBufferKey(createDefaultViewportScene()));
@@ -79,6 +86,28 @@ describe('viewport scene adapter', () => {
     expect(adapted.constructionVertices.length).toBe(4 * 10);
     expect(adapted.lineVertices.length).toBe(0);
     expect(adapted.triangleCount).toBe(2);
+  });
+
+  it('adds debug gizmo lines when debug mode is enabled', () => {
+    const scene = createDefaultViewportScene();
+    const baseline = adaptViewportScene(scene);
+
+    scene.gizmos.debug.enabled = true;
+    scene.gizmos.debug.orbitPivot = [0.5, 0.25, 0.1];
+    scene.gizmos.debug.orbitActive = true;
+    const withDebug = adaptViewportScene(scene);
+
+    expect(withDebug.segmentCount).toBeGreaterThan(baseline.segmentCount);
+    expect(createSceneBufferKey(scene)).not.toBe(createSceneBufferKey(createDefaultViewportScene()));
+  });
+
+  it('changes the buffer key when the orbit pivot moves', () => {
+    const scene = createDefaultViewportScene();
+    scene.gizmos.debug = { enabled: true, orbitPivot: [0, 0, 0], orbitActive: false, mainCamera: null };
+    const firstKey = createSceneBufferKey(scene);
+    scene.gizmos.debug.orbitPivot = [1, 0, 0];
+    const secondKey = createSceneBufferKey(scene);
+    expect(firstKey).not.toBe(secondKey);
   });
 
   it('preserves pickable metadata and creates separate hover highlight buffers', () => {

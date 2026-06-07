@@ -1,6 +1,10 @@
 <template>
   <div class="viewport-container">
     <canvas ref="canvas3D" class="graphics-canvas"></canvas>
+    <div v-if="debugModeEnabled" class="debug-overview glass" data-testid="viewport-debug-overview">
+      <canvas ref="debugCanvas" class="debug-overview-canvas"></canvas>
+      <span class="debug-overview-label">Scene overview</span>
+    </div>
     <div
       v-if="selectionRect"
       class="selection-rect"
@@ -27,6 +31,14 @@
       <div class="stat-row">
         <span class="label">Selected Entity:</span>
         <span class="value highlight-text">{{ store.selectedEntityId || 'None' }}</span>
+      </div>
+      <div v-if="debugModeEnabled" class="stat-row">
+        <span class="label">Orbit pivot:</span>
+        <span class="value">{{ orbitPivotLabel }}</span>
+      </div>
+      <div v-if="debugModeEnabled" class="stat-row">
+        <span class="label">Look-at axis:</span>
+        <span class="value">eye → target (not pick ray)</span>
       </div>
     </div>
 
@@ -57,6 +69,15 @@
               data-testid="viewport-debug-overlay-toggle"
               :checked="debugOverlayVisible"
               @change="debugOverlayVisible = !debugOverlayVisible"
+            />
+          </label>
+          <label class="settings-row">
+            <span>Debug mode (3D overview)</span>
+            <input
+              type="checkbox"
+              data-testid="viewport-debug-mode-toggle"
+              :checked="debugModeEnabled"
+              @change="store.toggleViewportDebugMode()"
             />
           </label>
         </div>
@@ -92,6 +113,7 @@ import { computed, defineComponent, nextTick, onMounted, onUnmounted, reactive, 
 import { useCoreStore } from '../store';
 import { createWebGpuViewportRenderer } from '../services/webgpuRenderer';
 import { createCameraRay, pickViewportEntity } from '../services/viewportPicking';
+import { overviewCamera } from '../services/viewportDebugGizmos';
 import {
   clamp,
   closestSolidToRay,
@@ -101,6 +123,7 @@ import {
   normalizeRect,
   orbitAroundPivot,
   panTarget,
+  sceneHasSolidGeometry,
   zoomDistance
 } from '../services/viewportControls';
 
@@ -114,6 +137,7 @@ export default defineComponent({
   name: 'Viewport',
   setup() {
     const canvas3D = ref(null);
+    const debugCanvas = ref(null);
     const fallbackMessage = ref('');
     const diagnostics = reactive({
       webgpuAvailable: false,
@@ -132,6 +156,12 @@ export default defineComponent({
     const debugOverlayVisible = ref(true);
 
     const gridEnabled = computed(() => Boolean(store.viewportScene?.gizmos?.grid));
+    const debugModeEnabled = computed(() => Boolean(store.viewportScene?.gizmos?.debug?.enabled));
+    const orbitPivotLabel = computed(() => {
+      const pivot = store.viewportScene?.gizmos?.debug?.orbitPivot;
+      if (!pivot) return 'None';
+      return pivot.map((value) => value.toFixed(2)).join(', ');
+    });
 
     // Mirror the orbit camera onto the CSS nav cube. yaw spins the cube about the
     // vertical (world +Z), pitch tilts it forward so the top face appears as the
@@ -156,12 +186,12 @@ export default defineComponent({
     });
 
     let renderer = null;
+    let debugRenderer = null;
     let animationFrame = null;
     let disposed = false;
     let dragState = null;
     let suppressNextClick = false;
     let orbitActive = false;
-    let orbitPivotPoint = null;
     let lastWheelAt = 0;
 
     const ensureCamera = () => {
@@ -196,15 +226,50 @@ export default defineComponent({
       }
     };
 
+    const buildOverviewScene = () => {
+      const scene = store.viewportScene;
+      const overviewCam = overviewCamera(scene);
+      return {
+        ...scene,
+        camera: overviewCam,
+        gizmos: {
+          ...scene.gizmos,
+          debug: {
+            ...scene.gizmos.debug,
+            mainCamera: { ...scene.camera }
+          }
+        }
+      };
+    };
+
+    const ensureDebugRenderer = async () => {
+      if (!debugModeEnabled.value || !renderer?.available) return;
+      if (debugRenderer?.available) return;
+      await nextTick();
+      if (!debugCanvas.value) return;
+      debugRenderer = await createWebGpuViewportRenderer(debugCanvas.value);
+    };
+
+    const destroyDebugRenderer = () => {
+      debugRenderer?.destroy?.();
+      debugRenderer = null;
+    };
+
     const renderLoop = () => {
       if (disposed || !renderer?.available) return;
       renderer.updateScene(store.viewportScene, store.selectedEntityId, hoverTargetId.value);
       renderer.render(store.viewportScene);
+      if (debugModeEnabled.value && debugRenderer?.available) {
+        const overviewScene = buildOverviewScene();
+        debugRenderer.updateScene(overviewScene, store.selectedEntityId, hoverTargetId.value);
+        debugRenderer.render(overviewScene, { camera: overviewScene.camera });
+      }
       animationFrame = requestAnimationFrame(renderLoop);
     };
 
     const resize = () => {
       renderer?.resize?.();
+      debugRenderer?.resize?.();
     };
 
     const pickAtEvent = (event) => {
@@ -235,6 +300,16 @@ export default defineComponent({
       }
       const pickResult = pickAtEvent(event);
       applyPickDiagnostics(pickResult);
+      if (store.pendingSketchElement && store.isSketchMode) {
+        const canvas = canvas3D.value;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const ray = createCameraRay(store.viewportScene.camera, x, y, rect.width, rect.height);
+        if (store.applyViewportSketchPick(ray)) {
+          return;
+        }
+      }
       if (store.pendingSketchCreation && pickResult.hit?.entityId) {
         if (store.applyViewportPickToSketch(pickResult.hit.entityId)) {
           return;
@@ -304,6 +379,9 @@ export default defineComponent({
     // picked entity, otherwise the centroid of the object closest to the ray,
     // then the ground plane, then the current target.
     const orbitPivot = (camera, x, y, rect) => {
+      if (!sceneHasSolidGeometry(store.viewportScene)) {
+        return [0, 0, 0];
+      }
       const pick = pickViewportEntity(store.viewportScene, x, y, rect.width, rect.height);
       if (pick.hit?.position) return pick.hit.position;
       const ray = createCameraRay(camera, x, y, rect.width, rect.height);
@@ -326,6 +404,7 @@ export default defineComponent({
 
       if (event.ctrlKey) {
         orbitActive = false;
+        store.setViewportOrbitDebug({ active: false });
         camera.distance = zoomDistance(camera.distance, event.deltaY);
         return;
       }
@@ -336,17 +415,20 @@ export default defineComponent({
         // the rotation orbits that point for the whole drag (no drift/spin).
         if (!orbitActive || now - lastWheelAt > ORBIT_GESTURE_GAP_MS) {
           const { x, y } = localPoint(event, rect);
-          orbitPivotPoint = orbitPivot(camera, x, y, rect);
+          store.setViewportOrbitDebug({ pivot: orbitPivot(camera, x, y, rect), active: true });
           orbitActive = true;
         }
         lastWheelAt = now;
+        const pivot = store.viewportScene.gizmos?.debug?.orbitPivot ?? [0, 0, 0];
         const dYaw = clamp(-event.deltaX * ORBIT_SENSITIVITY, -MAX_ORBIT_STEP, MAX_ORBIT_STEP);
         const dPitch = clamp(-event.deltaY * ORBIT_SENSITIVITY, -MAX_ORBIT_STEP, MAX_ORBIT_STEP);
-        Object.assign(camera, orbitAroundPivot(camera, orbitPivotPoint, dYaw, dPitch));
+        Object.assign(camera, orbitAroundPivot(camera, pivot, dYaw, dPitch));
+        store.setViewportOrbitDebug({ active: true });
         return;
       }
 
       orbitActive = false;
+      store.setViewportOrbitDebug({ active: false });
       camera.target = panTarget(camera, event.deltaX, event.deltaY, rect.width, rect.height);
     };
 
@@ -378,6 +460,14 @@ export default defineComponent({
       renderLoop();
     });
 
+    watch(debugModeEnabled, async (enabled) => {
+      if (enabled) {
+        await ensureDebugRenderer();
+      } else {
+        destroyDebugRenderer();
+      }
+    });
+
     watch(
       () => [store.viewportScene, store.selectedEntityId],
       () => {
@@ -398,15 +488,19 @@ export default defineComponent({
       canvas3D.value?.removeEventListener('contextmenu', preventContextMenu);
       window.removeEventListener('resize', resize);
       renderer?.destroy?.();
+      destroyDebugRenderer();
     });
 
     return {
       canvas3D,
+      debugCanvas,
       diagnostics,
       fallbackMessage,
       store,
       settingsOpen,
       debugOverlayVisible,
+      debugModeEnabled,
+      orbitPivotLabel,
       gridEnabled,
       navCubeStyle,
       goHome,
@@ -503,7 +597,7 @@ export default defineComponent({
   right: 0;
   border-radius: 8px;
   padding: 10px 12px;
-  min-width: 150px;
+  min-width: 210px;
   z-index: 7;
 }
 
@@ -615,5 +709,37 @@ export default defineComponent({
 
 .highlight-text {
   color: hsl(45, 100%, 55%);
+}
+
+.debug-overview {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: 300px;
+  height: 220px;
+  border-radius: 8px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+}
+
+.debug-overview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+}
+
+.debug-overview-label {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(220, 10%, 75%);
+  pointer-events: none;
 }
 </style>

@@ -223,6 +223,10 @@ export default defineComponent({
           store.beginSketchCreation();
           lastResult.value = 'Select sketch plane';
           return null;
+        case 'beginSketchElement':
+          store.beginSketchElement(command.sketchKind, command.label);
+          lastResult.value = `Define ${command.label}`;
+          return null;
         case 'solveSketch':
           return solveSketch2d();
         case 'generateToolpath':
@@ -252,6 +256,12 @@ export default defineComponent({
 
       if (sub.action === 'beginConstruction') {
         store.beginConstructionCommand(sub.constructKind, sub.label);
+        lastResult.value = `Define ${sub.label}`;
+        return;
+      }
+
+      if (sub.action === 'beginSketchElement') {
+        store.beginSketchElement(sub.sketchKind, sub.label);
         lastResult.value = `Define ${sub.label}`;
         return;
       }

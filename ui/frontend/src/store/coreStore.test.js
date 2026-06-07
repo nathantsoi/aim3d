@@ -105,6 +105,30 @@ describe('core store action gateway', () => {
     expect(store.viewportScene.gizmos.grid).toBe(false);
   });
 
+  it('toggles viewport debug mode', () => {
+    const store = useCoreStore();
+
+    expect(store.viewportScene.gizmos.debug.enabled).toBe(false);
+
+    store.toggleViewportDebugMode();
+    expect(store.viewportScene.gizmos.debug.enabled).toBe(true);
+
+    store.toggleViewportDebugMode();
+    expect(store.viewportScene.gizmos.debug.enabled).toBe(false);
+  });
+
+  it('stores orbit pivot debug state', () => {
+    const store = useCoreStore();
+
+    store.setViewportOrbitDebug({ pivot: [1, 2, 3], active: true });
+    expect(store.viewportScene.gizmos.debug.orbitPivot).toEqual([1, 2, 3]);
+    expect(store.viewportScene.gizmos.debug.orbitActive).toBe(true);
+
+    store.setViewportOrbitDebug({ active: false });
+    expect(store.viewportScene.gizmos.debug.orbitActive).toBe(false);
+    expect(store.viewportScene.gizmos.debug.orbitPivot).toEqual([1, 2, 3]);
+  });
+
   it('deletes a setup along with its operations and toolpaths', async () => {
     const store = useCoreStore();
 
@@ -135,6 +159,8 @@ describe('core store action gateway', () => {
     expect(store.pendingSketchCreation).toBeTruthy();
     expect(store.isSketchMode).toBe(false);
     expect(store.viewportScene.gizmos.sketchGrid).toBe(true);
+    expect(store.viewportScene.gizmos.sketchGridFrame?.normal).toEqual([0, 0, 1]);
+    expect(store.viewportScene.camera.projection).toBe('orthographic');
 
     await store.confirmSketchCreation();
 
@@ -182,15 +208,17 @@ describe('core store action gateway', () => {
     expect(store.viewportScene.gizmos.sketchGrid).toBe(false);
   });
 
-  it('switches the camera to an orthographic plane view and restores it', () => {
+  it('switches the camera to an orthographic plane view and restores it', async () => {
     const store = useCoreStore();
     const original = { ...store.viewportScene.camera };
 
-    store.enterSketchMode('feat_Sketch_1');
+    await store.createSketch({ kind: 'Origin', originPlane: 'XY' });
+    const sketchId = store.browser.sketches.at(-1).id;
+    store.enterSketchMode(sketchId);
     expect(store.activeWorkspaceTab).toBe('sketch');
     expect(store.viewportScene.camera.projection).toBe('orthographic');
-    expect(store.viewportScene.camera.yaw).toBe(0);
-    expect(store.viewportScene.camera.pitch).toBe(0);
+    expect(store.viewportScene.camera.pitch).toBeCloseTo(Math.PI / 2, 5);
+    expect(store.viewportScene.gizmos.sketchGridFrame?.normal).toEqual([0, 0, 1]);
 
     store.finishSketch();
     expect(store.viewportScene.camera.projection).toBe(original.projection);
@@ -307,6 +335,33 @@ describe('core snapshot projection', () => {
     expect(store.browser.construction).toEqual([]);
     expect(store.browser.sketches).toEqual([]);
     expect(store.browser.bodies).toEqual([]);
+  });
+
+  it('guides center diameter circle creation with viewport picks', async () => {
+    const store = useCoreStore();
+    await store.createSketch({ kind: 'Origin', originPlane: 'XY' });
+    const sketchId = store.browser.sketches.at(-1).id;
+    store.enterSketchMode(sketchId);
+
+    store.beginSketchElement('CircleCenterDiameter', 'Center Diameter Circle');
+    expect(store.pendingSketchElement?.activeFieldKey).toBe('center');
+
+    const ray = {
+      origin: [0, 0, 10],
+      direction: [0, 0, -1]
+    };
+    expect(store.applyViewportSketchPick(ray)).toBe(true);
+    expect(store.pendingSketchElement.values.center).toEqual([0, 0]);
+    expect(store.pendingSketchElement.activeFieldKey).toBe('radius');
+
+    store.updateSketchElementDraft({ radius: 'd1' });
+    await store.confirmSketchElement();
+
+    expect(store.pendingSketchElement).toBeNull();
+    const sketch = store.browser.sketches.find((item) => item.id === sketchId);
+    expect(sketch.entities).toHaveLength(1);
+    expect(sketch.entities[0].radius).toBe(10);
+    expect(store.viewportScene.sketchOverlay?.points?.length).toBeGreaterThan(0);
   });
 
   it('creates construction geometry after the CONSTRUCT command is confirmed', async () => {

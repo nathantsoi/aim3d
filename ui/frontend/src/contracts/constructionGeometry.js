@@ -1,4 +1,4 @@
-const ORIGIN_FRAMES = {
+export const ORIGIN_FRAMES = {
   origin_XY: {
     origin: [0, 0, 0],
     axisU: [1, 0, 0],

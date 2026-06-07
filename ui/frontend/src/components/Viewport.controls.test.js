@@ -99,6 +99,38 @@ describe('Viewport camera controls', () => {
     expect(wrapper.text()).not.toContain('Graphics Context:');
   });
 
+  it('shows the debug overview when debug mode is enabled', async () => {
+    const { wrapper, store } = await mountViewport();
+
+    expect(wrapper.find('[data-testid="viewport-debug-overview"]').exists()).toBe(false);
+
+    await wrapper.find('[data-testid="viewport-settings-toggle"]').trigger('click');
+    await wrapper.find('[data-testid="viewport-debug-mode-toggle"]').setValue(true);
+    await flush();
+
+    expect(store.viewportScene.gizmos.debug.enabled).toBe(true);
+    expect(wrapper.find('[data-testid="viewport-debug-overview"]').exists()).toBe(true);
+  });
+
+  it('updates the orbit pivot in the store during shift-orbit', async () => {
+    const { canvas, store } = await mountViewport();
+
+    dispatchWheel(canvas, { deltaX: 80, deltaY: 30, shiftKey: true, clientX: 400, clientY: 300 });
+
+    expect(store.viewportScene.gizmos.debug.orbitPivot).not.toBeNull();
+    expect(store.viewportScene.gizmos.debug.orbitActive).toBe(true);
+  });
+
+  it('uses the world origin as the orbit pivot when the scene is empty', async () => {
+    const { canvas, store } = await mountViewport();
+    store.viewportScene.solids = [];
+    store.viewportScene.toolpaths = [];
+
+    dispatchWheel(canvas, { deltaX: 80, deltaY: 30, shiftKey: true, clientX: 400, clientY: 300 });
+
+    expect(store.viewportScene.gizmos.debug.orbitPivot).toEqual([0, 0, 0]);
+  });
+
   it('re-centers the view on the scene from the home button', async () => {
     const { wrapper, store } = await mountViewport();
     store.viewportScene.camera.target = [9, 9, 9];

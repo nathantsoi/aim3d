@@ -18,9 +18,19 @@ const normalize = (v) => {
 export const createCameraRay = (camera, x, y, width, height) => {
   const { eye, forward, right, up } = cameraBasis(camera);
   const aspect = Math.max(1, width) / Math.max(1, height);
-  const tanHalfFov = Math.tan(Math.PI / 8);
   const ndcX = (x / Math.max(1, width)) * 2 - 1;
   const ndcY = 1 - (y / Math.max(1, height)) * 2;
+
+  if (camera?.projection === 'orthographic') {
+    const halfHeight = camera?.orthoSize ?? (camera?.distance ?? 5) * 0.5;
+    const halfWidth = halfHeight * aspect;
+    return {
+      origin: add(add(eye, scale(right, ndcX * halfWidth)), scale(up, ndcY * halfHeight)),
+      direction: normalize(forward)
+    };
+  }
+
+  const tanHalfFov = Math.tan(Math.PI / 8);
   const direction = normalize(add(
     add(forward, scale(right, ndcX * aspect * tanHalfFov)),
     scale(up, ndcY * tanHalfFov)
