@@ -4,6 +4,8 @@ CMAKE ?= cmake
 CTEST ?= ctest
 NPM ?= npm
 PYTHON ?= python3
+ONLINE := $(shell $(PYTHON) -c "import socket; socket.setdefaulttimeout(1); socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(('8.8.8.8', 53))" >/dev/null 2>&1 && echo 1 || echo 0)
+
 
 BUILD_DIR ?= build
 VENV_DIR ?= .venv
@@ -49,14 +51,33 @@ help:
 build: deps build-core build-frontend build-tauri
 
 python-venv:
-	$(PYTHON) -m venv $(VENV_DIR)
-	$(VENV_PYTHON) -m pip install --upgrade pip
+	@if [ ! -d "$(VENV_DIR)" ]; then \
+		$(PYTHON) -m venv $(VENV_DIR); \
+	fi
+	@if [ "$(ONLINE)" = "1" ]; then \
+		$(VENV_PYTHON) -m pip install --upgrade pip; \
+	else \
+		echo "Offline: Skipping pip upgrade."; \
+	fi
 
-deps: python-venv
-	cd python && ../$(VENV_PYTHON) -m pip install -e ".[test]"
-	cd simulation && ../$(VENV_PYTHON) -m pip install numpy pytest taichi
-	cd ui/frontend && $(NPM) install
-	cd ui && $(NPM) install
+deps:
+	@if [ "$(ONLINE)" = "1" ]; then \
+		echo "Online: Installing/updating dependencies..."; \
+		$(MAKE) python-venv; \
+		(cd python && ../$(VENV_PYTHON) -m pip install -e ".[test]"); \
+		(cd simulation && ../$(VENV_PYTHON) -m pip install numpy pytest taichi); \
+		(cd ui/frontend && $(NPM) install); \
+		(cd ui && $(NPM) install); \
+	else \
+		echo "Offline: Checking if dependencies are already installed..."; \
+		if [ -d "$(VENV_DIR)" ] && [ -d "ui/frontend/node_modules" ] && [ -d "ui/node_modules" ]; then \
+			echo "Dependencies found. Skipping updates."; \
+		else \
+			echo "Error: Offline and missing required dependencies."; \
+			echo "Please connect to the internet to perform the initial setup."; \
+			exit 1; \
+		fi; \
+	fi
 
 configure:
 	$(CMAKE) -S . -B $(BUILD_DIR) $(CMAKE_ARGS)
