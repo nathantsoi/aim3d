@@ -72,15 +72,6 @@
       -webkit-text-fill-color: transparent;
     }
 
-    .status-badge {
-      font-size: 0.75rem;
-      background-color: var(--accent-dim);
-      color: var(--accent);
-      border: 1px solid var(--accent);
-      border-radius: 9999px;
-      padding: 2px 10px;
-      font-weight: 600;
-    }
 
     /* Main Scaffold Grid */
     #app {
@@ -122,7 +113,6 @@
       <div class="logo-mark"></div>
       <h1>aim3d Platform</h1>
     </div>
-    <div class="status-badge" id="conn-status">Headless Core connected</div>
   </header>
 
   <!-- Fusion-style ribbon toolbar (mode switcher + workspace tabs + command groups) -->
@@ -147,6 +137,14 @@
 
   <!-- Bottom bar: parametric timeline -->
   <div id="timeline-bar"></div>
+
+  <!-- Disconnected Overlay -->
+  <div id="disconnect-overlay" style="display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; backdrop-filter: blur(4px); justify-content: center; align-items: center;">
+    <div style="background: var(--bg-panel); padding: 32px; border: 1px solid var(--border-color); border-radius: 12px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+      <h2 style="margin-top: 0; color: var(--text-danger);">Connection Lost</h2>
+      <p style="color: var(--text-muted); margin-bottom: 0;">Waiting for Headless Core to reconnect...</p>
+    </div>
+  </div>
 
   <script type="module" src="./src/main.js"></script>
 </body>

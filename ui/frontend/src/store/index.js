@@ -43,7 +43,8 @@ export const useCoreStore = defineStore('core', {
     actionLog: [],
     pendingConstruction: null,
     pendingSketchCreation: null,
-    pendingSketchElement: null
+    pendingSketchElement: null,
+    isConnected: false
   }),
 
   getters: {
@@ -58,6 +59,10 @@ export const useCoreStore = defineStore('core', {
   },
 
   actions: {
+    setConnected(status) {
+      this.isConnected = status;
+    },
+
     snapshotCoreState() {
       const {
         isDispatching,

@@ -338,21 +338,29 @@ def _ws_client_recv_one(host, port, timeout=5.0):
     return payload.decode("utf-8")
 
 
-def test_ui_bridge_serves_snapshot_over_websocket():
-    from aim3d import ui_bridge
+def test_daemon_broadcasts_snapshot_over_websocket():
+    import threading
+    from aim3d import daemon, ui_bridge
+    from http.server import ThreadingHTTPServer
 
     doc = aim_core.documents.create()
     sketch_token = doc.add_sketch("XY")
     doc.add_rectangle(sketch_token, 0.0, 0.0, 2.0, 1.0)
     doc.add_extrude(sketch_token, 10.0)
 
-    server = ui_bridge.LiveServer("127.0.0.1", 0)
+    cnc_daemon = daemon.Aim3dCncDaemon()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), cnc_daemon.make_handler())
+    port = server.socket.getsockname()[1]
+    
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
     try:
-        sent = server.push(doc)
-        # A GUI that connects after the push still gets the cached latest frame.
-        received = _ws_client_recv_one("127.0.0.1", server.port)
+        sent = ui_bridge.push_snapshot(doc, port=port)
+        received = _ws_client_recv_one("127.0.0.1", port)
     finally:
-        server.close()
+        server.shutdown()
+        server.server_close()
 
     assert received == sent
     message = json.loads(received)

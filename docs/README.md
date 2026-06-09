@@ -9,8 +9,8 @@ aim3d uses a unidirectional data flow and a modular architecture, splitting resp
 ### Component Overview
 
 1. **Native Core (C++)**: Handles heavy computational lifting including the OpenCASCADE CAD wrapper, Visual IR compilation, path generation, and the lightweight 2.5D heightmap simulator.
-2. **Orchestrator Daemon (Python)**: Provides the REST API backend, manages the `ControllerSession`, interfaces with the Native Core via C-FFI (ctypes), and communicates with the Jetson SPE firmware via the HAL.
-3. **Frontend UI (Tauri / Vue / Pinia / WebGPU)**: Provides the user interface. It communicates via REST API to the daemon and visualizes state using a highly optimized WebGPU renderer.
+2. **Orchestrator Daemon (Python)**: Acts as the central IPC hub. It provides the REST API backend, manages the `ControllerSession`, interfaces with the Native Core via C-FFI (ctypes), and hosts the live WebSocket server that relays core snapshots to the UI.
+3. **Frontend UI (Tauri / Vue / Pinia / WebGPU)**: Provides the user interface. It communicates via REST API to the daemon and subscribes to the daemon's WebSocket channel to visualize state in real-time.
 4. **SPE Firmware (C)**: Bare-metal Cortex-R5 execution on the NVIDIA Jetson Orin Nano. Handles real-time Step/Dir generation, E-stop, and hardware interfacing.
 
 ### Component Guides
@@ -25,10 +25,27 @@ For detailed information on using, evaluating, and developing each part of the s
 
 ## Quick Start
 
-To build and run the development environment locally:
+To build and run the development environment locally using the Makefile:
 
 ```bash
 cd aim3d
 make build
 make run
 ```
+
+### Full Environment & Testing (.tmuxinator.yaml)
+
+For a complete end-to-end environment that includes the central daemon, the Tauri frontend, and live-reloading test watchers, use the provided `tmuxinator` profile:
+
+```bash
+cd aim3d
+tmuxinator start aim3d
+```
+
+This will open a tmux session with panes configured for:
+1. **daemon**: Runs the central Python IPC Hub connecting the frontend to the core.
+2. **frontend**: Runs the Vue dev server.
+3. **tauri**: Runs the desktop application shell.
+4. **test-core**: Watches and runs C++ core tests.
+5. **test-python**: Watches and runs Python tests (using the virtualenv).
+6. **test-simulation**: Watches and runs simulation tests.

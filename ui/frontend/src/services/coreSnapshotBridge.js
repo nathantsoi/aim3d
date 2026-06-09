@@ -65,6 +65,12 @@ export const connectCoreSnapshotSocket = (store, url = defaultBridgeUrl(), optio
     if (stopped) return;
     socket = new WebSocket(url);
 
+    socket.onopen = () => {
+      if (typeof store.setConnected === 'function') {
+        store.setConnected(true);
+      }
+    };
+
     socket.onmessage = (event) => {
       const snapshot = parsePayload(event?.data);
       if (snapshot) {
@@ -73,6 +79,9 @@ export const connectCoreSnapshotSocket = (store, url = defaultBridgeUrl(), optio
     };
 
     socket.onclose = () => {
+      if (typeof store.setConnected === 'function') {
+        store.setConnected(false);
+      }
       socket = null;
       if (!stopped) {
         reconnectTimer = setTimeout(connect, reconnectDelayMs);

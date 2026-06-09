@@ -1,12 +1,37 @@
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
+import struct
+import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 from urllib import request as urlrequest
 
 from .controller import compile_visual_ir_to_gcode, validate_visual_ir
+
+# RFC 6455 magic GUID for the Sec-WebSocket-Accept handshake.
+_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+def _ws_accept_key(client_key: str) -> str:
+    digest = hashlib.sha1((client_key + _WS_GUID).encode("ascii")).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+def _ws_text_frame(payload_bytes: bytes) -> bytes:
+    """Encode bytes as a single unmasked (server->client) text frame."""
+    header = bytearray([0x81])  # FIN + opcode 0x1 (text)
+    length = len(payload_bytes)
+    if length < 126:
+        header.append(length)
+    elif length < 65536:
+        header.append(126)
+        header += struct.pack(">H", length)
+    else:
+        header.append(127)
+        header += struct.pack(">Q", length)
+    return bytes(header) + payload_bytes
 
 
 @dataclass
@@ -119,6 +144,33 @@ class ControllerSession:
 class Aim3dCncDaemon:
     def __init__(self, session: Optional[ControllerSession] = None):
         self.session = session or ControllerSession()
+        self._ws_clients = set()
+        self._ws_lock = threading.Lock()
+        self._latest_snapshot_frame: Optional[bytes] = None
+
+    def push_snapshot_frame(self, frame: bytes) -> None:
+        with self._ws_lock:
+            self._latest_snapshot_frame = frame
+            clients = list(self._ws_clients)
+        for conn in clients:
+            try:
+                conn.sendall(frame)
+            except OSError:
+                self._drop_ws_client(conn)
+
+    def register_ws_client(self, conn) -> None:
+        with self._ws_lock:
+            self._ws_clients.add(conn)
+            latest = self._latest_snapshot_frame
+        if latest is not None:
+            try:
+                conn.sendall(latest)
+            except OSError:
+                self._drop_ws_client(conn)
+
+    def _drop_ws_client(self, conn) -> None:
+        with self._ws_lock:
+            self._ws_clients.discard(conn)
 
     def handle(self, method: str, path: str, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         payload = payload or {}
@@ -126,6 +178,10 @@ class Aim3dCncDaemon:
             return self.session.status()
         if method != "POST":
             raise ValueError(f"unsupported method/path: {method} {path}")
+        if path == "/snapshot":
+            frame = _ws_text_frame(json.dumps(payload).encode("utf-8"))
+            self.push_snapshot_frame(frame)
+            return {"status": "ok", "clients": len(self._ws_clients)}
         if path == "/program/gcode":
             return self.session.load_gcode(str(payload.get("gcode", "")))
         if path == "/program/visual-ir":
@@ -139,6 +195,30 @@ class Aim3dCncDaemon:
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
+                if self.headers.get("Upgrade", "").lower() == "websocket":
+                    key = self.headers.get("Sec-WebSocket-Key")
+                    if not key:
+                        self.send_error(400, "Missing Sec-WebSocket-Key")
+                        return
+                    
+                    response = (
+                        "HTTP/1.1 101 Switching Protocols\r\n"
+                        "Upgrade: websocket\r\n"
+                        "Connection: Upgrade\r\n"
+                        f"Sec-WebSocket-Accept: {_ws_accept_key(key)}\r\n\r\n"
+                    )
+                    self.connection.sendall(response.encode("ascii"))
+                    daemon.register_ws_client(self.connection)
+                    try:
+                        while True:
+                            if not self.connection.recv(4096):
+                                break
+                    except OSError:
+                        pass
+                    finally:
+                        daemon._drop_ws_client(self.connection)
+                    return
+
                 self._respond(daemon.handle("GET", self.path))
 
             def do_POST(self) -> None:

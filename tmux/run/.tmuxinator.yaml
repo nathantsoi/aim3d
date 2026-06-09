@@ -1,0 +1,19 @@
+name: run
+root: ../..
+
+startup_window: dev
+on_project_start: make deps
+
+windows:
+  - dev:
+      layout: tiled
+      panes:
+        - daemon:
+            - PYTHONPATH=python .venv/bin/python -m aim3d.daemon
+        - frontend:
+            - cd ui/frontend
+            - npm run dev -- --host 127.0.0.1 --port 1420
+        - tauri:
+            - cd ui
+            - sleep 3
+            - npm run dev

@@ -1,4 +1,4 @@
-import { createApp, defineComponent, h } from 'vue';
+import { createApp, defineComponent, h, watch } from 'vue';
 import { createPinia } from 'pinia';
 import Timeline from './components/Timeline.vue';
 import Viewport from './components/Viewport.vue';
@@ -45,5 +45,13 @@ connectCoreSnapshotSocket(coreStore);
 subscribeCoreSnapshots(coreStore).catch((error) => {
   console.warn('[aim3d Frontend] core snapshot subscription unavailable', error);
 });
+
+watch(() => coreStore.isConnected, (connected) => {
+  const overlay = document.getElementById('disconnect-overlay');
+  
+  if (overlay) {
+    overlay.style.display = connected ? 'none' : 'flex';
+  }
+}, { immediate: true });
 
 console.log('[aim3d Frontend] Vue container initialized successfully.');
