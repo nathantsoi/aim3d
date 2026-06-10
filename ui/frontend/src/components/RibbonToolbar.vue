@@ -108,6 +108,15 @@
       <span>FINISH SKETCH</span>
     </button>
 
+    <button
+      v-if="store.isSketchMode"
+      class="export-dxf-btn"
+      data-testid="ribbon-export-dxf"
+      @click.stop="onExportDxf"
+    >
+      <span>EXPORT DXF</span>
+    </button>
+
     <div v-if="lastResult" class="ribbon-status" data-testid="ribbon-status">
       {{ lastResult }}
     </div>
@@ -125,6 +134,11 @@ import {
   runSimulation,
   solveSketch2d
 } from '../services/tauriCommands';
+
+const tauriInvoke = () => {
+  if (typeof window === 'undefined') return null;
+  return window.__TAURI__?.tauri?.invoke || window.__TAURI__?.invoke || null;
+};
 
 export default defineComponent({
   name: 'RibbonToolbar',
@@ -251,6 +265,29 @@ export default defineComponent({
       }
     };
 
+    const onExportDxf = async () => {
+      const sketchId = store.activeSketchId;
+      if (!sketchId) {
+        lastResult.value = 'No active sketch to export';
+        return;
+      }
+      const invoke = tauriInvoke();
+      if (!invoke) {
+        lastResult.value = 'DXF export requires Tauri runtime';
+        return;
+      }
+      try {
+        const filePath = `/tmp/${sketchId}.dxf`;
+        const response = await invoke('export_sketch_dxf', {
+          sketchToken: sketchId,
+          filePath
+        });
+        lastResult.value = response?.message || `Exported to ${filePath}`;
+      } catch (error) {
+        lastResult.value = `DXF export failed: ${error?.message ?? error}`;
+      }
+    };
+
     const onSubCommand = async (group, command, sub) => {
       closeMenus();
 
@@ -316,7 +353,8 @@ export default defineComponent({
       onSelectMode,
       onCommand,
       onSubCommand,
-      onFinishSketch
+      onFinishSketch,
+      onExportDxf
     };
   }
 });
@@ -548,6 +586,30 @@ export default defineComponent({
 
 .finish-sketch-btn:hover {
   background-color: hsla(145, 70%, 42%, 0.28);
+}
+
+.export-dxf-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 96px;
+  padding: 8px 14px;
+  background-color: hsla(200, 70%, 42%, 0.16);
+  border: 1px solid hsl(200, 70%, 42%);
+  border-radius: 6px;
+  color: hsl(200, 70%, 62%);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.export-dxf-btn:hover {
+  background-color: hsla(200, 70%, 42%, 0.28);
 }
 
 .finish-check {

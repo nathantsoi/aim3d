@@ -1,4 +1,4 @@
-import { createApp, defineComponent, h, watch } from 'vue';
+import { createApp, defineComponent, h } from 'vue';
 import { createPinia } from 'pinia';
 import Timeline from './components/Timeline.vue';
 import Viewport from './components/Viewport.vue';
@@ -6,7 +6,7 @@ import PropertyGrid from './components/PropertyGrid.vue';
 import RibbonToolbar from './components/RibbonToolbar.vue';
 import TimelineBar from './components/TimelineBar.vue';
 import { useCoreStore } from './store';
-import { connectCoreSnapshotSocket, subscribeCoreSnapshots } from './services/coreSnapshotBridge';
+import { subscribeCoreSnapshots } from './services/coreSnapshotBridge';
 
 // Define top-level layout coordinator
 const AppShell = defineComponent({
@@ -38,20 +38,16 @@ timelineBarApp.use(pinia);
 timelineBarApp.mount('#timeline-bar');
 
 // Project live core-state snapshots onto the store. Primary transport is the
-// WebSocket bridge (a Python script -> broker -> GUI); the in-process Tauri
-// `core://changed` event is also honored for an embedded-core future.
+// native Tauri IPC `core://changed` event.
 const coreStore = useCoreStore(pinia);
-connectCoreSnapshotSocket(coreStore);
 subscribeCoreSnapshots(coreStore).catch((error) => {
   console.warn('[aim3d Frontend] core snapshot subscription unavailable', error);
 });
 
-watch(() => coreStore.isConnected, (connected) => {
-  const overlay = document.getElementById('disconnect-overlay');
-  
-  if (overlay) {
-    overlay.style.display = connected ? 'none' : 'flex';
-  }
-}, { immediate: true });
+// We are now fully native and using sidecars! The daemon overlay is disabled.
+const overlay = document.getElementById('disconnect-overlay');
+if (overlay) {
+  overlay.style.display = 'none';
+}
 
 console.log('[aim3d Frontend] Vue container initialized successfully.');

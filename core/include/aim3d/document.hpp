@@ -309,6 +309,10 @@ public:
     std::vector<SolidFeature> solidFeatures() const;
     std::vector<ConstructionObject> constructionObjects() const;
 
+    // Export a sketch's entities to DXF format. Returns the DXF string, or
+    // empty on failure.
+    std::string exportSketchDxf(const std::string& sketchToken) const;
+
     // Serialized core-state snapshot (schemaVersion 2) consumed by the UI.
     std::string coreStateSnapshot() const;
 

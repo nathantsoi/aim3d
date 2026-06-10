@@ -3,7 +3,8 @@
     "beforeDevCommand": "",
     "beforeBuildCommand": "cd frontend && npm run build",
     "devPath": "http://localhost:1420",
-    "distDir": "../frontend/dist"
+    "distDir": "../frontend/dist",
+    "withGlobalTauri": true
   },
   "package": {
     "productName": "aim3d",

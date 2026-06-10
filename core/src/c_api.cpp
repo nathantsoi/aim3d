@@ -349,6 +349,18 @@ char* aim3d_document_core_state_snapshot(Aim3dDocumentHandle* handle) {
     }
 }
 
+char* aim3d_document_export_sketch_dxf(Aim3dDocumentHandle* handle, const char* sketch_token) {
+    if (!handle || !handle->document || !sketch_token) {
+        return nullptr;
+    }
+    try {
+        auto dxf = handle->document->exportSketchDxf(sketch_token);
+        return dxf.empty() ? nullptr : copyString(dxf);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 std::size_t aim3d_document_body_count(Aim3dDocumentHandle* handle) {
     if (!handle || !handle->document) {
         return 0;

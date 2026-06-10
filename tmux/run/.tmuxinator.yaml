@@ -8,8 +8,6 @@ windows:
   - dev:
       layout: tiled
       panes:
-        - daemon:
-            - PYTHONPATH=python .venv/bin/python -m aim3d.daemon
         - frontend:
             - cd ui/frontend
             - npm run dev -- --host 127.0.0.1 --port 1420

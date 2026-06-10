@@ -85,6 +85,9 @@ char* aim3d_document_add_construction(
     double value);
 
 char* aim3d_document_core_state_snapshot(Aim3dDocumentHandle* handle);
+// Export a sketch's entities to DXF. Returns a caller-owned string (release
+// with aim3d_string_release), or nullptr if the sketch token is not found.
+char* aim3d_document_export_sketch_dxf(Aim3dDocumentHandle* handle, const char* sketch_token);
 
 std::size_t aim3d_document_body_count(Aim3dDocumentHandle* handle);
 Aim3dBodyHandle* aim3d_document_body_at(Aim3dDocumentHandle* handle, std::size_t index);

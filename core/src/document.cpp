@@ -1260,6 +1260,111 @@ SolidFeature* Document::findSolidByToken(const std::string& token) {
     return nullptr;
 }
 
+std::string Document::exportSketchDxf(const std::string& sketchToken) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const SketchFeature* sketch = findSketchByToken(sketchToken);
+    if (!sketch) {
+        return {};
+    }
+
+    auto dxfNum = [](double v) -> std::string {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.6f", v);
+        return buf;
+    };
+
+    std::string out;
+    // DXF header
+    out += "  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n";
+    // Tables (minimal)
+    out += "  0\nSECTION\n  2\nTABLES\n  0\nENDSEC\n";
+    // Entities section
+    out += "  0\nSECTION\n  2\nENTITIES\n";
+
+    for (const auto& entity : sketch->entities) {
+        switch (entity.kind) {
+        case SketchElementKind::Line:
+            if (entity.points.size() >= 2) {
+                out += "  0\nLINE\n  8\n0\n";
+                out += " 10\n" + dxfNum(entity.points[0][0]) + "\n";
+                out += " 20\n" + dxfNum(entity.points[0][1]) + "\n";
+                out += " 30\n0.0\n";
+                out += " 11\n" + dxfNum(entity.points[1][0]) + "\n";
+                out += " 21\n" + dxfNum(entity.points[1][1]) + "\n";
+                out += " 31\n0.0\n";
+            }
+            break;
+
+        case SketchElementKind::CircleCenterDiameter:
+        case SketchElementKind::Circle2Point:
+        case SketchElementKind::Circle3Point:
+            if (!entity.points.empty() && entity.radius > 0.0) {
+                out += "  0\nCIRCLE\n  8\n0\n";
+                out += " 10\n" + dxfNum(entity.points[0][0]) + "\n";
+                out += " 20\n" + dxfNum(entity.points[0][1]) + "\n";
+                out += " 30\n0.0\n";
+                out += " 40\n" + dxfNum(entity.radius) + "\n";
+            }
+            break;
+
+        case SketchElementKind::Rectangle2Point:
+        case SketchElementKind::Rectangle3Point:
+        case SketchElementKind::RectangleCenter:
+            if (entity.points.size() >= 2) {
+                double x0 = entity.points[0][0], y0 = entity.points[0][1];
+                double x1 = entity.points[1][0], y1 = entity.points[1][1];
+                // Emit 4 lines forming the rectangle
+                auto line = [&](double ax, double ay, double bx, double by) {
+                    out += "  0\nLINE\n  8\n0\n";
+                    out += " 10\n" + dxfNum(ax) + "\n 20\n" + dxfNum(ay) + "\n 30\n0.0\n";
+                    out += " 11\n" + dxfNum(bx) + "\n 21\n" + dxfNum(by) + "\n 31\n0.0\n";
+                };
+                line(x0, y0, x1, y0);
+                line(x1, y0, x1, y1);
+                line(x1, y1, x0, y1);
+                line(x0, y1, x0, y0);
+            }
+            break;
+
+        case SketchElementKind::Arc3Point:
+        case SketchElementKind::ArcCenterPoint:
+        case SketchElementKind::ArcTangent:
+            if (!entity.points.empty() && entity.radius > 0.0) {
+                // Export arcs as circles (DXF ARC needs start/end angles
+                // which we don't track yet)
+                out += "  0\nCIRCLE\n  8\n0\n";
+                out += " 10\n" + dxfNum(entity.points[0][0]) + "\n";
+                out += " 20\n" + dxfNum(entity.points[0][1]) + "\n";
+                out += " 30\n0.0\n";
+                out += " 40\n" + dxfNum(entity.radius) + "\n";
+            }
+            break;
+
+        case SketchElementKind::Point:
+            if (!entity.points.empty()) {
+                out += "  0\nPOINT\n  8\n0\n";
+                out += " 10\n" + dxfNum(entity.points[0][0]) + "\n";
+                out += " 20\n" + dxfNum(entity.points[0][1]) + "\n";
+                out += " 30\n0.0\n";
+            }
+            break;
+
+        default:
+            // For unsupported kinds, emit a comment-like TEXT entity
+            if (!entity.points.empty()) {
+                out += "  0\nPOINT\n  8\n0\n";
+                out += " 10\n" + dxfNum(entity.points[0][0]) + "\n";
+                out += " 20\n" + dxfNum(entity.points[0][1]) + "\n";
+                out += " 30\n0.0\n";
+            }
+            break;
+        }
+    }
+
+    out += "  0\nENDSEC\n  0\nEOF\n";
+    return out;
+}
+
 std::string Document::coreStateSnapshot() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return coreStateSnapshotUnlocked();
