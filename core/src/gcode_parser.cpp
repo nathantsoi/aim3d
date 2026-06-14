@@ -2,6 +2,8 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <algorithm>
+#include <cctype>
 
 namespace aim3d {
 
@@ -16,27 +18,68 @@ std::shared_ptr<CanonicalCamIR> GCodeParser::parse(const std::string& gcodeConte
     std::string line;
     
     while (std::getline(ss, line)) {
-        if (line.empty() || line[0] == ';') continue; // Comment skip
+        // Strip block delete if present at the start
+        if (!line.empty() && line[0] == '/') {
+            // we skip it entirely based on standard block delete behavior
+            continue;
+        }
 
-        std::stringstream lineStream(line);
+        // Strip comments
+        std::string cleanedLine = "";
+        bool inComment = false;
+        for (char c : line) {
+            if (c == ';') {
+                break; // rest of line is comment
+            } else if (c == '(') {
+                inComment = true;
+            } else if (c == ')') {
+                inComment = false;
+                continue; // skip the closing parenthesis itself
+            }
+            if (!inComment) {
+                cleanedLine += c;
+            }
+        }
+
+        if (cleanedLine.empty()) continue;
+
+        std::stringstream lineStream(cleanedLine);
         std::string word;
         
         MotionCommand cmd;
-        cmd.type = MotionType::StraightFeed;
+        switch(m_state.activeModalGroup) {
+            case 0: cmd.type = MotionType::Rapid; break;
+            case 1: cmd.type = MotionType::StraightFeed; break;
+            case 2: cmd.type = MotionType::ArcFeedCW; break;
+            case 3: cmd.type = MotionType::ArcFeedCCW; break;
+            default: cmd.type = MotionType::Rapid; break;
+        }
         cmd.feedRate = m_state.currentFeed;
         cmd.toolId = m_state.activeToolId;
         cmd.x = m_state.currentX;
         cmd.y = m_state.currentY;
         cmd.z = m_state.currentZ;
+        cmd.i = 0.0;
+        cmd.j = 0.0;
+        cmd.k = 0.0;
 
         bool hasCoords = false;
+        bool hasArcCenter = false;
+        bool hasFeed = false;
+        bool isToolChange = false;
 
         while (lineStream >> word) {
-            char cmdChar = word[0];
+            if (word.empty()) continue;
+            char cmdChar = std::toupper(word[0]);
             std::string valStr = word.substr(1);
             if (valStr.empty()) continue;
 
-            double val = std::stod(valStr);
+            double val = 0.0;
+            try {
+                val = std::stod(valStr);
+            } catch (...) {
+                continue;
+            }
 
             switch (cmdChar) {
                 case 'G':
@@ -69,21 +112,41 @@ std::shared_ptr<CanonicalCamIR> GCodeParser::parse(const std::string& gcodeConte
                     m_state.currentZ = val;
                     hasCoords = true;
                     break;
+                case 'I':
+                    cmd.i = val;
+                    hasArcCenter = true;
+                    break;
+                case 'J':
+                    cmd.j = val;
+                    hasArcCenter = true;
+                    break;
+                case 'K':
+                    cmd.k = val;
+                    hasArcCenter = true;
+                    break;
                 case 'F':
                     cmd.feedRate = val;
                     m_state.currentFeed = val;
+                    hasFeed = true;
                     break;
                 case 'T':
                     cmd.toolId = static_cast<int>(val);
                     m_state.activeToolId = static_cast<int>(val);
+                    isToolChange = true;
                     cmd.type = MotionType::ToolChange;
+                    break;
+                case 'M':
+                    if (val == 6) {
+                        isToolChange = true;
+                        cmd.type = MotionType::ToolChange;
+                    }
                     break;
                 default:
                     break;
             }
         }
 
-        if (hasCoords || cmd.type == MotionType::ToolChange) {
+        if (hasCoords || hasArcCenter || isToolChange || hasFeed) {
             ir->addCommand(cmd);
         }
     }

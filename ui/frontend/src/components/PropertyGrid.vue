@@ -3,6 +3,8 @@
     <SketchCreatePanel v-if="store.pendingSketchCreation" />
     <ConstructionCommandPanel v-else-if="store.pendingConstruction" />
     <SketchElementCommandPanel v-else-if="store.pendingSketchElement" />
+    <StockSetupPanel v-else-if="store.pendingStockSetup" />
+    <GCodeEditorPanel v-else-if="store.showGcodeEditor" />
     <SketchPalette v-else-if="store.isSketchMode" />
     <div v-else class="property-grid">
     <div class="panel-header">
@@ -190,10 +192,12 @@ import SketchPalette from './SketchPalette.vue';
 import ConstructionCommandPanel from './ConstructionCommandPanel.vue';
 import SketchCreatePanel from './SketchCreatePanel.vue';
 import SketchElementCommandPanel from './SketchElementCommandPanel.vue';
+import StockSetupPanel from './StockSetupPanel.vue';
+import GCodeEditorPanel from './GCodeEditorPanel.vue';
 
 export default defineComponent({
   name: 'PropertyGrid',
-  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel },
+  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel, StockSetupPanel, GCodeEditorPanel },
   setup() {
     const store = useCoreStore();
     const parseNumber = (value) => Number.parseFloat(value);

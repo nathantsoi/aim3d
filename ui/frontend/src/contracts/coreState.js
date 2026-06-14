@@ -10,6 +10,8 @@ export const ACTION_TYPES = Object.freeze({
   CREATE_SKETCH_ENTITY: 'core.createSketchEntity',
   GENERATE_TOOLPATH: 'cam.generateToolpath',
   RUN_SIMULATION: 'sim.runSimulation',
+  CREATE_STOCK: 'sim.createStock',
+  CREATE_TOOL: 'sim.createTool',
   LOAD_DOCUMENT_STATE: 'core.loadDocumentState'
 });
 
@@ -158,6 +160,11 @@ export const createInitialCoreState = () => ({
   setups: [],
   operations: [],
   gcode: '; No code posted',
+  showGcodeEditor: false,
+  stockSize: { x: 100, y: 100, z: 25 },
+  toolDiameter: 6,
+  toolLength: 25,
+  toolRadius: 0,
   isSimulating: false,
   simulationStats: { collisions: 0, materialRemoved: 0 },
   viewportScene: createDefaultViewportScene()
@@ -323,7 +330,7 @@ const applyEntityDeletion = (state, action) => {
   }
 };
 
-const syncViewportScene = (state) => {
+export const syncViewportScene = (state) => {
   if (!state.viewportScene) {
     state.viewportScene = createDefaultViewportScene();
   }
@@ -344,6 +351,57 @@ const syncViewportScene = (state) => {
   state.viewportScene.toolpaths.forEach((toolpath) => {
     toolpath.status = readyOperationIds.has(toolpath.operationId) ? 'Ready' : 'Stale';
   });
+
+  // Dynamic Toolhead mesh for simulation
+  if (state.activeMode === 'simulation' || state.isSimulating) {
+    const td = state.toolDiameter || 6;
+    const tl = state.toolLength || 25;
+    const offsetZ = state.stockSize?.z || 25;
+    const toolPositions = [
+        -td/2, -td/2, offsetZ,  td/2, -td/2, offsetZ,  td/2, td/2, offsetZ,  -td/2, td/2, offsetZ,
+        -td/2, -td/2, offsetZ+tl,  td/2, -td/2, offsetZ+tl,  td/2, td/2, offsetZ+tl,  -td/2, td/2, offsetZ+tl
+    ];
+    const toolNormals = [
+        0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+        0,0,1,  0,0,1,  0,0,1,  0,0,1
+    ];
+    const toolIndices = [
+        0, 2, 1, 0, 3, 2,
+        4, 5, 6, 4, 6, 7,
+        0, 1, 5, 0, 5, 4,
+        1, 2, 6, 1, 6, 5,
+        2, 3, 7, 2, 7, 6,
+        3, 0, 4, 3, 4, 7
+    ];
+    const toolColors = Array(8 * 4).fill(0).map((_, i) => {
+        if (i % 4 === 0) return 0.9; // R
+        if (i % 4 === 1) return 0.2; // G
+        if (i % 4 === 2) return 0.2; // B
+        return 0.9; // A
+    });
+
+    const toolSolid = {
+      id: 'solid_toolhead',
+      bodyId: 9997,
+      sourceToken: 'toolhead',
+      positions: toolPositions,
+      normals: toolNormals,
+      indices: toolIndices,
+      colors: toolColors,
+      transform: [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+      ],
+      pickable: null
+    };
+    
+    state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_toolhead');
+    state.viewportScene.solids.push(toolSolid);
+  } else if (state.viewportScene?.solids) {
+    state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_toolhead');
+  }
 
   const triangleCount = state.viewportScene.solids.reduce(
     (count, solid) => count + Math.floor((solid.indices?.length ?? 0) / 3),
@@ -601,6 +659,82 @@ export const applyMockCoreAction = (currentState, action) => {
   if (action.type === ACTION_TYPES.RUN_SIMULATION) {
     state.isSimulating = false;
     state.simulationStats = { collisions: 0, materialRemoved: 1420.5 };
+  }
+
+  if (action.type === ACTION_TYPES.CREATE_STOCK) {
+    const { x, y, z, kind } = action.value;
+    const stockId = `feat_Stock_1`;
+    const label = `Stock (${kind})`;
+    
+    // Create feature
+    state.features = state.features.filter(f => f.id !== stockId);
+    state.features.push({
+      id: stockId,
+      type: 'Stock',
+      label,
+      value: 0,
+      unit: 'mm',
+      isDirty: false,
+      selectionToken: `${stockId}_body_0`
+    });
+
+    if (!state.browser) state.browser = createDefaultBrowser();
+    state.browser.bodies = state.browser.bodies.filter(b => b.id !== stockId);
+    state.browser.bodies.push({
+      id: stockId,
+      label: label,
+      visible: true
+    });
+
+    // Generate basic box mesh for Stock
+    const w = x;
+    const d = y || x;
+    const h = z;
+    const positions = [
+        0, 0, 0,  w, 0, 0,  w, d, 0,  0, d, 0,
+        0, 0, h,  w, 0, h,  w, d, h,  0, d, h
+    ];
+    const normals = [
+        0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+        0,0,1,  0,0,1,  0,0,1,  0,0,1
+    ];
+    const indices = [
+        0, 2, 1, 0, 3, 2,
+        4, 5, 6, 4, 6, 7,
+        0, 1, 5, 0, 5, 4,
+        1, 2, 6, 1, 6, 5,
+        2, 3, 7, 2, 7, 6,
+        3, 0, 4, 3, 4, 7
+    ];
+    const colors = Array(8 * 4).fill(0).map((_, i) => i % 4 === 3 ? 0.7 : 0.8); // slight transparency
+
+    const stockSolid = {
+      id: 'solid_stock',
+      bodyId: 9998,
+      sourceToken: stockId,
+      positions,
+      normals,
+      indices,
+      colors,
+      transform: [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+      ],
+      pickable: {
+        entityId: stockId,
+        kind: 'Stock',
+        priority: 5,
+        snapPoints: []
+      }
+    };
+    
+    if (!state.viewportScene) state.viewportScene = createDefaultViewportScene();
+    state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_stock');
+    state.viewportScene.solids.push(stockSolid);
+    
+    syncViewportScene(state);
   }
 
   syncViewportScene(state);

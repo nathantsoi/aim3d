@@ -119,6 +119,31 @@ const manufactureActionsGroup = {
   ]
 };
 
+const simulationSetupGroup = {
+  id: 'setup',
+  label: 'SETUP',
+  commands: [
+    { id: 'create-stock', label: 'Create Stock', action: 'beginStockSetup' }
+  ]
+};
+
+const simulationGcodeGroup = {
+  id: 'gcode',
+  label: 'GCODE',
+  commands: [
+    { id: 'edit-gcode', label: 'Edit G-Code', action: 'toggleGcodeEditor' },
+    { id: 'load-gcode', label: 'Load G-Code', action: 'loadGcodeFile' }
+  ]
+};
+
+const simulationActionsGroup = {
+  id: 'actions',
+  label: 'ACTIONS',
+  commands: [
+    { id: 'simulate', label: 'Simulate', action: 'runSimulation' }
+  ]
+};
+
 const sketchCreateGroup = {
   id: 'create',
   label: 'CREATE',
@@ -273,7 +298,22 @@ export const RIBBON_MODES = {
       { id: 'fabrication', label: 'FABRICATION', groups: placeholderGroups(['SETUP', 'CUTTING']) },
       { id: 'utilities', label: 'UTILITIES', groups: placeholderGroups(['MAKE', 'ADD-INS']) }
     ]
+  },
+  simulation: {
+    label: 'SIMULATION',
+    tabs: [
+      {
+        id: 'simulation',
+        label: 'SIMULATION',
+        groups: [
+          simulationSetupGroup,
+          simulationGcodeGroup,
+          simulationActionsGroup,
+          ...placeholderGroups(['INSPECT'])
+        ]
+      }
+    ]
   }
 };
 
-export const RIBBON_MODE_ORDER = ['design', 'manufacture'];
+export const RIBBON_MODE_ORDER = ['design', 'manufacture', 'simulation'];

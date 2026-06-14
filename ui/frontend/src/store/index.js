@@ -3,7 +3,8 @@ import {
   ACTION_TYPES,
   applyCoreSnapshot,
   createInitialCoreState,
-  createUiAction
+  createUiAction,
+  syncViewportScene
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
 import { loadControllerGcode, simulateControllerProgram } from '../services/controllerDaemon';
@@ -43,6 +44,7 @@ export const useCoreStore = defineStore('core', {
     pendingConstruction: null,
     pendingSketchCreation: null,
     pendingSketchElement: null,
+    pendingStockSetup: null,
     isConnected: false
   }),
 
@@ -70,6 +72,7 @@ export const useCoreStore = defineStore('core', {
         pendingConstruction,
         pendingSketchCreation,
         pendingSketchElement,
+        pendingStockSetup,
         ...coreState
       } = this.$state;
       return coreState;
@@ -114,8 +117,72 @@ export const useCoreStore = defineStore('core', {
       this.cancelSketchCreation();
       this.cancelConstructionCommand();
       this.cancelSketchElement();
+      this.cancelStockSetup();
       this.activeMode = mode;
       this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
+      if (mode !== 'simulation') {
+        this.showGcodeEditor = false;
+      }
+      syncViewportScene(this.$state);
+    },
+
+    toggleGcodeEditor() {
+      this.showGcodeEditor = !this.showGcodeEditor;
+    },
+
+    setGcodeText(text) {
+      this.gcode = text;
+    },
+
+    beginStockSetup() {
+      this.cancelSketchCreation();
+      this.cancelConstructionCommand();
+      this.pendingStockSetup = {
+        kind: 'cuboid',
+        x: this.stockSize.x,
+        y: this.stockSize.y,
+        z: this.stockSize.z
+      };
+    },
+
+    updateStockSetup(patch) {
+      if (!this.pendingStockSetup) return;
+      this.pendingStockSetup = { ...this.pendingStockSetup, ...patch };
+    },
+
+    updateToolSetup(patch) {
+      if (patch.toolDiameter !== undefined) this.toolDiameter = patch.toolDiameter;
+      if (patch.toolLength !== undefined) this.toolLength = patch.toolLength;
+      if (patch.toolRadius !== undefined) this.toolRadius = patch.toolRadius;
+      syncViewportScene(this.$state);
+    },
+
+    cancelStockSetup() {
+      this.pendingStockSetup = null;
+    },
+
+    confirmStockSetup() {
+      if (!this.pendingStockSetup) return;
+      this.stockSize = {
+        x: Number(this.pendingStockSetup.x),
+        y: Number(this.pendingStockSetup.y),
+        z: Number(this.pendingStockSetup.z)
+      };
+      
+      this.dispatchAction({
+        type: ACTION_TYPES.CREATE_STOCK,
+        targetId: this.activeDocumentId,
+        targetKind: 'stock',
+        path: null,
+        value: {
+          kind: this.pendingStockSetup.kind,
+          x: this.stockSize.x,
+          y: this.stockSize.y,
+          z: this.stockSize.z
+        }
+      });
+      
+      this.pendingStockSetup = null;
     },
 
     beginSketchCreation() {
@@ -664,6 +731,7 @@ export const useCoreStore = defineStore('core', {
             simulatedSolid
           ];
           this.simulationStats = { collisions: 0, materialRemoved: 1256.4 };
+
         } else {
           this.simulationStats = { collisions: 0, materialRemoved: 0, error: response.simulation?.error || 'Simulation failed' };
         }

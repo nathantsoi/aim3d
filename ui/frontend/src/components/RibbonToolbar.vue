@@ -246,14 +246,40 @@ export default defineComponent({
         case 'generateToolpath':
           return generateToolpath(command.operationId ?? `op_${command.id}`);
         case 'runSimulation':
-          return runSimulation(store.gcode);
+          return store.executeSimulation();
         case 'postProcess':
           return postProcess(store.activeSetup?.id ?? 'setup_Main_1');
         case 'recompute':
           return recomputeDocument();
+        case 'beginStockSetup':
+          store.beginStockSetup();
+          return null;
+        case 'toggleGcodeEditor':
+          store.toggleGcodeEditor();
+          return null;
+        case 'loadGcodeFile':
+          onLoadGcodeFile();
+          return null;
         default:
           return null;
       }
+    };
+
+    const onLoadGcodeFile = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.nc,.gcode,.txt';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        store.setGcodeText(text);
+        if (!store.showGcodeEditor) {
+          store.toggleGcodeEditor();
+        }
+        lastResult.value = `Loaded ${file.name}`;
+      };
+      input.click();
     };
 
     const onFinishSketch = async () => {
