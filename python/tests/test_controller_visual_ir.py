@@ -90,7 +90,7 @@ def test_controller_client_request_shapes_and_transport():
     assert calls == [("POST", "/command/jog", {"x": 1.0, "y": 2.0, "z": 0.0})]
 
 
-def test_lightweight_simulator_mesh():
+def test_lightweight_simulator_mesh(record_meshes):
     gcode = (
         "G21 G90\n"
         "T1 M6\n"
@@ -106,3 +106,8 @@ def test_lightweight_simulator_mesh():
     assert "indices" in mesh
     assert len(mesh["positions"]) == 10 * 10 * 2 * 3
 
+    if record_meshes:
+        import os
+        from mesh_utils import write_obj_mesh
+        os.makedirs("__records__", exist_ok=True)
+        write_obj_mesh("__records__/test_lightweight_simulator_mesh.obj", mesh)

@@ -342,6 +342,10 @@ def test_daemon_broadcasts_snapshot_over_websocket():
     import threading
     from aim3d import daemon, ui_bridge
     from http.server import ThreadingHTTPServer
+    import socket
+    import base64
+    import os
+    import struct
 
     doc = aim_core.documents.create()
     sketch_token = doc.add_sketch("XY")
@@ -356,8 +360,53 @@ def test_daemon_broadcasts_snapshot_over_websocket():
     thread.start()
 
     try:
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+        sock.settimeout(5.0)
+        request = (
+            "GET / HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        sock.sendall(request.encode("ascii"))
+
+        buffer = b""
+        def read_more():
+            nonlocal buffer
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise AssertionError("server closed before sending a frame")
+            buffer += chunk
+
+        while b"\r\n\r\n" not in buffer:
+            read_more()
+        assert b"101 Switching Protocols" in buffer.split(b"\r\n", 1)[0]
+        buffer = buffer.split(b"\r\n\r\n", 1)[1]
+
         sent = ui_bridge.push_snapshot(doc, port=port)
-        received = _ws_client_recv_one("127.0.0.1", port)
+
+        while len(buffer) < 2:
+            read_more()
+        length = buffer[1] & 0x7F
+        consumed = 2
+        if length == 126:
+            while len(buffer) < 4:
+                read_more()
+            length = struct.unpack(">H", buffer[2:4])[0]
+            consumed = 4
+        elif length == 127:
+            while len(buffer) < 10:
+                read_more()
+            length = struct.unpack(">Q", buffer[2:10])[0]
+            consumed = 10
+        while len(buffer) < consumed + length:
+            read_more()
+        payload = buffer[consumed:consumed + length]
+        received = payload.decode("utf-8")
+        sock.close()
     finally:
         server.shutdown()
         server.server_close()

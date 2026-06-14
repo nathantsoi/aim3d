@@ -48,6 +48,10 @@ struct Aim3dOperationHandle {
     bool generated = false;
 };
 
+namespace aim3d {
+ViewportSolidMesh getSolidMeshForBody(const BRepBody& body, const std::string& token);
+}
+
 namespace {
 
 std::shared_ptr<aim3d::BRepBody> makePreviewBody() {
@@ -99,6 +103,9 @@ aim3d::ViewportSolidMesh firstSolidMesh(Aim3dDocumentHandle* handle) {
     }
     const auto scene = handle->document->viewportScene();
     if (scene.solids.empty()) {
+        if (handle->previewBody) {
+            return aim3d::getSolidMeshForBody(*handle->previewBody, "preview");
+        }
         return {};
     }
     return scene.solids[0];

@@ -89,6 +89,7 @@ struct ControllerModalState {
     double spindleRpm = 0.0;
     int activeTool = 0;
     std::array<double, 3> positionMm = {0.0, 0.0, 0.0};
+    bool retractToOldZ = true;
 };
 
 struct ControllerRecord {

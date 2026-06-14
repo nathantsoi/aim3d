@@ -85,6 +85,31 @@ bool isError(const ControllerDiagnostic& diagnostic) {
            diagnostic.severity == ControllerDiagnosticSeverity::Fatal;
 }
 
+std::vector<std::string> tokenizeLine(const std::string& line) {
+    std::vector<std::string> words;
+    std::string currentWord;
+    for (char ch : line) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!currentWord.empty()) {
+                words.push_back(currentWord);
+                currentWord.clear();
+            }
+        } else if (std::isalpha(static_cast<unsigned char>(ch))) {
+            if (!currentWord.empty()) {
+                words.push_back(currentWord);
+                currentWord.clear();
+            }
+            currentWord.push_back(ch);
+        } else {
+            currentWord.push_back(ch);
+        }
+    }
+    if (!currentWord.empty()) {
+        words.push_back(currentWord);
+    }
+    return words;
+}
+
 } // namespace
 
 MachineProfile MachineProfile::defaultThreeAxisMill() {
@@ -137,6 +162,7 @@ bool ControllerProgram::valid() const {
 
 bool LinuxCncCompatParser::isSupportedMCode(int code) {
     switch (code) {
+        case 2:
         case 3:
         case 4:
         case 5:
@@ -156,6 +182,10 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
     ControllerModalState modal;
     int activeMotion = -1;
     bool programEnded = false;
+    bool hasR = false;
+    double rValRaw = 0.0;
+    bool hasZ = false;
+    double zValRaw = 0.0;
 
     std::stringstream stream(gcode);
     std::string rawLine;
@@ -171,8 +201,7 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
             continue;
         }
 
-        std::stringstream words(line);
-        std::string word;
+        const std::vector<std::string> parsedWords = tokenizeLine(line);
         bool hasCoord = false;
         bool hasArcOffset = false;
         bool hasMotionWord = false;
@@ -181,6 +210,9 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
         bool spindleUpdated = false;
         bool toolSelected = false;
         bool motionChanged = false;
+        int lValue = 1;
+        bool hasP = false;
+        double pValue = 0.0;
         ControllerRecord record;
         record.sourceLine = lineNumber;
         record.sourceText = line;
@@ -190,7 +222,7 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
         record.spindleRpm = modal.spindleRpm;
         record.tool = modal.activeTool;
 
-        while (words >> word) {
+        for (const auto& word : parsedWords) {
             char letter = '\0';
             double value = 0.0;
             if (!parseWord(word, letter, value)) {
@@ -205,6 +237,8 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
                     case 1:
                     case 2:
                     case 3:
+                    case 81:
+                    case 84:
                         if (hasMotionWord) {
                             addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.modal.motion", "Multiple motion commands in one block");
                         }
@@ -255,6 +289,12 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
                         break;
                     case 94:
                         break;
+                    case 98:
+                        modal.retractToOldZ = true;
+                        break;
+                    case 99:
+                        modal.retractToOldZ = false;
+                        break;
                     default:
                         addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.unsupported.g", "Unsupported G-code G" + std::to_string(code));
                         break;
@@ -295,6 +335,7 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
                         record.type = ControllerRecordType::SetCoolant;
                         hasRecord = true;
                         break;
+                    case 2:
                     case 30:
                         record.type = ControllerRecordType::ProgramEnd;
                         hasRecord = true;
@@ -308,10 +349,22 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
                 const double mmValue = toMm(value, modal.units);
                 record.targetMm[index] = modal.absoluteDistance ? mmValue : modal.positionMm[index] + mmValue;
                 hasCoord = true;
+                if (letter == 'Z') {
+                    zValRaw = value;
+                    hasZ = true;
+                }
             } else if (letter == 'I' || letter == 'J' || letter == 'K') {
                 const std::size_t index = letter == 'I' ? 0 : (letter == 'J' ? 1 : 2);
                 record.arcCenterOffsetMm[index] = toMm(value, modal.units);
                 hasArcOffset = true;
+            } else if (letter == 'R') {
+                rValRaw = value;
+                hasR = true;
+            } else if (letter == 'L') {
+                lValue = static_cast<int>(std::llround(value));
+            } else if (letter == 'P') {
+                pValue = value;
+                hasP = true;
             } else if (letter == 'F') {
                 modal.feedRateMmPerMin = feedToMmPerMin(value, modal.units);
                 record.feedRateMmPerMin = modal.feedRateMmPerMin;
@@ -342,34 +395,193 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
                 addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.motion.missing", "Coordinate block has no active motion mode");
                 continue;
             }
-            switch (activeMotion) {
-                case 0:
-                    record.type = ControllerRecordType::Rapid;
-                    break;
-                case 1:
-                    record.type = ControllerRecordType::LinearFeed;
-                    break;
-                case 2:
-                    record.type = ControllerRecordType::ArcCW;
-                    break;
-                case 3:
-                    record.type = ControllerRecordType::ArcCCW;
-                    break;
-                default:
-                    break;
+            if (activeMotion == 81 || activeMotion == 84) {
+                if (!hasR) {
+                    addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.canned.r", "Canned cycle requires R parameter");
+                    continue;
+                }
+                if (!hasZ) {
+                    addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.canned.z", "Canned cycle requires Z parameter");
+                    continue;
+                }
+                if (modal.feedRateMmPerMin <= 0.0) {
+                    addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.feed.missing", "Feed motion requires a positive F word before execution");
+                    continue;
+                }
+
+                double initial_z = modal.positionMm[2];
+                double r_val_mm = toMm(rValRaw, modal.units);
+                double z_val_mm = toMm(zValRaw, modal.units);
+
+                double r_abs = modal.absoluteDistance ? r_val_mm : initial_z + r_val_mm;
+                double z_abs = modal.absoluteDistance ? z_val_mm : r_abs + z_val_mm;
+                double retract_z = modal.retractToOldZ ? std::max(initial_z, r_abs) : r_abs;
+
+                double target_x = modal.positionMm[0];
+                double target_y = modal.positionMm[1];
+                if (record.targetMm[0] != modal.positionMm[0] || (modal.absoluteDistance && hasCoord)) {
+                    target_x = record.targetMm[0];
+                }
+                if (record.targetMm[1] != modal.positionMm[1] || (modal.absoluteDistance && hasCoord)) {
+                    target_y = record.targetMm[1];
+                }
+
+                double dx = 0.0;
+                double dy = 0.0;
+                if (!modal.absoluteDistance) {
+                    dx = record.targetMm[0] - modal.positionMm[0];
+                    dy = record.targetMm[1] - modal.positionMm[1];
+                }
+
+                double current_z = initial_z;
+                double current_x = modal.positionMm[0];
+                double current_y = modal.positionMm[1];
+
+                for (int i = 0; i < lValue; ++i) {
+                    double repeat_x = modal.absoluteDistance ? target_x : current_x + dx;
+                    double repeat_y = modal.absoluteDistance ? target_y : current_y + dy;
+
+                    // 1. Traverse Z to R first if current_z < R
+                    if (current_z < r_abs) {
+                        ControllerRecord r;
+                        r.sourceLine = lineNumber;
+                        r.sourceText = line;
+                        r.modal = modal;
+                        r.type = ControllerRecordType::Rapid;
+                        r.targetMm = {current_x, current_y, r_abs};
+                        program.records.push_back(r);
+                        current_z = r_abs;
+                    }
+
+                    // 2. Rapid traverse to XY
+                    {
+                        ControllerRecord r;
+                        r.sourceLine = lineNumber;
+                        r.sourceText = line;
+                        r.modal = modal;
+                        r.type = ControllerRecordType::Rapid;
+                        r.targetMm = {repeat_x, repeat_y, current_z};
+                        program.records.push_back(r);
+                        current_x = repeat_x;
+                        current_y = repeat_y;
+                    }
+
+                    // 3. Rapid to R if not there
+                    if (current_z != r_abs) {
+                        ControllerRecord r;
+                        r.sourceLine = lineNumber;
+                        r.sourceText = line;
+                        r.modal = modal;
+                        r.type = ControllerRecordType::Rapid;
+                        r.targetMm = {current_x, current_y, r_abs};
+                        program.records.push_back(r);
+                        current_z = r_abs;
+                    }
+
+                    // 4. Feed to Z
+                    {
+                        ControllerRecord r;
+                        r.sourceLine = lineNumber;
+                        r.sourceText = line;
+                        r.modal = modal;
+                        r.type = ControllerRecordType::LinearFeed;
+                        r.targetMm = {current_x, current_y, z_abs};
+                        r.feedRateMmPerMin = modal.feedRateMmPerMin;
+                        program.records.push_back(r);
+                        current_z = z_abs;
+                    }
+
+                    // 5. Retract
+                    if (activeMotion == 81) {
+                        ControllerRecord r;
+                        r.sourceLine = lineNumber;
+                        r.sourceText = line;
+                        r.modal = modal;
+                        r.type = ControllerRecordType::Rapid;
+                        r.targetMm = {current_x, current_y, retract_z};
+                        program.records.push_back(r);
+                        current_z = retract_z;
+                    } else if (activeMotion == 84) {
+                        {
+                            ControllerRecord r;
+                            r.sourceLine = lineNumber;
+                            r.sourceText = line;
+                            r.modal = modal;
+                            r.type = ControllerRecordType::SpindleStop;
+                            program.records.push_back(r);
+                        }
+                        {
+                            ControllerRecord r;
+                            r.sourceLine = lineNumber;
+                            r.sourceText = line;
+                            r.modal = modal;
+                            r.type = ControllerRecordType::SetSpindle;
+                            r.spindleRpm = -modal.spindleRpm;
+                            program.records.push_back(r);
+                        }
+                        {
+                            ControllerRecord r;
+                            r.sourceLine = lineNumber;
+                            r.sourceText = line;
+                            r.modal = modal;
+                            r.type = ControllerRecordType::LinearFeed;
+                            r.targetMm = {current_x, current_y, retract_z};
+                            r.feedRateMmPerMin = modal.feedRateMmPerMin;
+                            program.records.push_back(r);
+                            current_z = retract_z;
+                        }
+                        {
+                            ControllerRecord r;
+                            r.sourceLine = lineNumber;
+                            r.sourceText = line;
+                            r.modal = modal;
+                            r.type = ControllerRecordType::SpindleStop;
+                            program.records.push_back(r);
+                        }
+                        {
+                            ControllerRecord r;
+                            r.sourceLine = lineNumber;
+                            r.sourceText = line;
+                            r.modal = modal;
+                            r.type = ControllerRecordType::SetSpindle;
+                            r.spindleRpm = modal.spindleRpm;
+                            program.records.push_back(r);
+                        }
+                    }
+                }
+
+                modal.positionMm = {current_x, current_y, current_z};
+                hasRecord = false;
+            } else {
+                switch (activeMotion) {
+                    case 0:
+                        record.type = ControllerRecordType::Rapid;
+                        break;
+                    case 1:
+                        record.type = ControllerRecordType::LinearFeed;
+                        break;
+                    case 2:
+                        record.type = ControllerRecordType::ArcCW;
+                        break;
+                    case 3:
+                        record.type = ControllerRecordType::ArcCCW;
+                        break;
+                    default:
+                        break;
+                }
+                if ((activeMotion == 2 || activeMotion == 3) && !hasArcOffset) {
+                    addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.arc.center", "Arc moves require I/J/K center offsets in v1");
+                }
+                if (activeMotion != 0 && modal.feedRateMmPerMin <= 0.0) {
+                    addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.feed.missing", "Feed motion requires a positive F word before execution");
+                }
+                record.modal = modal;
+                record.feedRateMmPerMin = modal.feedRateMmPerMin;
+                record.spindleRpm = modal.spindleRpm;
+                record.tool = modal.activeTool;
+                modal.positionMm = record.targetMm;
+                hasRecord = true;
             }
-            if ((activeMotion == 2 || activeMotion == 3) && !hasArcOffset) {
-                addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.arc.center", "Arc moves require I/J/K center offsets in v1");
-            }
-            if (activeMotion != 0 && modal.feedRateMmPerMin <= 0.0) {
-                addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.feed.missing", "Feed motion requires a positive F word before execution");
-            }
-            record.modal = modal;
-            record.feedRateMmPerMin = modal.feedRateMmPerMin;
-            record.spindleRpm = modal.spindleRpm;
-            record.tool = modal.activeTool;
-            modal.positionMm = record.targetMm;
-            hasRecord = true;
         } else if (feedUpdated || spindleUpdated || toolSelected) {
             record.modal = modal;
             record.feedRateMmPerMin = modal.feedRateMmPerMin;

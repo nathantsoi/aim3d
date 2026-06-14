@@ -17,16 +17,11 @@ OCCT_INSTALL_DIR ?= $(BUILD_DIR)/occt-install
 OCCT_BUILD_JOBS ?= 2
 OCCT_TOOLKITS ?= TKernel;TKMath;TKG2d;TKG3d;TKGeomBase;TKBRep;TKGeomAlgo;TKTopAlgo;TKPrim;TKShHealing;TKDE;TKXSBase;TKDESTEP;TKDEIGES;TKDECascade
 
-AIM3D_ENABLE_OCCT ?= 1
 CMAKE_ARGS ?= -DBUILD_TESTING=ON
-ifeq ($(AIM3D_ENABLE_OCCT),1)
 CMAKE_ARGS += -DAIM3D_ENABLE_OCCT=ON
-else
-CMAKE_ARGS += -DAIM3D_ENABLE_OCCT=OFF
-endif
 ifneq ($(AIM3D_OCCT_DIR),)
 CMAKE_ARGS += -DAIM3D_OCCT_DIR=$(AIM3D_OCCT_DIR)
-else ifeq ($(AIM3D_ENABLE_OCCT),1)
+else
 CMAKE_ARGS += -DAIM3D_OCCT_DIR=$(abspath $(OCCT_INSTALL_DIR)/lib/cmake/opencascade)
 endif
 
@@ -45,7 +40,6 @@ help:
 	@echo "Optional:"
 	@echo "  make build-occt     Build vendored OpenCASCADE into build/occt-install"
 	@echo "  make build-occt OCCT_BUILD_JOBS=1"
-	@echo "  make build AIM3D_ENABLE_OCCT=0"
 	@echo "  make build AIM3D_OCCT_DIR=/path/to/occt/cmake/package"
 
 build: deps build-core build-frontend build-tauri
@@ -100,11 +94,7 @@ build-occt:
 		-DUSE_RAPIDJSON=OFF
 	$(CMAKE) --build $(OCCT_BUILD_DIR) --target install --parallel $(OCCT_BUILD_JOBS)
 
-ifeq ($(AIM3D_ENABLE_OCCT),1)
 build-core: build-occt configure
-else
-build-core: configure
-endif
 	$(CMAKE) --build $(BUILD_DIR)
 
 build-frontend:

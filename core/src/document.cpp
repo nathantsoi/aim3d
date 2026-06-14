@@ -518,6 +518,10 @@ ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& toke
 
 } // namespace
 
+ViewportSolidMesh getSolidMeshForBody(const BRepBody& body, const std::string& token) {
+    return solidMeshForBody(body, token);
+}
+
 BRepBody::BRepBody(EntityId id, const std::string& name) : m_id(id), m_name(name) {
     m_vertices = {
         0.0f, 0.0f, 0.0f,

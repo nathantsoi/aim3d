@@ -7,6 +7,33 @@
 
 namespace aim3d {
 
+namespace {
+std::vector<std::string> tokenizeLine(const std::string& line) {
+    std::vector<std::string> words;
+    std::string currentWord;
+    for (char ch : line) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!currentWord.empty()) {
+                words.push_back(currentWord);
+                currentWord.clear();
+            }
+        } else if (std::isalpha(static_cast<unsigned char>(ch))) {
+            if (!currentWord.empty()) {
+                words.push_back(currentWord);
+                currentWord.clear();
+            }
+            currentWord.push_back(ch);
+        } else {
+            currentWord.push_back(ch);
+        }
+    }
+    if (!currentWord.empty()) {
+        words.push_back(currentWord);
+    }
+    return words;
+}
+} // namespace
+
 GCodeParser::GCodeParser() {}
 GCodeParser::~GCodeParser() {}
 
@@ -43,8 +70,7 @@ std::shared_ptr<CanonicalCamIR> GCodeParser::parse(const std::string& gcodeConte
 
         if (cleanedLine.empty()) continue;
 
-        std::stringstream lineStream(cleanedLine);
-        std::string word;
+        const auto parsedWords = tokenizeLine(cleanedLine);
         
         MotionCommand cmd;
         switch(m_state.activeModalGroup) {
@@ -68,7 +94,7 @@ std::shared_ptr<CanonicalCamIR> GCodeParser::parse(const std::string& gcodeConte
         bool hasFeed = false;
         bool isToolChange = false;
 
-        while (lineStream >> word) {
+        for (const auto& word : parsedWords) {
             if (word.empty()) continue;
             char cmdChar = std::toupper(word[0]);
             std::string valStr = word.substr(1);

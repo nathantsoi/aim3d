@@ -769,10 +769,10 @@ void test_c_api_document_buffers_and_tasks() {
     Aim3dBufferHandle* meshIndices = aim3d_document_mesh_indices(doc);
     assert(aim3d_buffer_dtype(meshPositions) == AIM3D_BUFFER_FLOAT32);
     assert(aim3d_buffer_components(meshPositions) == 3);
-    assert(aim3d_buffer_count(meshPositions) == 0);
+    assert(aim3d_buffer_count(meshPositions) == 24);
     assert(aim3d_buffer_dtype(meshIndices) == AIM3D_BUFFER_UINT32);
     assert(aim3d_buffer_components(meshIndices) == 3);
-    assert(aim3d_buffer_count(meshIndices) == 0);
+    assert(aim3d_buffer_count(meshIndices) == 36);
 
     Aim3dTaskHandle* task = aim3d_document_inspect_bodies_task(doc);
     assert(task != nullptr);
@@ -853,7 +853,7 @@ void test_controller_parser_modal_subset() {
 
 void test_controller_parser_rejects_unsupported_codes() {
     aim3d::LinuxCncCompatParser parser;
-    const auto program = parser.parse("G21\nG81 X0 Y0 Z-5 R1 F100\nM30\n");
+    const auto program = parser.parse("G21\nG85 X0 Y0 Z-5 R1 F100\nM30\n");
 
     assert(!program.valid());
     bool sawUnsupported = false;
@@ -863,6 +863,18 @@ void test_controller_parser_rejects_unsupported_codes() {
         }
     }
     assert(sawUnsupported);
+}
+
+void test_controller_parser_supports_canned_cycles() {
+    aim3d::LinuxCncCompatParser parser;
+    const auto program = parser.parse(
+        "G21 G90 G98\n"
+        "G0 X0 Y0 Z2\n"
+        "G81 X1 Y1 Z-1 R1 F100\n"
+        "G84 X1 Y2 Z0.5 R3\n"
+        "M30\n");
+    assert(program.valid());
+    assert(program.records.size() > 5);
 }
 
 void test_controller_planner_soft_limits_and_segments() {
@@ -961,6 +973,7 @@ int main() {
     test_controller_machine_profile_validation();
     test_controller_parser_modal_subset();
     test_controller_parser_rejects_unsupported_codes();
+    test_controller_parser_supports_canned_cycles();
     test_controller_planner_soft_limits_and_segments();
     test_spe_protocol_emulator_fail_closed();
     
