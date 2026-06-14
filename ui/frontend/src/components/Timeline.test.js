@@ -100,4 +100,25 @@ describe('Timeline model browser (schema v2)', () => {
 
     expect(wrapper.find('[data-testid="sketch-entity"]').exists()).toBe(false);
   });
+
+  it('toggles origin visibility when clicking the eye toggle', async () => {
+    const { wrapper, store } = mountPanel();
+    
+    const toggle = wrapper.find('[data-testid="origin-visibility-toggle"]');
+    expect(toggle.exists()).toBe(true);
+    expect(toggle.classes()).not.toContain('dimmed');
+    expect(store.viewportScene.gizmos.originVisible).toBe(true);
+
+    await toggle.trigger('click');
+    await flush();
+
+    expect(store.viewportScene.gizmos.originVisible).toBe(false);
+    expect(toggle.classes()).toContain('dimmed');
+
+    await toggle.trigger('click');
+    await flush();
+
+    expect(store.viewportScene.gizmos.originVisible).toBe(true);
+    expect(toggle.classes()).not.toContain('dimmed');
+  });
 });

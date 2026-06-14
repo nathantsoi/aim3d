@@ -9,7 +9,18 @@
 
       <div v-if="hasBrowser" class="browser-tree" data-testid="model-browser">
         <div class="browser-folder">
-          <span class="folder-label">Origin</span>
+          <div class="folder-header">
+            <span class="folder-label">Origin</span>
+            <button
+              class="visibility-toggle"
+              data-testid="origin-visibility-toggle"
+              :title="store.browser.origin?.visible ? 'Hide Origin' : 'Show Origin'"
+              :class="{ dimmed: !store.browser.origin?.visible }"
+              @click="store.toggleOriginVisibility()"
+            >
+              👁
+            </button>
+          </div>
           <div class="folder-children">
             <div
               v-for="plane in store.browser.origin.planes"
@@ -534,5 +545,32 @@ export default defineComponent({
   color: hsl(0, 85%, 68%);
   border-color: hsla(0, 85%, 65%, 0.4);
   background-color: hsla(0, 85%, 65%, 0.12);
+}
+
+.folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.visibility-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: hsl(200, 100%, 60%);
+  font-size: 0.85rem;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.visibility-toggle.dimmed {
+  color: hsl(220, 10%, 40%);
+  opacity: 0.5;
+}
+
+.visibility-toggle:hover {
+  color: hsl(200, 100%, 70%);
 }
 </style>

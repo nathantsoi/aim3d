@@ -122,6 +122,42 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
     }
   });
 
+  if (scene?.gizmos?.originVisible !== false && Array.isArray(scene?.gizmos?.originPlanes)) {
+    scene.gizmos.originPlanes.forEach((plane) => {
+      const positions = plane.positions ?? [];
+      const indices = plane.indices ?? [];
+      const entityId = plane.id;
+      const priority = -10;
+
+      for (let i = 0; i + 2 < indices.length; i += 3) {
+        const hit = intersectTriangle(
+          ray,
+          vertexAt(positions, indices[i]),
+          vertexAt(positions, indices[i + 1]),
+          vertexAt(positions, indices[i + 2])
+        );
+        if (!hit) continue;
+
+        if (
+          !best ||
+          hit.distance < best.distance - 1e-6 ||
+          (Math.abs(hit.distance - best.distance) <= 1e-6 && priority > best.priority)
+        ) {
+          best = {
+            entityId,
+            solidId: plane.id,
+            bodyId: null,
+            kind: 'Origin Plane',
+            priority,
+            distance: hit.distance,
+            position: hit.position,
+            snapCandidate: null
+          };
+        }
+      }
+    });
+  }
+
   return {
     hit: best,
     latencyMs: performance.now() - startedAt

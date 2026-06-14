@@ -6,6 +6,26 @@ import { useCoreStore } from './index';
 describe('core store action gateway', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    const store = useCoreStore();
+    store.$patch({
+      features: [
+        { id: 'feat_Extrude_1', type: 'Extrude', value: 10, isDirty: false, selectionToken: 'feat_Extrude_1_face_0' },
+        { id: 'feat_Fillet_1', type: 'Fillet', value: 2, isDirty: false, selectionToken: 'feat_Fillet_1_face_0' }
+      ],
+      setups: [
+        { id: 'setup_Main_1', workOffset: 'G54', isDirty: false, operationIds: ['op_Pocket_1', 'op_Contour_1'] }
+      ],
+      operations: [
+        { id: 'op_Pocket_1', type: 'Pocket', setupId: 'setup_Main_1', toolDiameter: 6, stepover: 2, isDirty: false, status: 'Ready' },
+        { id: 'op_Contour_1', type: 'Contour', setupId: 'setup_Main_1', toolDiameter: 6, stepover: 2, isDirty: false, status: 'Ready' }
+      ],
+      viewportScene: {
+        ...store.viewportScene,
+        solids: [{ sourceToken: 'feat_Extrude_1_face_0', id: 'solid_MainPocket_1' }],
+        toolpaths: [{ operationId: 'op_Pocket_1', id: 'toolpath_op_Pocket_1' }],
+        diagnostics: { ...store.viewportScene.diagnostics, triangleCount: 12, segmentCount: 8 }
+      }
+    });
   });
 
   it('dispatches feature edits as stable JSON actions', async () => {
@@ -155,12 +175,12 @@ describe('core store action gateway', () => {
     const store = useCoreStore();
     const initialSketchCount = store.browser.sketches.length;
 
+    store.toggleViewportGrid(); // Enable "Show grid" so sketch grid is visible
     store.beginSketchCreation();
     expect(store.pendingSketchCreation).toBeTruthy();
     expect(store.isSketchMode).toBe(false);
     expect(store.viewportScene.gizmos.sketchGrid).toBe(true);
     expect(store.viewportScene.gizmos.sketchGridFrame?.normal).toEqual([0, 0, 1]);
-    expect(store.viewportScene.camera.projection).toBe('orthographic');
 
     await store.confirmSketchCreation();
 
@@ -194,7 +214,13 @@ describe('core store action gateway', () => {
 
     expect(store.viewportScene.gizmos.sketchGrid).toBeFalsy();
 
+    // The sketch grid is gated on the viewport "Show grid" setting.
+    // With grid off, entering sketch mode should NOT show the sketch grid.
     store.enterSketchMode('feat_Sketch_1');
+    expect(store.viewportScene.gizmos.sketchGrid).toBe(false);
+
+    // Enable "Show grid" — now the sketch grid should appear.
+    store.toggleViewportGrid();
     expect(store.viewportScene.gizmos.sketchGrid).toBe(true);
 
     store.toggleSketchOption('sketchGrid');
@@ -208,7 +234,7 @@ describe('core store action gateway', () => {
     expect(store.viewportScene.gizmos.sketchGrid).toBe(false);
   });
 
-  it('switches the camera to an orthographic plane view and restores it', async () => {
+  it('does not change the camera when entering or leaving sketch mode', async () => {
     const store = useCoreStore();
     const original = { ...store.viewportScene.camera };
 
@@ -216,8 +242,9 @@ describe('core store action gateway', () => {
     const sketchId = store.browser.sketches.at(-1).id;
     store.enterSketchMode(sketchId);
     expect(store.activeWorkspaceTab).toBe('sketch');
-    expect(store.viewportScene.camera.projection).toBe('orthographic');
-    expect(store.viewportScene.camera.pitch).toBeCloseTo(Math.PI / 2, 5);
+    expect(store.viewportScene.camera.projection).toBe(original.projection);
+    expect(store.viewportScene.camera.yaw).toBe(original.yaw);
+    expect(store.viewportScene.camera.pitch).toBe(original.pitch);
     expect(store.viewportScene.gizmos.sketchGridFrame?.normal).toEqual([0, 0, 1]);
 
     store.finishSketch();
@@ -407,5 +434,20 @@ describe('core snapshot projection', () => {
 
     expect(store.selectedEntityId).toBeNull();
     expect(store.selectedEntity).toBeNull();
+  });
+
+  it('toggles origin visibility and syncs browser origin visible flag', () => {
+    const store = useCoreStore();
+
+    expect(store.viewportScene.gizmos.originVisible).toBe(true);
+    expect(store.browser.origin.visible).toBe(true);
+
+    store.toggleOriginVisibility();
+    expect(store.viewportScene.gizmos.originVisible).toBe(false);
+    expect(store.browser.origin.visible).toBe(false);
+
+    store.toggleOriginVisibility();
+    expect(store.viewportScene.gizmos.originVisible).toBe(true);
+    expect(store.browser.origin.visible).toBe(true);
   });
 });

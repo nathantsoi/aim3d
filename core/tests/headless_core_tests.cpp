@@ -719,11 +719,9 @@ void test_viewport_scene_has_renderable_buffers() {
     auto doc = app.createDocument();
 #if AIM3D_HAS_OCCT
     doc->importGeometry(write_box_fixture("viewport-scene-box.brep"));
-#endif
-
     const auto scene = doc->viewportScene();
     assert(!scene.solids.empty());
-    assert(!scene.toolpaths.empty());
+    assert(scene.toolpaths.empty());
     assert(scene.axes.size() == 3);
     assert(!scene.solids[0].positions.empty());
     assert(!scene.solids[0].indices.empty());
@@ -735,6 +733,14 @@ void test_viewport_scene_has_renderable_buffers() {
     assert(scene.solids[0].pickable.priority > 0);
     assert(scene.diagnostics.triangleCount == scene.solids[0].indices.size() / 3);
     assert(scene.diagnostics.segmentCount >= 3);
+#else
+    const auto scene = doc->viewportScene();
+    assert(scene.solids.empty());
+    assert(scene.toolpaths.empty());
+    assert(scene.axes.size() == 3);
+    assert(scene.diagnostics.triangleCount == 0);
+    assert(scene.diagnostics.segmentCount == 3);
+#endif
 }
 
 void test_c_api_document_buffers_and_tasks() {
@@ -763,10 +769,10 @@ void test_c_api_document_buffers_and_tasks() {
     Aim3dBufferHandle* meshIndices = aim3d_document_mesh_indices(doc);
     assert(aim3d_buffer_dtype(meshPositions) == AIM3D_BUFFER_FLOAT32);
     assert(aim3d_buffer_components(meshPositions) == 3);
-    assert(aim3d_buffer_count(meshPositions) > 0);
+    assert(aim3d_buffer_count(meshPositions) == 0);
     assert(aim3d_buffer_dtype(meshIndices) == AIM3D_BUFFER_UINT32);
     assert(aim3d_buffer_components(meshIndices) == 3);
-    assert(aim3d_buffer_count(meshIndices) > 0);
+    assert(aim3d_buffer_count(meshIndices) == 0);
 
     Aim3dTaskHandle* task = aim3d_document_inspect_bodies_task(doc);
     assert(task != nullptr);

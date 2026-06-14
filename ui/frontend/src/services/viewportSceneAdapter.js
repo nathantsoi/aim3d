@@ -188,6 +188,43 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     vertexOffset += Math.floor(positions.length / 3);
   });
 
+  if (scene?.gizmos?.originVisible !== false && Array.isArray(scene?.gizmos?.originPlanes)) {
+    scene.gizmos.originPlanes.forEach((plane) => {
+      const selected = plane.id === selectedEntityId;
+      const hovered = !selected && plane.id === hoverEntityId;
+      const color = selected
+        ? [SELECTED_SOLID_COLOR[0], SELECTED_SOLID_COLOR[1], SELECTED_SOLID_COLOR[2], 0.45]
+        : hovered
+          ? [HOVERED_SOLID_COLOR[0], HOVERED_SOLID_COLOR[1], HOVERED_SOLID_COLOR[2], 0.45]
+          : plane.color;
+
+      const planeItem = {
+        ...plane,
+        color,
+        renderMode: 'planeFill'
+      };
+
+      constructionVertexOffset += pushPlaneFill(
+        constructionVertices,
+        constructionIndices,
+        planeItem,
+        constructionVertexOffset
+      );
+
+      pickables.push({
+        solidId: plane.id,
+        bodyId: null,
+        entityId: plane.id,
+        kind: 'Origin Plane',
+        priority: -10,
+        snapPoints: [],
+        vertexOffset: 0,
+        indexStart: 0,
+        indexCount: 6
+      });
+    });
+  }
+
   construction.forEach((item) => {
     if (item.visible === false) return;
     if (isPlaneFillItem(item)) {
@@ -229,9 +266,11 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     if (item.visible === false || isPlaneFillItem(item)) return;
     pushSegmentPairs(lineVertices, item.points ?? [], item.color ?? [0.95, 0.85, 0.25, 1]);
   });
-  axes.forEach((axis) => {
-    pushSegmentPairs(lineVertices, axis.points ?? [], axis.color ?? [1, 1, 1, 1]);
-  });
+  if (scene?.gizmos?.originVisible !== false) {
+    axes.forEach((axis) => {
+      pushSegmentPairs(lineVertices, axis.points ?? [], axis.color ?? [1, 1, 1, 1]);
+    });
+  }
 
   const debug = scene?.gizmos?.debug;
   if (debug?.enabled) {

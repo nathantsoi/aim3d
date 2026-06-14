@@ -21,64 +21,68 @@ const identityTransform = [
 ];
 
 export const createDefaultViewportScene = () => ({
-  solids: [
-    {
-      id: 'solid_MainPocket_1',
-      bodyId: 2,
-      sourceToken: 'feat_Extrude_1_face_0',
-      pickable: {
-        entityId: 'feat_Extrude_1_face_0',
-        kind: 'B-rep Exact Face',
-        priority: 10,
-        snapPoints: [
-          { id: 'solid_MainPocket_1_center', kind: 'center', position: [0, 0, 0.35] }
-        ]
-      },
-      positions: [
-        -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
-        -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
-      ],
-      normals: [
-        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
-        0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1
-      ],
-      colors: [
-        0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1,
-        0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1
-      ],
-      indices: [
-        0, 1, 2, 0, 2, 3,
-        4, 6, 5, 4, 7, 6,
-        0, 4, 5, 0, 5, 1,
-        1, 5, 6, 1, 6, 2,
-        2, 6, 7, 2, 7, 3,
-        3, 7, 4, 3, 4, 0
-      ],
-      transform: identityTransform
-    }
-  ],
-  toolpaths: [
-    {
-      id: 'toolpath_op_Pocket_1',
-      operationId: 'op_Pocket_1',
-      status: 'Stale',
-      color: [1, 0.74, 0.18, 1],
-      points: [
-        -1.4, -0.8, 0.55,
-        -0.4, -0.8, 0.55,
-        -0.4, 0.1, 0.55,
-        0.8, 0.1, 0.55,
-        0.8, 0.8, 0.55,
-        1.4, 0.8, 0.55
-      ]
-    }
-  ],
+  solids: [],
+  toolpaths: [],
   construction: [],
   gizmos: {
     axes: [
       { id: 'axis_x', label: 'X', color: [0.95, 0.18, 0.2, 1], points: [0, 0, 0, 1.1, 0, 0] },
       { id: 'axis_y', label: 'Y', color: [0.2, 0.82, 0.28, 1], points: [0, 0, 0, 0, 1.1, 0] },
       { id: 'axis_z', label: 'Z', color: [0.28, 0.48, 1, 1], points: [0, 0, 0, 0, 0, 1.1] }
+    ],
+    originVisible: true,
+    originPlanes: [
+      {
+        id: 'origin_XY',
+        color: [0.6, 0.8, 0.2, 0.25],
+        positions: [
+          0, 0, 0,
+          0.5, 0, 0,
+          0.5, 0.5, 0,
+          0, 0.5, 0
+        ],
+        normals: [
+          0, 0, 1,
+          0, 0, 1,
+          0, 0, 1,
+          0, 0, 1
+        ],
+        indices: [0, 1, 2, 0, 2, 3]
+      },
+      {
+        id: 'origin_XZ',
+        color: [0.6, 0.3, 0.6, 0.25],
+        positions: [
+          0, 0, 0,
+          0.5, 0, 0,
+          0.5, 0, 0.5,
+          0, 0, 0.5
+        ],
+        normals: [
+          0, 1, 0,
+          0, 1, 0,
+          0, 1, 0,
+          0, 1, 0
+        ],
+        indices: [0, 1, 2, 0, 2, 3]
+      },
+      {
+        id: 'origin_YZ',
+        color: [0.2, 0.6, 0.6, 0.25],
+        positions: [
+          0, 0, 0,
+          0, 0.5, 0,
+          0, 0.5, 0.5,
+          0, 0, 0.5
+        ],
+        normals: [
+          1, 0, 0,
+          1, 0, 0,
+          1, 0, 0,
+          1, 0, 0
+        ],
+        indices: [0, 1, 2, 0, 2, 3]
+      }
     ],
     grid: false,
     workOrigin: [0, 0, 0],
@@ -103,8 +107,8 @@ export const createDefaultViewportScene = () => ({
     frameTimeMs: 0,
     fps: 0,
     drawCount: 0,
-    triangleCount: 12,
-    segmentCount: 8,
+    triangleCount: 0,
+    segmentCount: 3,
     lastPickLatencyMs: 0,
     hoverTargetId: null,
     snapCandidateId: null
@@ -147,81 +151,12 @@ export const createInitialCoreState = () => ({
     constructionGeometries: true,
     threeDSketch: false
   },
-  sketchConstraints: [
-    { id: 'con_h_1', type: 'Horizontal', glyph: '—', entities: 'Line 1' },
-    { id: 'con_v_1', type: 'Vertical', glyph: '|', entities: 'Line 4' },
-    { id: 'con_coin_1', type: 'Coincident', glyph: '◦', entities: 'P1, P3' },
-    { id: 'con_perp_1', type: 'Perpendicular', glyph: '⊾', entities: 'Line 1, Line 4' },
-    { id: 'con_par_1', type: 'Parallel', glyph: '∥', entities: 'Line 2, Line 4' },
-    { id: 'con_eq_1', type: 'Equal', glyph: '=', entities: 'Line 1, Line 3' }
-  ],
+  sketchConstraints: [],
   selectedEntityId: null,
   selectedEntity: null,
-  features: [
-    {
-      id: 'feat_Sketch_1',
-      type: 'Sketch',
-      label: 'Base sketch',
-      value: 0,
-      unit: 'mm',
-      isDirty: false,
-      selectionToken: 'feat_Sketch_1_face_0'
-    },
-    {
-      id: 'feat_Extrude_1',
-      type: 'Extrude',
-      label: 'Main pocket body',
-      value: 10,
-      unit: 'mm',
-      isDirty: false,
-      selectionToken: 'feat_Extrude_1_face_0'
-    },
-    {
-      id: 'feat_Fillet_1',
-      type: 'Fillet',
-      label: 'Top edge relief',
-      value: 2,
-      unit: 'mm',
-      isDirty: false,
-      selectionToken: 'feat_Fillet_1_face_0'
-    }
-  ],
-  setups: [
-    {
-      id: 'setup_Main_1',
-      name: 'Top setup',
-      workOffset: 'G54',
-      stockMode: 'fixed_box',
-      stockAllowance: 2,
-      units: 'mm',
-      isDirty: false,
-      operationIds: ['op_Pocket_1', 'op_Contour_1']
-    }
-  ],
-  operations: [
-    {
-      id: 'op_Pocket_1',
-      setupId: 'setup_Main_1',
-      type: 'Pocket2D',
-      name: 'Adaptive pocket',
-      toolDiameter: 6,
-      stepover: 2.4,
-      feedRate: 800,
-      status: 'Stale',
-      isDirty: false
-    },
-    {
-      id: 'op_Contour_1',
-      setupId: 'setup_Main_1',
-      type: 'Contour2D',
-      name: 'Finish contour',
-      toolDiameter: 3,
-      stepover: 1,
-      feedRate: 600,
-      status: 'Ready',
-      isDirty: false
-    }
-  ],
+  features: [],
+  setups: [],
+  operations: [],
   gcode: '; No code posted',
   isSimulating: false,
   simulationStats: { collisions: 0, materialRemoved: 0 },

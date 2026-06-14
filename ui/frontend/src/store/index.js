@@ -31,8 +31,7 @@ import {
   intersectRayWithSketchPlane,
   mapViewportPickToSketchPlane,
   planeFrameFromReference,
-  planeReferenceFromToken,
-  sketchCameraSettings
+  planeReferenceFromToken
 } from '../contracts/sketchPlane';
 
 export const useCoreStore = defineStore('core', {
@@ -126,9 +125,6 @@ export const useCoreStore = defineStore('core', {
         values: { plane: 'origin_XY' },
         activeFieldKey: 'plane'
       };
-      if (this.viewportScene?.camera && !this.preSketchCamera) {
-        this.preSketchCamera = { ...this.viewportScene.camera };
-      }
       this.syncSketchPlanePreview();
     },
 
@@ -146,13 +142,9 @@ export const useCoreStore = defineStore('core', {
     syncSketchPlanePreview() {
       if (!this.pendingSketchCreation || this.isSketchMode) return;
       if (!this.viewportScene?.gizmos) return;
-      this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+      this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid && this.viewportScene.gizmos.grid;
       const planeRef = planeReferenceFromToken(this.pendingSketchCreation.values.plane);
       this.viewportScene.gizmos.sketchGridFrame = planeFrameFromReference(planeRef, this.browser);
-      const camera = this.viewportScene.camera;
-      if (camera) {
-        Object.assign(camera, sketchCameraSettings(planeRef, this.browser));
-      }
     },
 
     cancelSketchCreation() {
@@ -160,16 +152,6 @@ export const useCoreStore = defineStore('core', {
       if (!this.isSketchMode && this.viewportScene?.gizmos) {
         this.viewportScene.gizmos.sketchGrid = false;
         delete this.viewportScene.gizmos.sketchGridFrame;
-      }
-      const camera = this.viewportScene?.camera;
-      if (!this.isSketchMode && this.preSketchCamera && camera) {
-        Object.assign(camera, this.preSketchCamera);
-        if (!('projection' in this.preSketchCamera)) {
-          camera.projection = 'perspective';
-        }
-        delete camera.sketchUp;
-        delete camera.orthoSize;
-        this.preSketchCamera = null;
       }
     },
 
@@ -224,16 +206,9 @@ export const useCoreStore = defineStore('core', {
       this.activeWorkspaceTab = 'sketch';
 
       const planeRef = this.activeSketchPlaneRef();
-      const camera = this.viewportScene?.camera;
-      if (camera) {
-        if (!this.preSketchCamera) {
-          this.preSketchCamera = { ...camera };
-        }
-        Object.assign(camera, sketchCameraSettings(planeRef, this.browser));
-      }
 
       if (this.viewportScene?.gizmos) {
-        this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+        this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid && this.viewportScene.gizmos.grid;
         this.viewportScene.gizmos.sketchGridFrame = planeFrameFromReference(planeRef, this.browser);
       }
       this.syncSketchViewportOverlay();
@@ -244,17 +219,6 @@ export const useCoreStore = defineStore('core', {
       this.isSketchMode = false;
       this.activeSketchId = null;
       this.activeWorkspaceTab = RIBBON_MODES.design.tabs[0]?.id ?? null;
-
-      const camera = this.viewportScene?.camera;
-      if (this.preSketchCamera && camera) {
-        Object.assign(camera, this.preSketchCamera);
-        if (!('projection' in this.preSketchCamera)) {
-          camera.projection = 'perspective';
-        }
-        delete camera.sketchUp;
-        delete camera.orthoSize;
-      }
-      this.preSketchCamera = null;
 
       if (this.viewportScene?.gizmos) {
         this.viewportScene.gizmos.sketchGrid = false;
@@ -420,6 +384,29 @@ export const useCoreStore = defineStore('core', {
         this.viewportScene.gizmos = { grid: false };
       }
       this.viewportScene.gizmos.grid = !this.viewportScene.gizmos.grid;
+      // When in sketch mode or sketch creation, keep the sketch grid in sync
+      // so disabling "Show grid" also hides the sketch plane grid.
+      if ((this.isSketchMode || this.pendingSketchCreation) && this.viewportScene.gizmos) {
+        this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid && this.viewportScene.gizmos.grid;
+      }
+    },
+
+    toggleOriginVisibility() {
+      if (!this.viewportScene) return;
+      if (!this.viewportScene.gizmos) {
+        this.viewportScene.gizmos = {};
+      }
+      if (this.viewportScene.gizmos.originVisible === undefined) {
+        this.viewportScene.gizmos.originVisible = true;
+      }
+      this.viewportScene.gizmos.originVisible = !this.viewportScene.gizmos.originVisible;
+      if (!this.browser) {
+        this.browser = { origin: { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true } };
+      }
+      if (!this.browser.origin) {
+        this.browser.origin = { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true };
+      }
+      this.browser.origin.visible = this.viewportScene.gizmos.originVisible;
     },
 
     toggleViewportDebugMode() {
@@ -463,7 +450,7 @@ export const useCoreStore = defineStore('core', {
       }
       // Keep the rendered grid in sync with the palette toggle while sketching.
       if (key === 'sketchGrid' && this.isSketchMode && this.viewportScene?.gizmos) {
-        this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid;
+        this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid && this.viewportScene.gizmos.grid;
       }
     },
 

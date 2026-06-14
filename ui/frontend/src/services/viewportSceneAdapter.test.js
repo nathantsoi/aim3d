@@ -2,9 +2,73 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultViewportScene } from '../contracts/coreState';
 import { adaptViewportScene, createSceneBufferKey } from './viewportSceneAdapter';
 
+const identityTransform = [
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1
+];
+
+const createTestViewportScene = () => {
+  const scene = createDefaultViewportScene();
+  scene.solids = [
+    {
+      id: 'solid_MainPocket_1',
+      bodyId: 2,
+      sourceToken: 'feat_Extrude_1_face_0',
+      pickable: {
+        entityId: 'feat_Extrude_1_face_0',
+        kind: 'B-rep Exact Face',
+        priority: 10,
+        snapPoints: [
+          { id: 'solid_MainPocket_1_center', kind: 'center', position: [0, 0, 0.35] }
+        ]
+      },
+      positions: [
+        -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
+        -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
+      ],
+      normals: [
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+        0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1
+      ],
+      colors: [
+        0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1,
+        0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1
+      ],
+      indices: [
+        0, 1, 2, 0, 2, 3,
+        4, 6, 5, 4, 7, 6,
+        0, 4, 5, 0, 5, 1,
+        1, 5, 6, 1, 6, 2,
+        2, 6, 7, 2, 7, 3,
+        3, 7, 4, 3, 4, 0
+      ],
+      transform: identityTransform
+    }
+  ];
+  scene.toolpaths = [
+    {
+      id: 'toolpath_op_Pocket_1',
+      operationId: 'op_Pocket_1',
+      status: 'Stale',
+      color: [1, 0.74, 0.18, 1],
+      points: [
+        -1.4, -0.8, 0.55,
+        -0.4, -0.8, 0.55,
+        -0.4, 0.1, 0.55,
+        0.8, 0.1, 0.55,
+        0.8, 0.8, 0.55,
+        1.4, 0.8, 0.55
+      ]
+    }
+  ];
+  return scene;
+};
+
 describe('viewport scene adapter', () => {
   it('creates typed draw buffers from the serialized scene contract', () => {
-    const scene = createDefaultViewportScene();
+    const scene = createTestViewportScene();
     const adapted = adaptViewportScene(scene);
 
     expect(adapted.solidVertices).toBeInstanceOf(Float32Array);
@@ -16,7 +80,7 @@ describe('viewport scene adapter', () => {
   });
 
   it('uses stable keys and changes buffers when selection highlight changes', () => {
-    const scene = createDefaultViewportScene();
+    const scene = createTestViewportScene();
     const baseKey = createSceneBufferKey(scene);
     const selectedKey = createSceneBufferKey(scene, 'feat_Extrude_1_face_0');
     const repeatedSelectedKey = createSceneBufferKey(scene, 'feat_Extrude_1_face_0');
@@ -111,20 +175,46 @@ describe('viewport scene adapter', () => {
   });
 
   it('preserves pickable metadata and creates separate hover highlight buffers', () => {
-    const scene = createDefaultViewportScene();
+    const scene = createTestViewportScene();
     const hoveredKey = createSceneBufferKey(scene, null, 'feat_Extrude_1_face_0');
     const selectedKey = createSceneBufferKey(scene, 'feat_Extrude_1_face_0');
     const hovered = adaptViewportScene(scene, null, 'feat_Extrude_1_face_0');
 
     expect(hoveredKey).not.toBe(selectedKey);
-    expect(hovered.pickables[0]).toMatchObject({
+    // Since default viewport scene now has 3 origin planes, the solid pickable is at index 3
+    expect(hovered.pickables[3]).toMatchObject({
       solidId: 'solid_MainPocket_1',
       bodyId: 2,
       entityId: 'feat_Extrude_1_face_0',
       kind: 'B-rep Exact Face',
       priority: 10
     });
-    expect(hovered.pickables[0].snapPoints[0].id).toBe('solid_MainPocket_1_center');
+    expect(hovered.pickables[3].snapPoints[0].id).toBe('solid_MainPocket_1_center');
     expect(Array.from(hovered.solidVertices.slice(6, 10))).toEqual([0.5, 0.949999988079071, 1, 1]);
+  });
+
+  it('renders origin planes when originVisible is true', () => {
+    const scene = createDefaultViewportScene();
+    scene.gizmos.originVisible = true;
+    const adapted = adaptViewportScene(scene);
+    
+    expect(adapted.constructionIndices.length).toBe(18); // 3 * 6
+    expect(adapted.constructionVertices.length).toBe(3 * 4 * 10);
+    expect(adapted.pickables.length).toBe(3);
+    expect(adapted.pickables[0]).toMatchObject({
+      solidId: 'origin_XY',
+      entityId: 'origin_XY',
+      kind: 'Origin Plane'
+    });
+  });
+
+  it('hides both axes and origin planes when originVisible is false', () => {
+    const scene = createDefaultViewportScene();
+    scene.gizmos.originVisible = false;
+    const adapted = adaptViewportScene(scene);
+    
+    expect(adapted.constructionIndices.length).toBe(0);
+    expect(adapted.constructionVertices.length).toBe(0);
+    expect(adapted.segmentCount).toBe(0);
   });
 });

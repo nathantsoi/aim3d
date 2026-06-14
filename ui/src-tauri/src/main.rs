@@ -228,59 +228,8 @@ fn delete_entity(state: &mut Value, target_kind: &str, target_id: &str) {
 
 fn default_viewport_scene() -> Value {
     json!({
-        "solids": [{
-            "id": "solid_MainPocket_1",
-            "bodyId": 2,
-            "sourceToken": "feat_Extrude_1_face_0",
-            "pickable": {
-                "entityId": "feat_Extrude_1_face_0",
-                "kind": "B-rep Exact Face",
-                "priority": 10,
-                "snapPoints": [
-                    { "id": "solid_MainPocket_1_center", "kind": "center", "position": [0, 0, 0.35] }
-                ]
-            },
-            "positions": [
-                -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
-                -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
-            ],
-            "normals": [
-                0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
-                0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1
-            ],
-            "colors": [
-                0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1,
-                0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1
-            ],
-            "indices": [
-                0, 1, 2, 0, 2, 3,
-                4, 6, 5, 4, 7, 6,
-                0, 4, 5, 0, 5, 1,
-                1, 5, 6, 1, 6, 2,
-                2, 6, 7, 2, 7, 3,
-                3, 7, 4, 3, 4, 0
-            ],
-            "transform": [
-                1, 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                0, 0, 0, 1
-            ]
-        }],
-        "toolpaths": [{
-            "id": "toolpath_op_Pocket_1",
-            "operationId": "op_Pocket_1",
-            "status": "Stale",
-            "color": [1, 0.74, 0.18, 1],
-            "points": [
-                -1.4, -0.8, 0.55,
-                -0.4, -0.8, 0.55,
-                -0.4, 0.1, 0.55,
-                0.8, 0.1, 0.55,
-                0.8, 0.8, 0.55,
-                1.4, 0.8, 0.55
-            ]
-        }],
+        "solids": [],
+        "toolpaths": [],
         "gizmos": {
             "axes": [
                 { "id": "axis_x", "label": "X", "color": [0.95, 0.18, 0.2, 1], "points": [0, 0, 0, 1.1, 0, 0] },
@@ -303,8 +252,8 @@ fn default_viewport_scene() -> Value {
             "frameTimeMs": 0,
             "fps": 0,
             "drawCount": 0,
-            "triangleCount": 12,
-            "segmentCount": 8,
+            "triangleCount": 0,
+            "segmentCount": 0,
             "lastPickLatencyMs": 0,
             "hoverTargetId": null,
             "snapCandidateId": null

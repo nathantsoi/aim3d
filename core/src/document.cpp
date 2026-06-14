@@ -807,11 +807,7 @@ ViewportScene Document::viewportScene() const {
         scene.solids.push_back(solidMeshForBody(*body, token));
     }
 
-    if (scene.solids.empty()) {
-        scene.solids.push_back(fallbackSolidMesh(0, "feat_Extrude_1_face_0"));
-    }
 
-    scene.toolpaths.push_back(fallbackToolpath());
     scene.axes = defaultAxes();
 
     for (const auto& con : m_construction) {
