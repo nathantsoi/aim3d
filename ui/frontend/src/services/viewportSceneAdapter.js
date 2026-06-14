@@ -225,6 +225,36 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     });
   }
 
+  if (scene?.gizmos?.showSketchPlaneIndicator && scene?.gizmos?.sketchGridFrame) {
+    const frame = scene.gizmos.sketchGridFrame;
+    const { origin, axisU, axisV, normal, extent = 5 } = frame;
+    const [ox, oy, oz] = origin;
+    const [ux, uy, uz] = axisU;
+    const [vx, vy, vz] = axisV;
+    const [nx, ny, nz] = normal ?? [0, 0, 1];
+
+    const corners = [
+      [ox - ux * extent - vx * extent, oy - uy * extent - vy * extent, oz - uz * extent - vz * extent],
+      [ox + ux * extent - vx * extent, oy + uy * extent - vy * extent, oz + uz * extent - vz * extent],
+      [ox + ux * extent + vx * extent, oy + uy * extent + vy * extent, oz + uz * extent + vz * extent],
+      [ox - ux * extent + vx * extent, oy - uy * extent + vy * extent, oz - uz * extent + vz * extent]
+    ];
+
+    const planeItem = {
+      positions: corners.flat(),
+      normals: [nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz],
+      color: [1, 0.55, 0.15, 0.35],
+      indices: [0, 1, 2, 0, 2, 3]
+    };
+
+    constructionVertexOffset += pushPlaneFill(
+      constructionVertices,
+      constructionIndices,
+      planeItem,
+      constructionVertexOffset
+    );
+  }
+
   construction.forEach((item) => {
     if (item.visible === false) return;
     if (isPlaneFillItem(item)) {

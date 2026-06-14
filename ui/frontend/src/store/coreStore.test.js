@@ -450,4 +450,17 @@ describe('core snapshot projection', () => {
     expect(store.viewportScene.gizmos.originVisible).toBe(true);
     expect(store.browser.origin.visible).toBe(true);
   });
+
+  it('defaults the sketch creation plane to the currently selected entity if valid', () => {
+    const store = useCoreStore();
+
+    store.selectedEntityId = 'origin_XZ';
+    store.beginSketchCreation();
+
+    expect(store.pendingSketchCreation.values.plane).toBe('origin_XZ');
+    expect(store.viewportScene.gizmos.showSketchPlaneIndicator).toBe(true);
+
+    store.cancelSketchCreation();
+    expect(store.viewportScene.gizmos.showSketchPlaneIndicator).toBeUndefined();
+  });
 });

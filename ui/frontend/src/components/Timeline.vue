@@ -25,8 +25,10 @@
             <div
               v-for="plane in store.browser.origin.planes"
               :key="plane"
-              class="browser-leaf"
+              class="browser-leaf clickable"
+              :class="{ selected: store.selectedEntityId === plane || (store.pendingSketchCreation && store.pendingSketchCreation.values.plane === plane) }"
               data-testid="origin-plane"
+              @click="onBrowserNodeClick(plane)"
             >{{ planeLabel(plane) }}</div>
           </div>
         </div>
@@ -37,8 +39,10 @@
             <div
               v-for="object in constructionGroups.planes"
               :key="object.id"
-              class="browser-leaf"
+              class="browser-leaf clickable"
+              :class="{ selected: store.selectedEntityId === object.id || (store.pendingSketchCreation && store.pendingSketchCreation.values.plane === object.id) }"
               data-testid="construction-node"
+              @click="onBrowserNodeClick(object.id)"
             >
               <span class="node-type">{{ object.label }}</span>
               <span class="leaf-kind">{{ object.kind }}</span>
@@ -52,8 +56,10 @@
             <div
               v-for="object in constructionGroups.axes"
               :key="object.id"
-              class="browser-leaf"
+              class="browser-leaf clickable"
+              :class="{ selected: store.selectedEntityId === object.id }"
               data-testid="construction-axis-node"
+              @click="onBrowserNodeClick(object.id)"
             >
               <span class="node-type">{{ object.label }}</span>
               <span class="leaf-kind">{{ object.kind }}</span>
@@ -67,8 +73,10 @@
             <div
               v-for="object in constructionGroups.points"
               :key="object.id"
-              class="browser-leaf"
+              class="browser-leaf clickable"
+              :class="{ selected: store.selectedEntityId === object.id }"
               data-testid="construction-point-node"
+              @click="onBrowserNodeClick(object.id)"
             >
               <span class="node-type">{{ object.label }}</span>
               <span class="leaf-kind">{{ object.kind }}</span>
@@ -112,8 +120,10 @@
             <div
               v-for="body in store.browser.bodies"
               :key="body.id"
-              class="browser-leaf"
+              class="browser-leaf clickable"
+              :class="{ selected: store.selectedEntityId === body.id }"
               data-testid="body-node"
+              @click="onBrowserNodeClick(body.id)"
             >{{ body.name }}</div>
           </div>
         </div>
@@ -248,14 +258,7 @@ export default defineComponent({
     });
 
     const hasBrowser = computed(() => {
-      const browser = store.browser;
-      if (!browser) return false;
-      return Boolean(
-        store.schemaVersion >= 2 ||
-        browser.construction?.length ||
-        browser.sketches?.length ||
-        browser.bodies?.length
-      );
+      return Boolean(store.browser);
     });
 
     const isExpanded = (sketchId) => !collapsedSketches.value[sketchId];
@@ -281,6 +284,18 @@ export default defineComponent({
       store.selectEntity(store.selectedEntityId === entityId ? null : entityId);
     };
 
+    const onBrowserNodeClick = (entityId) => {
+      if (store.pendingSketchCreation) {
+        store.applyViewportPickToSketch(entityId);
+        return;
+      }
+      if (store.pendingConstruction) {
+        store.applyViewportPickToConstruction(entityId);
+        return;
+      }
+      store.selectEntity(store.selectedEntityId === entityId ? null : entityId);
+    };
+
     const onDelete = (entityId, kind) => {
       store.deleteEntity(entityId, kind);
     };
@@ -298,6 +313,7 @@ export default defineComponent({
       planeLabel,
       planeText,
       onNodeClick,
+      onBrowserNodeClick,
       onDelete,
       onOpenSketch
     };
@@ -572,5 +588,18 @@ export default defineComponent({
 
 .visibility-toggle:hover {
   color: hsl(200, 100%, 70%);
+}
+
+.browser-leaf.clickable {
+  cursor: pointer;
+}
+
+.browser-leaf.clickable:hover {
+  background-color: hsl(220, 15%, 15%);
+}
+
+.browser-leaf.selected {
+  background-color: hsla(45, 100%, 55%, 0.1);
+  color: hsl(45, 100%, 75%);
 }
 </style>

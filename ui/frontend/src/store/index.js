@@ -120,9 +120,16 @@ export const useCoreStore = defineStore('core', {
 
     beginSketchCreation() {
       this.cancelConstructionCommand();
+      let defaultPlane = 'origin_XY';
+      if (this.selectedEntityId) {
+        const mapped = mapViewportPickToSketchPlane(this.selectedEntityId, this.browser);
+        if (mapped) {
+          defaultPlane = mapped;
+        }
+      }
       this.pendingSketchCreation = {
         label: 'Create Sketch',
-        values: { plane: 'origin_XY' },
+        values: { plane: defaultPlane },
         activeFieldKey: 'plane'
       };
       this.syncSketchPlanePreview();
@@ -145,13 +152,17 @@ export const useCoreStore = defineStore('core', {
       this.viewportScene.gizmos.sketchGrid = this.sketchPalette.sketchGrid && this.viewportScene.gizmos.grid;
       const planeRef = planeReferenceFromToken(this.pendingSketchCreation.values.plane);
       this.viewportScene.gizmos.sketchGridFrame = planeFrameFromReference(planeRef, this.browser);
+      this.viewportScene.gizmos.showSketchPlaneIndicator = true;
     },
 
     cancelSketchCreation() {
       this.pendingSketchCreation = null;
-      if (!this.isSketchMode && this.viewportScene?.gizmos) {
-        this.viewportScene.gizmos.sketchGrid = false;
-        delete this.viewportScene.gizmos.sketchGridFrame;
+      if (this.viewportScene?.gizmos) {
+        if (!this.isSketchMode) {
+          this.viewportScene.gizmos.sketchGrid = false;
+          delete this.viewportScene.gizmos.sketchGridFrame;
+        }
+        delete this.viewportScene.gizmos.showSketchPlaneIndicator;
       }
     },
 
@@ -159,6 +170,9 @@ export const useCoreStore = defineStore('core', {
       if (!this.pendingSketchCreation?.values?.plane) return;
       const plane = planeReferenceFromToken(this.pendingSketchCreation.values.plane);
       this.pendingSketchCreation = null;
+      if (this.viewportScene?.gizmos) {
+        delete this.viewportScene.gizmos.showSketchPlaneIndicator;
+      }
       await this.createSketch(plane);
       const sketchId = this.browser.sketches[this.browser.sketches.length - 1]?.id;
       if (sketchId) {

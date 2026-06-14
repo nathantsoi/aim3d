@@ -48,6 +48,20 @@ describe('Timeline tree deletion', () => {
 });
 
 describe('Timeline model browser (schema v2)', () => {
+  it('renders the model browser containing origin folder even on blank initial document (schema v1)', async () => {
+    const { wrapper, store } = mountPanel();
+
+    expect(store.schemaVersion).toBe(1);
+    expect(store.browser.construction).toHaveLength(0);
+    expect(store.browser.sketches).toHaveLength(0);
+    expect(store.browser.bodies).toHaveLength(0);
+
+    await flush();
+
+    expect(wrapper.find('[data-testid="model-browser"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="origin-plane"]')).toHaveLength(3);
+  });
+
   it('renders the origin, construction, sketch entities, and bodies tree', async () => {
     const { wrapper, store } = mountPanel();
 

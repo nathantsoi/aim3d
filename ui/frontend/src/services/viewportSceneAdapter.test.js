@@ -217,4 +217,19 @@ describe('viewport scene adapter', () => {
     expect(adapted.constructionVertices.length).toBe(0);
     expect(adapted.segmentCount).toBe(0);
   });
+
+  it('renders a translucent orange plane indicator when showSketchPlaneIndicator is true', () => {
+    const scene = createDefaultViewportScene();
+    scene.gizmos.showSketchPlaneIndicator = true;
+    scene.gizmos.sketchGridFrame = {
+      origin: [0, 0, 0],
+      axisU: [1, 0, 0],
+      axisV: [0, 1, 0],
+      normal: [0, 0, 1],
+      extent: 5
+    };
+    const adapted = adaptViewportScene(scene);
+    
+    expect(adapted.constructionIndices.length).toBe(24); // 3 * 6 + 1 * 6 = 24
+  });
 });
