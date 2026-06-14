@@ -50,6 +50,20 @@
       </section>
 
       <section class="section-container">
+        <h3>Tool Holder</h3>
+        <div class="property-card">
+          <label class="input-item">
+            <span>Diameter</span>
+            <input type="number" v-model.number="toolholderDiameter" step="1" min="1" />
+          </label>
+          <label class="input-item">
+            <span>Length</span>
+            <input type="number" v-model.number="toolholderLength" step="1" min="1" />
+          </label>
+        </div>
+      </section>
+
+      <section class="section-container">
         <div class="button-group">
           <button class="sim-btn" @click="cancel">Cancel</button>
           <button class="recompute-btn active" @click="confirm">Apply</button>
@@ -92,6 +106,14 @@ const toolLength = computed({
 const toolRadius = computed({
   get: () => store.toolRadius,
   set: (val) => store.updateToolSetup({ toolRadius: val })
+});
+const toolholderDiameter = computed({
+  get: () => store.toolholderDiameter,
+  set: (val) => store.updateToolSetup({ toolholderDiameter: val })
+});
+const toolholderLength = computed({
+  get: () => store.toolholderLength,
+  set: (val) => store.updateToolSetup({ toolholderLength: val })
 });
 
 function cancel() {

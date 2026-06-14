@@ -117,6 +117,14 @@
       <span>EXPORT DXF</span>
     </button>
 
+    <button
+      class="settings-btn"
+      data-testid="ribbon-settings"
+      @click.stop="store.beginProjectSettings()"
+    >
+      <span>SETTINGS</span>
+    </button>
+
     <div v-if="lastResult" class="ribbon-status" data-testid="ribbon-status">
       {{ lastResult }}
     </div>
@@ -636,6 +644,31 @@ export default defineComponent({
 
 .export-dxf-btn:hover {
   background-color: hsla(200, 70%, 42%, 0.28);
+}
+
+.settings-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 96px;
+  padding: 8px 14px;
+  background-color: hsla(220, 15%, 25%, 0.4);
+  border: 1px solid hsla(220, 15%, 35%, 0.8);
+  border-radius: 6px;
+  color: hsl(220, 10%, 80%);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-left: auto;
+}
+
+.settings-btn:hover {
+  background-color: hsla(220, 15%, 35%, 0.6);
 }
 
 .finish-check {

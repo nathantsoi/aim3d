@@ -161,10 +161,13 @@ export const createInitialCoreState = () => ({
   operations: [],
   gcode: '; No code posted',
   showGcodeEditor: false,
-  stockSize: { x: 100, y: 100, z: 25 },
-  toolDiameter: 6,
-  toolLength: 25,
+  units: 'inch',
+  stockSize: { x: 1, y: 1, z: 1, kind: 'cuboid' },
+  toolDiameter: 0.25,
+  toolLength: 1,
   toolRadius: 0,
+  toolholderDiameter: 2,
+  toolholderLength: 1,
   isSimulating: false,
   simulationStats: { collisions: 0, materialRemoved: 0 },
   viewportScene: createDefaultViewportScene()
@@ -352,33 +355,195 @@ export const syncViewportScene = (state) => {
     toolpath.status = readyOperationIds.has(toolpath.operationId) ? 'Ready' : 'Stale';
   });
 
+  // Dynamic Stock mesh for simulation
+  const hasStockFeature = state.features.some(f => f.type === 'Stock') || state.pendingStockSetup;
+  if (hasStockFeature) {
+    const x = state.pendingStockSetup?.x ?? state.stockSize?.x ?? 100;
+    const y = state.pendingStockSetup?.y ?? state.stockSize?.y ?? 100;
+    const z = state.pendingStockSetup?.z ?? state.stockSize?.z ?? 25;
+    const kind = state.pendingStockSetup?.kind ?? state.stockSize?.kind ?? 'cuboid';
+    
+    let stockPositions = [];
+    let stockNormals = [];
+    let stockIndices = [];
+    let stockColors = [];
+    
+    if (kind === 'cylinder') {
+      const radius = x / 2;
+      const h = z;
+      const segments = 32;
+      for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const cx = Math.cos(theta) * radius;
+        const cy = Math.sin(theta) * radius;
+        
+        // Bottom circle
+        stockPositions.push(cx, cy, 0);
+        stockNormals.push(0, 0, -1);
+        
+        // Top circle
+        stockPositions.push(cx, cy, h);
+        stockNormals.push(0, 0, 1);
+        
+        // Side bottom
+        stockPositions.push(cx, cy, 0);
+        stockNormals.push(cx, cy, 0);
+        
+        // Side top
+        stockPositions.push(cx, cy, h);
+        stockNormals.push(cx, cy, 0);
+        
+        const c = i % 2 === 0 ? 0.7 : 0.8;
+        stockColors.push(c, c, c, 0.7, c, c, c, 0.7, c, c, c, 0.7, c, c, c, 0.7);
+        
+        if (i < segments) {
+          const base = i * 4;
+          // Sides
+          stockIndices.push(base + 2, base + 6, base + 3);
+          stockIndices.push(base + 3, base + 6, base + 7);
+        }
+      }
+      
+      // Caps
+      const centerBottom = stockPositions.length / 3;
+      stockPositions.push(0, 0, 0);
+      stockNormals.push(0, 0, -1);
+      stockColors.push(0.7, 0.7, 0.7, 0.7);
+      
+      const centerTop = stockPositions.length / 3;
+      stockPositions.push(0, 0, h);
+      stockNormals.push(0, 0, 1);
+      stockColors.push(0.8, 0.8, 0.8, 0.7);
+      
+      for (let i = 0; i < segments; i++) {
+        stockIndices.push(centerBottom, i * 4, ((i + 1) % segments) * 4);
+        stockIndices.push(centerTop, ((i + 1) % segments) * 4 + 1, i * 4 + 1);
+      }
+    } else {
+      const w = x;
+      const d = y;
+      const h = z;
+      stockPositions = [
+          0, 0, 0,  w, 0, 0,  w, d, 0,  0, d, 0,
+          0, 0, h,  w, 0, h,  w, d, h,  0, d, h
+      ];
+      stockNormals = [
+          0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+          0,0,1,  0,0,1,  0,0,1,  0,0,1
+      ];
+      stockIndices = [
+          0, 2, 1, 0, 3, 2,
+          4, 5, 6, 4, 6, 7,
+          0, 1, 5, 0, 5, 4,
+          1, 2, 6, 1, 6, 5,
+          2, 3, 7, 2, 7, 6,
+          3, 0, 4, 3, 4, 7
+      ];
+      stockColors = Array(8 * 4).fill(0).map((_, i) => i % 4 === 3 ? 0.7 : 0.8);
+    }
+    
+    const stockSolid = {
+      id: 'solid_stock',
+      bodyId: 9998,
+      sourceToken: 'feat_Stock_1',
+      positions: stockPositions,
+      normals: stockNormals,
+      indices: stockIndices,
+      colors: stockColors,
+      transform: [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+      ],
+      pickable: {
+        entityId: 'feat_Stock_1',
+        kind: 'Stock',
+        priority: 5,
+        snapPoints: []
+      }
+    };
+    
+    state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_stock');
+    state.viewportScene.solids.push(stockSolid);
+  } else if (state.viewportScene?.solids) {
+    state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_stock');
+  }
+
   // Dynamic Toolhead mesh for simulation
   if (state.activeMode === 'simulation' || state.isSimulating) {
     const td = state.toolDiameter || 6;
     const tl = state.toolLength || 25;
-    const offsetZ = state.stockSize?.z || 25;
-    const toolPositions = [
-        -td/2, -td/2, offsetZ,  td/2, -td/2, offsetZ,  td/2, td/2, offsetZ,  -td/2, td/2, offsetZ,
-        -td/2, -td/2, offsetZ+tl,  td/2, -td/2, offsetZ+tl,  td/2, td/2, offsetZ+tl,  -td/2, td/2, offsetZ+tl
-    ];
-    const toolNormals = [
-        0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
-        0,0,1,  0,0,1,  0,0,1,  0,0,1
-    ];
-    const toolIndices = [
-        0, 2, 1, 0, 3, 2,
-        4, 5, 6, 4, 6, 7,
-        0, 1, 5, 0, 5, 4,
-        1, 2, 6, 1, 6, 5,
-        2, 3, 7, 2, 7, 6,
-        3, 0, 4, 3, 4, 7
-    ];
-    const toolColors = Array(8 * 4).fill(0).map((_, i) => {
-        if (i % 4 === 0) return 0.9; // R
-        if (i % 4 === 1) return 0.2; // G
-        if (i % 4 === 2) return 0.2; // B
-        return 0.9; // A
-    });
+    
+    const hd = state.toolholderDiameter || 20;
+    const hl = state.toolholderLength || 30;
+    
+    // Position tool at the top of the stock (plus a small clearance if desired, but 0 is fine for preview)
+    const offsetZ = (state.pendingStockSetup?.z ?? state.stockSize?.z ?? 25);
+    
+    const toolPositions = [];
+    const toolNormals = [];
+    const toolIndices = [];
+    const toolColors = [];
+    
+    const segments = 32;
+    
+    // Generate Cylinder function
+    const generateCylinder = (radius, z0, z1, r, g, b, a) => {
+      const startVertex = toolPositions.length / 3;
+      for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const cx = Math.cos(theta) * radius;
+        const cy = Math.sin(theta) * radius;
+        
+        // Bottom circle
+        toolPositions.push(cx, cy, z0);
+        toolNormals.push(0, 0, -1);
+        
+        // Top circle
+        toolPositions.push(cx, cy, z1);
+        toolNormals.push(0, 0, 1);
+        
+        // Side bottom
+        toolPositions.push(cx, cy, z0);
+        toolNormals.push(cx, cy, 0);
+        
+        // Side top
+        toolPositions.push(cx, cy, z1);
+        toolNormals.push(cx, cy, 0);
+        
+        const shade = i % 2 === 0 ? 1.0 : 0.9;
+        toolColors.push(r*shade, g*shade, b*shade, a, r*shade, g*shade, b*shade, a, r*shade, g*shade, b*shade, a, r*shade, g*shade, b*shade, a);
+        
+        if (i < segments) {
+          const base = startVertex + i * 4;
+          // Sides
+          toolIndices.push(base + 2, base + 6, base + 3);
+          toolIndices.push(base + 3, base + 6, base + 7);
+        }
+      }
+      
+      // Caps
+      const centerBottom = toolPositions.length / 3;
+      toolPositions.push(0, 0, z0);
+      toolNormals.push(0, 0, -1);
+      toolColors.push(r, g, b, a);
+      
+      const centerTop = toolPositions.length / 3;
+      toolPositions.push(0, 0, z1);
+      toolNormals.push(0, 0, 1);
+      toolColors.push(r, g, b, a);
+      
+      for (let i = 0; i < segments; i++) {
+        toolIndices.push(centerBottom, startVertex + i * 4, startVertex + ((i + 1) % segments) * 4);
+        toolIndices.push(centerTop, startVertex + ((i + 1) % segments) * 4 + 1, startVertex + i * 4 + 1);
+      }
+    };
+
+    // Tool body (red)
+    generateCylinder(td/2, offsetZ, offsetZ + tl, 0.9, 0.2, 0.2, 0.9);
+    // Tool holder (dark gray)
+    generateCylinder(hd/2, offsetZ + tl, offsetZ + tl + hl, 0.3, 0.3, 0.3, 1.0);
 
     const toolSolid = {
       id: 'solid_toolhead',
@@ -685,54 +850,8 @@ export const applyMockCoreAction = (currentState, action) => {
       label: label,
       visible: true
     });
-
-    // Generate basic box mesh for Stock
-    const w = x;
-    const d = y || x;
-    const h = z;
-    const positions = [
-        0, 0, 0,  w, 0, 0,  w, d, 0,  0, d, 0,
-        0, 0, h,  w, 0, h,  w, d, h,  0, d, h
-    ];
-    const normals = [
-        0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
-        0,0,1,  0,0,1,  0,0,1,  0,0,1
-    ];
-    const indices = [
-        0, 2, 1, 0, 3, 2,
-        4, 5, 6, 4, 6, 7,
-        0, 1, 5, 0, 5, 4,
-        1, 2, 6, 1, 6, 5,
-        2, 3, 7, 2, 7, 6,
-        3, 0, 4, 3, 4, 7
-    ];
-    const colors = Array(8 * 4).fill(0).map((_, i) => i % 4 === 3 ? 0.7 : 0.8); // slight transparency
-
-    const stockSolid = {
-      id: 'solid_stock',
-      bodyId: 9998,
-      sourceToken: stockId,
-      positions,
-      normals,
-      indices,
-      colors,
-      transform: [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ],
-      pickable: {
-        entityId: stockId,
-        kind: 'Stock',
-        priority: 5,
-        snapPoints: []
-      }
-    };
     
-    if (!state.viewportScene) state.viewportScene = createDefaultViewportScene();
-    state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_stock');
-    state.viewportScene.solids.push(stockSolid);
+    syncViewportScene(state);
     
     syncViewportScene(state);
   }

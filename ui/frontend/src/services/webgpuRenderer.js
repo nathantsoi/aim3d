@@ -148,7 +148,7 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       entryPoint: 'fragment_main',
       targets: [{ format }]
     },
-    primitive: { topology: 'triangle-list', cullMode: 'back' },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' }
   });
 

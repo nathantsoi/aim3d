@@ -45,6 +45,7 @@ export const useCoreStore = defineStore('core', {
     pendingSketchCreation: null,
     pendingSketchElement: null,
     pendingStockSetup: null,
+    pendingProjectSettings: false,
     isConnected: false
   }),
 
@@ -73,6 +74,7 @@ export const useCoreStore = defineStore('core', {
         pendingSketchCreation,
         pendingSketchElement,
         pendingStockSetup,
+        pendingProjectSettings,
         ...coreState
       } = this.$state;
       return coreState;
@@ -118,6 +120,7 @@ export const useCoreStore = defineStore('core', {
       this.cancelConstructionCommand();
       this.cancelSketchElement();
       this.cancelStockSetup();
+      this.cancelProjectSettings();
       this.activeMode = mode;
       this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
       if (mode !== 'simulation') {
@@ -137,6 +140,7 @@ export const useCoreStore = defineStore('core', {
     beginStockSetup() {
       this.cancelSketchCreation();
       this.cancelConstructionCommand();
+      this.cancelProjectSettings();
       this.pendingStockSetup = {
         kind: 'cuboid',
         x: this.stockSize.x,
@@ -148,12 +152,15 @@ export const useCoreStore = defineStore('core', {
     updateStockSetup(patch) {
       if (!this.pendingStockSetup) return;
       this.pendingStockSetup = { ...this.pendingStockSetup, ...patch };
+      syncViewportScene(this.$state);
     },
 
     updateToolSetup(patch) {
       if (patch.toolDiameter !== undefined) this.toolDiameter = patch.toolDiameter;
       if (patch.toolLength !== undefined) this.toolLength = patch.toolLength;
       if (patch.toolRadius !== undefined) this.toolRadius = patch.toolRadius;
+      if (patch.toolholderDiameter !== undefined) this.toolholderDiameter = patch.toolholderDiameter;
+      if (patch.toolholderLength !== undefined) this.toolholderLength = patch.toolholderLength;
       syncViewportScene(this.$state);
     },
 
@@ -187,6 +194,7 @@ export const useCoreStore = defineStore('core', {
 
     beginSketchCreation() {
       this.cancelConstructionCommand();
+      this.cancelProjectSettings();
       let defaultPlane = 'origin_XY';
       if (this.selectedEntityId) {
         const mapped = mapViewportPickToSketchPlane(this.selectedEntityId, this.browser);
@@ -587,6 +595,7 @@ export const useCoreStore = defineStore('core', {
 
     beginConstructionCommand(kind, label = '') {
       this.cancelSketchCreation();
+      this.cancelProjectSettings();
       const def = getConstructionCommandDef(kind);
       if (!def) return;
       this.pendingConstruction = {
@@ -697,7 +706,10 @@ export const useCoreStore = defineStore('core', {
       this.isSimulating = true;
       try {
         await loadControllerGcode(this.gcode);
-        const response = await simulateControllerProgram();
+        const response = await simulateControllerProgram({
+          stockSize: [this.stockSize.x, this.stockSize.y, this.stockSize.z],
+          tools: [{ id: 1, diameter_mm: this.toolDiameter, kind: 'flat' }]
+        });
         if (response.simulation && response.simulation.status === 'success') {
           const solid = response.simulation.solid;
           const colors = [];
@@ -742,6 +754,38 @@ export const useCoreStore = defineStore('core', {
       } finally {
         this.isSimulating = false;
       }
+    },
+
+    beginProjectSettings() {
+      this.cancelSketchCreation();
+      this.cancelConstructionCommand();
+      this.cancelStockSetup();
+      this.pendingProjectSettings = true;
+    },
+
+    cancelProjectSettings() {
+      this.pendingProjectSettings = false;
+    },
+
+    setUnits(mode) {
+      if (this.units === mode) return;
+      this.units = mode;
+      if (mode === 'inch') {
+        this.stockSize = { x: 1, y: 1, z: 1, kind: this.stockSize?.kind || 'cuboid' };
+        this.toolDiameter = 0.25;
+        this.toolLength = 1;
+        this.toolRadius = 0;
+        this.toolholderDiameter = 2;
+        this.toolholderLength = 1;
+      } else {
+        this.stockSize = { x: 25, y: 25, z: 25, kind: this.stockSize?.kind || 'cuboid' };
+        this.toolDiameter = 6;
+        this.toolLength = 20;
+        this.toolRadius = 0;
+        this.toolholderDiameter = 50;
+        this.toolholderLength = 25;
+      }
+      syncViewportScene(this.$state);
     }
   }
 });
