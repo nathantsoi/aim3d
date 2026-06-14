@@ -246,6 +246,14 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
                         hasMotionWord = true;
                         motionChanged = true;
                         break;
+                    case 80:
+                        if (hasMotionWord) {
+                            addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.modal.motion", "Multiple motion commands in one block");
+                        }
+                        activeMotion = -1;
+                        hasMotionWord = true;
+                        motionChanged = true;
+                        break;
                     case 17:
                         modal.plane = PlaneMode::XY;
                         record.type = ControllerRecordType::SetPlane;
@@ -392,7 +400,9 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
 
         if (hasCoord || hasArcOffset || motionChanged) {
             if (activeMotion < 0) {
-                addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.motion.missing", "Coordinate block has no active motion mode");
+                if (hasCoord || hasArcOffset) {
+                    addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.motion.missing", "Coordinate block has no active motion mode");
+                }
                 continue;
             }
             if (activeMotion == 81 || activeMotion == 84) {

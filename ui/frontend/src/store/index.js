@@ -46,7 +46,8 @@ export const useCoreStore = defineStore('core', {
     pendingSketchElement: null,
     pendingStockSetup: null,
     pendingProjectSettings: false,
-    isConnected: false
+    isConnected: false,
+    messages: []
   }),
 
   getters: {
@@ -63,6 +64,18 @@ export const useCoreStore = defineStore('core', {
   actions: {
     setConnected(status) {
       this.isConnected = status;
+    },
+
+    addMessage(text, type = 'info') {
+      this.messages.push({
+        id: Date.now() + Math.random(),
+        text,
+        type,
+        timestamp: new Date()
+      });
+      if (this.messages.length > 1000) {
+        this.messages.shift();
+      }
     },
 
     snapshotCoreState() {
@@ -743,12 +756,14 @@ export const useCoreStore = defineStore('core', {
             simulatedSolid
           ];
           this.simulationStats = { collisions: 0, materialRemoved: 1256.4 };
-
+          this.addMessage('Simulate complete', 'success');
         } else {
           this.simulationStats = { collisions: 0, materialRemoved: 0, error: response.simulation?.error || 'Simulation failed' };
+          this.addMessage(this.simulationStats.error, 'error');
         }
       } catch (err) {
         console.error('Failed to run G-code simulation, using mock stats:', err);
+        this.addMessage('Simulation failed (falling back to mock stats)', 'error');
         // Fall back to mock stats for Vitest/headless mode
         this.simulationStats = { collisions: 0, materialRemoved: 1420.5 };
       } finally {

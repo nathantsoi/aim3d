@@ -5,6 +5,7 @@ import Viewport from './components/Viewport.vue';
 import PropertyGrid from './components/PropertyGrid.vue';
 import RibbonToolbar from './components/RibbonToolbar.vue';
 import TimelineBar from './components/TimelineBar.vue';
+import ToastContainer from './components/ToastContainer.vue';
 import { useCoreStore } from './store';
 import { subscribeCoreSnapshots } from './services/coreSnapshotBridge';
 
@@ -16,7 +17,8 @@ const AppShell = defineComponent({
     return h('div', { style: 'display: contents;' }, [
       h(Timeline, { class: 'app-panel' }),
       h(Viewport),
-      h(PropertyGrid, { class: 'app-panel right' })
+      h(PropertyGrid, { class: 'app-panel right' }),
+      h(ToastContainer)
     ]);
   }
 });

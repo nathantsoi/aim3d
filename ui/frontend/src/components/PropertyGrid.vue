@@ -8,12 +8,18 @@
     <GCodeEditorPanel v-else-if="store.showGcodeEditor" />
     <SketchPalette v-else-if="store.isSketchMode" />
     <div v-else class="property-grid">
-    <div class="panel-header">
-      <h2>Properties & Operations</h2>
-      <span class="dispatch-state">{{ store.isDispatching ? 'Dispatching' : 'Idle' }}</span>
-    </div>
+      <div class="panel-tabs">
+        <button :class="['tab-btn', { active: activeTab === 'properties' }]" @click="activeTab = 'properties'">Properties</button>
+        <button :class="['tab-btn', { active: activeTab === 'debug' }]" @click="activeTab = 'debug'">Debug</button>
+      </div>
 
-    <section class="section-container">
+      <div v-if="activeTab === 'properties'" class="tab-content">
+        <div class="panel-header">
+          <h2>Properties & Operations</h2>
+          <span class="dispatch-state">{{ store.isDispatching ? 'Dispatching' : 'Idle' }}</span>
+        </div>
+
+        <section class="section-container">
       <h3>Active Selection</h3>
       <div v-if="store.selectedEntity" class="property-card">
         <div class="prop-row">
@@ -182,13 +188,19 @@
         </div>
       </div>
     </section>
-    </div>
   </div>
+
+  <div v-else-if="activeTab === 'debug'" class="tab-content debug-content">
+    <InteractiveTerminal />
+  </div>
+</div>
+</div>
 </template>
 
 <script>
-import { defineComponent } from 'vue';
+import { defineComponent, ref } from 'vue';
 import { useCoreStore } from '../store';
+import InteractiveTerminal from './InteractiveTerminal.vue';
 import SketchPalette from './SketchPalette.vue';
 import ConstructionCommandPanel from './ConstructionCommandPanel.vue';
 import SketchCreatePanel from './SketchCreatePanel.vue';
@@ -199,9 +211,10 @@ import GCodeEditorPanel from './GCodeEditorPanel.vue';
 
 export default defineComponent({
   name: 'PropertyGrid',
-  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel, StockSetupPanel, ProjectSettingsPanel, GCodeEditorPanel },
+  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel, StockSetupPanel, ProjectSettingsPanel, GCodeEditorPanel, InteractiveTerminal },
   setup() {
     const store = useCoreStore();
+    const activeTab = ref('properties');
     const parseNumber = (value) => Number.parseFloat(value);
 
     const onFeatureInput = (featureId, event) => {
@@ -218,6 +231,7 @@ export default defineComponent({
 
     return {
       store,
+      activeTab,
       parseNumber,
       onFeatureInput,
       onSetupField,
@@ -239,7 +253,49 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   gap: 20px;
+  flex: 1;
 }
+
+.panel-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid hsla(220, 15%, 25%, 0.4);
+  padding-bottom: 8px;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: hsl(220, 10%, 60%);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.tab-btn:hover {
+  background-color: hsla(220, 15%, 25%, 0.4);
+  color: hsl(220, 10%, 80%);
+}
+
+.tab-btn.active {
+  background-color: hsla(200, 100%, 50%, 0.15);
+  color: hsl(200, 100%, 65%);
+}
+
+.tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.debug-content {
+  height: 100%;
+}
+
 
 .panel-header {
   display: flex;

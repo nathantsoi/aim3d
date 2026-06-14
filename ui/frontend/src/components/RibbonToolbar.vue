@@ -125,9 +125,7 @@
       <span>SETTINGS</span>
     </button>
 
-    <div v-if="lastResult" class="ribbon-status" data-testid="ribbon-status">
-      {{ lastResult }}
-    </div>
+
   </div>
 </template>
 
@@ -155,7 +153,6 @@ export default defineComponent({
     const modeMenuOpen = ref(false);
     const openGroupId = ref(null);
     const openSubmenuId = ref(null);
-    const lastResult = ref('');
     const groupButtonRefs = ref({});
     const groupDropdownStyle = ref({});
 
@@ -243,11 +240,11 @@ export default defineComponent({
       switch (command.action) {
         case 'beginSketch':
           store.beginSketchCreation();
-          lastResult.value = 'Select sketch plane';
+          store.addMessage('Select sketch plane', 'info');
           return null;
         case 'beginSketchElement':
           store.beginSketchElement(command.sketchKind, command.label);
-          lastResult.value = `Define ${command.label}`;
+          store.addMessage(`Define ${command.label}`, 'info');
           return null;
         case 'solveSketch':
           return solveSketch2d();
@@ -285,7 +282,7 @@ export default defineComponent({
         if (!store.showGcodeEditor) {
           store.toggleGcodeEditor();
         }
-        lastResult.value = `Loaded ${file.name}`;
+        store.addMessage(`Loaded ${file.name}`, 'success');
       };
       input.click();
     };
@@ -302,12 +299,12 @@ export default defineComponent({
     const onExportDxf = async () => {
       const sketchId = store.activeSketchId;
       if (!sketchId) {
-        lastResult.value = 'No active sketch to export';
+        store.addMessage('No active sketch to export', 'error');
         return;
       }
       const invoke = tauriInvoke();
       if (!invoke) {
-        lastResult.value = 'DXF export requires Tauri runtime';
+        store.addMessage('DXF export requires Tauri runtime', 'error');
         return;
       }
       try {
@@ -316,9 +313,9 @@ export default defineComponent({
           sketchToken: sketchId,
           filePath
         });
-        lastResult.value = response?.message || `Exported to ${filePath}`;
+        store.addMessage(response?.message || `Exported to ${filePath}`, 'success');
       } catch (error) {
-        lastResult.value = `DXF export failed: ${error?.message ?? error}`;
+        store.addMessage(`DXF export failed: ${error?.message ?? error}`, 'error');
       }
     };
 
@@ -327,13 +324,13 @@ export default defineComponent({
 
       if (sub.action === 'beginConstruction') {
         store.beginConstructionCommand(sub.constructKind, sub.label);
-        lastResult.value = `Define ${sub.label}`;
+        store.addMessage(`Define ${sub.label}`, 'info');
         return;
       }
 
       if (sub.action === 'beginSketchElement') {
         store.beginSketchElement(sub.sketchKind, sub.label);
-        lastResult.value = `Define ${sub.label}`;
+        store.addMessage(`Define ${sub.label}`, 'info');
         return;
       }
 
@@ -361,9 +358,9 @@ export default defineComponent({
 
       try {
         const result = await pending;
-        lastResult.value = result?.message || `${command.label} complete`;
+        store.addMessage(result?.message || `${command.label} complete`, 'success');
       } catch (error) {
-        lastResult.value = `${command.label} failed: ${error?.message ?? error}`;
+        store.addMessage(`${command.label} failed: ${error?.message ?? error}`, 'error');
       }
     };
 
@@ -377,7 +374,6 @@ export default defineComponent({
       openGroup,
       groupDropdownStyle,
       setGroupButtonRef,
-      lastResult,
       activeModeLabel,
       tabs,
       groups,
@@ -586,16 +582,6 @@ export default defineComponent({
   font-style: italic;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.ribbon-status {
-  position: absolute;
-  bottom: 4px;
-  right: 16px;
-  font-size: 0.7rem;
-  color: hsl(145, 70%, 62%);
-  font-weight: 600;
-  pointer-events: none;
 }
 
 .finish-sketch-btn {
