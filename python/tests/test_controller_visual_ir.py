@@ -108,6 +108,8 @@ def test_lightweight_simulator_mesh(record_meshes):
 
     if record_meshes:
         import os
+        from pathlib import Path
         from mesh_utils import write_obj_mesh
-        os.makedirs("__records__", exist_ok=True)
-        write_obj_mesh("__records__/test_lightweight_simulator_mesh.obj", mesh)
+        records_dir = Path(__file__).resolve().parents[1] / "test_artifacts" / "obj"
+        records_dir.mkdir(parents=True, exist_ok=True)
+        write_obj_mesh(str(records_dir / "test_lightweight_simulator_mesh.obj"), mesh)

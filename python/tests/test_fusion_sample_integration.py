@@ -1,3 +1,4 @@
+import os
 import pytest
 
 import adsk
@@ -48,7 +49,12 @@ def _unsupported_failure_reason(message):
 
 
 @pytest.mark.parametrize("sample", _integration_params())
-def test_fusion_python_sample_imports_and_runs(sample, tmp_path):
+def test_fusion_python_sample_imports_and_runs(sample, tmp_path, monkeypatch):
+    # Prevent sample scripts from opening Finder/Explorer windows
+    monkeypatch.setattr(os, "system", lambda cmd: 0)
+    if hasattr(os, "startfile"):
+        monkeypatch.setattr(os, "startfile", lambda path: None)
+
     module = None
     ui = None
     try:

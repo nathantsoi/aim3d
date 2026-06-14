@@ -42,7 +42,7 @@ def _polyline_svg(points, path_points, path):
     return svg
 
 
-def test_native_mesh_and_toolpath_visual_artifacts():
+def test_native_mesh_and_toolpath_visual_artifacts(record_meshes):
     doc = aim.documents.create()
     body = doc.design.root_component.b_rep_bodies[0]
     vertices = np.asarray(body.get_vertices_tensor())
@@ -88,6 +88,17 @@ def test_native_mesh_and_toolpath_visual_artifacts():
     assert sidecar["vertex_count"] == 3
     assert sidecar["triangle_count"] > 0
     assert sidecar["toolpath_record_count"] == 4
+
+    if record_meshes:
+        import os
+        from mesh_utils import write_obj_mesh
+        records_dir = Path(__file__).resolve().parents[1] / "test_artifacts" / "obj"
+        records_dir.mkdir(parents=True, exist_ok=True)
+        mesh = {
+            "positions": positions.flatten().tolist(),
+            "indices": indices.flatten().tolist()
+        }
+        write_obj_mesh(str(records_dir / "test_native_mesh_and_toolpath_visual_artifacts.obj"), mesh)
 
 
 def test_native_async_document_and_cam_api(tmp_path):

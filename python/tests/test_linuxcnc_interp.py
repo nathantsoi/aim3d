@@ -111,10 +111,12 @@ def test_linuxcnc_ngc_file(ngc_path, expected_path, record_meshes):
         
     if record_meshes:
         import os
+        from pathlib import Path
         from mesh_utils import write_obj_mesh
-        os.makedirs("__records__", exist_ok=True)
+        records_dir = Path(__file__).resolve().parents[1] / "test_artifacts" / "obj"
+        records_dir.mkdir(parents=True, exist_ok=True)
         out_name = os.path.basename(ngc_path).replace(".ngc", "") + ".obj"
-        write_obj_mesh(os.path.join("__records__", out_name), mesh)
+        write_obj_mesh(str(records_dir / out_name), mesh)
         
     # 2. Verify G-code execution output via simulation mesh comparison
     expected_min_z = parse_expected_min_z(expected_path)

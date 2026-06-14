@@ -22,6 +22,7 @@ For detailed information on using, evaluating, and developing each part of the s
 *   **[CAM Engine](cam.md)**: Details on the Visual IR (Intermediate Representation) and toolpath generation algorithms.
 *   **[Simulation Engine](simulation.md)**: Details on the lightweight C++ 2.5D subtractive simulator and its API.
 *   **[Controller & Firmware](controller.md)**: Details on the Python REST daemon, Jetson SPE integration, and deploying to hardware.
+*   **[Testing Suite](testing.md)**: Details on running the C++, Python, and simulation tests, including the OBJ mesh recording features.
 
 ## Quick Start
 
