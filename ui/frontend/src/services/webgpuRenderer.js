@@ -1,4 +1,4 @@
-import { adaptViewportScene } from './viewportSceneAdapter';
+import { adaptViewportScene, createSceneBufferKey } from './viewportSceneAdapter';
 import { createViewProjectionMatrix } from './viewportProjection';
 
 const GPU_BUFFER_USAGE = globalThis.GPUBufferUsage ?? {
@@ -243,8 +243,10 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
   };
 
   const updateScene = (scene, selectedEntityId, hoverEntityId = null) => {
+    const nextKey = createSceneBufferKey(scene, selectedEntityId, hoverEntityId);
+    if (nextKey === lastKey) return;
+    
     const nextAdapted = adaptViewportScene(scene, selectedEntityId, hoverEntityId);
-    if (nextAdapted.key === lastKey) return;
     buffers.solidVertex?.destroy?.();
     buffers.solidIndex?.destroy?.();
     buffers.constructionVertex?.destroy?.();

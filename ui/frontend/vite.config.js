@@ -13,5 +13,10 @@ export default defineConfig({
     api: false,
     environment: 'jsdom',
     globals: true
+  },
+  build: {
+    rollupOptions: {
+      external: ['/aim3d_core.js']
+    }
   }
 });

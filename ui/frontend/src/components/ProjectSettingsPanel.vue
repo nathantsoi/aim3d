@@ -1,29 +1,35 @@
 <template>
-  <div class="panel-context">
-    <div class="property-grid">
-      <div class="panel-header">
-        <h2>Document Settings</h2>
+  <div class="settings-tab-container">
+    <section class="section-container">
+      <h3>General</h3>
+      <div class="property-card">
+        <label class="input-item">
+          <span>Active Units</span>
+          <select v-model="units">
+            <option value="mm">Millimeters (mm)</option>
+            <option value="inch">Inches (in)</option>
+          </select>
+        </label>
       </div>
-
-      <section class="section-container">
-        <h3>General</h3>
-        <div class="property-card">
-          <label class="input-item">
-            <span>Active Units</span>
-            <select v-model="units">
-              <option value="mm">Millimeters (mm)</option>
-              <option value="inch">Inches (in)</option>
-            </select>
-          </label>
-        </div>
-      </section>
-
-      <section class="section-container">
-        <div class="button-group">
-          <button class="sim-btn" @click="cancel">Close</button>
-        </div>
-      </section>
-    </div>
+    </section>
+    
+    <section class="section-container">
+      <h3>Machine Limits</h3>
+      <div class="property-card">
+        <label class="input-item">
+          <span>Max Velocity (mm/min)</span>
+          <input type="number" v-model="machineMaxVelocity" step="100" />
+        </label>
+        <label class="input-item">
+          <span>Max Acceleration (mm/sec²)</span>
+          <input type="number" v-model="machineMaxAccel" step="50" />
+        </label>
+        <label class="input-item">
+          <span>Segment Duration (sec)</span>
+          <input type="number" v-model="machineSegmentDuration" step="0.005" />
+        </label>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -38,37 +44,27 @@ const units = computed({
   set: (val) => store.setUnits(val)
 });
 
-function cancel() {
-  store.cancelProjectSettings();
-}
+const machineMaxVelocity = computed({
+  get: () => store.machineMaxVelocity,
+  set: (val) => store.updateMachineProfile({ machineMaxVelocity: Number(val) })
+});
+
+const machineMaxAccel = computed({
+  get: () => store.machineMaxAccel,
+  set: (val) => store.updateMachineProfile({ machineMaxAccel: Number(val) })
+});
+
+const machineSegmentDuration = computed({
+  get: () => store.machineSegmentDuration,
+  set: (val) => store.updateMachineProfile({ machineSegmentDuration: Number(val) })
+});
 </script>
 
 <style scoped>
-.panel-context {
+.settings-tab-container {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
-}
-
-.property-grid {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.panel-header h2 {
-  font-size: 1rem;
-  text-transform: uppercase;
-  color: hsl(220, 10%, 65%);
-  margin: 0;
-  font-weight: 700;
+  gap: 16px;
 }
 
 .section-container {
@@ -105,33 +101,12 @@ function cancel() {
   color: hsl(220, 10%, 65%);
 }
 
-select {
+select, input[type="number"] {
   background-color: hsl(220, 20%, 9%);
   border: 1px solid hsla(220, 15%, 30%, 0.8);
   border-radius: 6px;
   color: hsl(220, 10%, 90%);
   font: inherit;
   padding: 7px 8px;
-}
-
-.button-group {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-button {
-  border: 1px solid hsla(220, 15%, 25%, 0.6);
-  border-radius: 6px;
-  color: hsl(220, 10%, 80%);
-  cursor: pointer;
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 8px 16px;
-  background-color: transparent;
-}
-
-button:hover {
-  background-color: hsla(220, 15%, 20%, 0.6);
 }
 </style>

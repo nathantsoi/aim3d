@@ -1,7 +1,7 @@
 <template>
   <div class="timeline-panel">
     <div class="panel-header">
-      <h2>{{ store.activeMode === 'manufacture' ? 'Manufacture Browser' : 'Model Tree' }}</h2>
+      <h2>{{ store.activeMode === 'manufacture' ? 'Manufacture Browser' : store.activeMode === 'machine' ? 'Machine Browser' : 'Model Tree' }}</h2>
     </div>
 
     <section v-if="store.activeMode === 'design'" class="tree-container">
@@ -229,6 +229,57 @@
             >
               &times;
             </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="store.activeMode === 'machine'" class="tree-container">
+      <div class="tree-title">Machine Control</div>
+      <div v-if="hasBrowser" class="browser-tree" data-testid="machine-browser">
+        <!-- Origin folder -->
+        <div class="browser-folder">
+          <div class="folder-header">
+            <span class="folder-label">Origin</span>
+            <button
+              class="visibility-toggle"
+              data-testid="origin-visibility-toggle"
+              :title="store.browser.origin?.visible ? 'Hide Origin' : 'Show Origin'"
+              :class="{ dimmed: !store.browser.origin?.visible }"
+              @click="store.toggleOriginVisibility()"
+            >
+              👁
+            </button>
+          </div>
+          <div v-if="store.browser.origin?.visible" class="folder-children">
+            <div
+              v-for="plane in store.browser.origin.planes"
+              :key="plane"
+              class="browser-leaf"
+              data-testid="origin-plane"
+            >{{ planeLabel(plane) }}</div>
+          </div>
+        </div>
+
+        <!-- Stock folder -->
+        <div class="browser-folder">
+          <div class="folder-header">
+            <span class="folder-label">Stock</span>
+            <button
+              class="visibility-toggle"
+              data-testid="stock-visibility-toggle"
+              :title="store.showStock ? 'Hide Stock' : 'Show Stock'"
+              :class="{ dimmed: !store.showStock }"
+              @click="store.toggleStockVisibility()"
+            >
+              👁
+            </button>
+          </div>
+          <div v-if="store.showStock" class="folder-children">
+            <div class="browser-leaf">
+              <span>Size: {{ store.stockSize.x }} x {{ store.stockSize.y }} x {{ store.stockSize.z }}</span>
+              <span class="leaf-kind">{{ store.stockSize.kind }}</span>
+            </div>
           </div>
         </div>
       </div>

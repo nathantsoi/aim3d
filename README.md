@@ -88,6 +88,23 @@ make build AIM3D_ENABLE_OCCT=1 AIM3D_OCCT_DIR=/path/to/occt/cmake/package
 
 The Python package currently exposes the Tier 1/2 scaffold: modern `aim3d.*` modules and Fusion-compatible `adsk.*` facade modules. `taichi` is the intended simulation backend; the current scaffold has a fallback path so the simulation module can import in environments where Taichi is not installed.
 
+### Microcontroller (MCU) Firmware Setup (STM32)
+
+`aim3d` includes a bare-metal microcontroller controller firmware subproject under [mcu/stm32](mcu/stm32/) designed to run on STM32F103 boards (e.g., Blue Pill). It decodes G-code step segments sent over USART serial using a Klipper-style protocol and drives motor stepper outputs.
+
+To build the firmware:
+1. Ensure `arm-none-eabi-gcc` toolchain is installed and on your PATH.
+2. Run compile commands:
+   ```bash
+   cd mcu/stm32
+   make
+   ```
+3. To flash the compiled binary to the board over serial:
+   ```bash
+   make flash
+   ```
+   For detailed pin configurations, clock parameters, and hardware safety configurations (E-stop & limits), refer to the [mcu/stm32/README.md](mcu/stm32/README.md).
+
 ### Component Commands
 
 The Makefile also exposes component targets for debugging:

@@ -2,7 +2,8 @@
 #include "aim3d/application.hpp"
 #include "aim3d/cam_ir.hpp"
 #include "aim3d/document.hpp"
-#include "aim3d/lightweight_simulator.hpp"
+#include "aim3d/machine_simulator.hpp"
+#include <iostream>
 
 #include <atomic>
 #include <cstring>
@@ -597,7 +598,7 @@ void aim3d_buffer_release(Aim3dBufferHandle* handle) {
 }
 
 struct Aim3dSimulatorHandle {
-    aim3d::LightweightSimulator simulator;
+    aim3d::MachineSimulator simulator;
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<uint32_t> indices;
@@ -629,7 +630,13 @@ int aim3d_simulator_run(
     try {
         aim3d::LinuxCncCompatParser parser;
         const auto program = parser.parse(gcode);
-        if (!program.valid()) return 0;
+        if (!program.valid()) {
+            for (const auto& diag : program.diagnostics) {
+                std::cerr << "[C++ Parser Diagnostic] Line " << diag.line 
+                          << " (" << diag.code << "): " << diag.message << std::endl;
+            }
+            return 0;
+        }
         
         std::unordered_map<int, double> radii;
         std::unordered_map<int, bool> ballFlags;

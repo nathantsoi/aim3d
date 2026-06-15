@@ -6,7 +6,12 @@ const HOVERED_SOLID_COLOR = [0.5, 0.95, 1, 1];
 const STALE_TOOLPATH_COLOR = [0.92, 0.42, 0.22, 1];
 
 const fnv1a = (value) => {
-  const text = JSON.stringify(value);
+  const text = JSON.stringify(value, (k, v) => {
+    if (k === 'positions' || k === 'normals' || k === 'indices' || k === 'colors' || k === 'points') {
+      return `[Array ${v?.length}]`;
+    }
+    return v;
+  });
   let hash = 2166136261;
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i);
@@ -145,11 +150,22 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
   ];
   const axes = scene?.gizmos?.axes ?? [];
 
-  const solidVertices = [];
-  const solidIndices = [];
+  let totalSolidVertices = 0;
+  let totalSolidIndices = 0;
+  solids.forEach(solid => {
+    totalSolidVertices += ((solid.positions?.length ?? 0) / 3) * 10;
+    totalSolidIndices += solid.indices?.length ?? 0;
+  });
+
+  const solidVertices = new Float32Array(totalSolidVertices);
+  const solidIndices = new Uint32Array(totalSolidIndices);
+  
   const constructionVertices = [];
   const constructionIndices = [];
   const pickables = [];
+  
+  let vIndex = 0;
+  let iIndex = 0;
   let vertexOffset = 0;
   let constructionVertexOffset = 0;
 
@@ -173,17 +189,23 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
           : colors.length
             ? colors.slice(colorIndex, colorIndex + 4)
             : [0.2, 0.72, 1, 1];
-      solidVertices.push(
-        positions[i], positions[i + 1], positions[i + 2],
-        normal[0] ?? 0, normal[1] ?? 0, normal[2] ?? 1,
-        color[0] ?? 1, color[1] ?? 1, color[2] ?? 1, color[3] ?? 1
-      );
+      solidVertices[vIndex++] = positions[i];
+      solidVertices[vIndex++] = positions[i + 1];
+      solidVertices[vIndex++] = positions[i + 2];
+      solidVertices[vIndex++] = normal[0] ?? 0;
+      solidVertices[vIndex++] = normal[1] ?? 0;
+      solidVertices[vIndex++] = normal[2] ?? 1;
+      solidVertices[vIndex++] = color[0] ?? 1;
+      solidVertices[vIndex++] = color[1] ?? 1;
+      solidVertices[vIndex++] = color[2] ?? 1;
+      solidVertices[vIndex++] = color[3] ?? 1;
     }
 
-    (solid.indices ?? []).forEach((index) => {
-      solidIndices.push(index + vertexOffset);
-    });
-    pickable.indexCount = solidIndices.length - pickable.indexStart;
+    const indices = solid.indices ?? [];
+    for (let j = 0; j < indices.length; j++) {
+      solidIndices[iIndex++] = indices[j] + vertexOffset;
+    }
+    pickable.indexCount = iIndex - pickable.indexStart;
     pickables.push(pickable);
     vertexOffset += Math.floor(positions.length / 3);
   });
@@ -322,8 +344,8 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
 
   return {
     key: createSceneBufferKey(scene, selectedEntityId, hoverEntityId),
-    solidVertices: new Float32Array(solidVertices),
-    solidIndices: new Uint32Array(solidIndices),
+    solidVertices: solidVertices,
+    solidIndices: solidIndices,
     constructionVertices: new Float32Array(constructionVertices),
     constructionIndices: new Uint32Array(constructionIndices),
     lineVertices: new Float32Array(lineVertices),

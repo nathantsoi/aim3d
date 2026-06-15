@@ -3,13 +3,13 @@
     <SketchCreatePanel v-if="store.pendingSketchCreation" />
     <ConstructionCommandPanel v-else-if="store.pendingConstruction" />
     <SketchElementCommandPanel v-else-if="store.pendingSketchElement" />
-    <StockSetupPanel v-else-if="store.pendingStockSetup" />
-    <ProjectSettingsPanel v-else-if="store.pendingProjectSettings" />
-    <GCodeEditorPanel v-else-if="store.showGcodeEditor" />
     <SketchPalette v-else-if="store.isSketchMode" />
     <div v-else class="property-grid">
       <div class="panel-tabs">
         <button :class="['tab-btn', { active: activeTab === 'properties' }]" @click="activeTab = 'properties'">Properties</button>
+        <button :class="['tab-btn', { active: activeTab === 'setup' }]" @click="activeTab = 'setup'">Setup</button>
+        <button :class="['tab-btn', { active: activeTab === 'gcode' }]" @click="activeTab = 'gcode'">G-Code</button>
+        <button :class="['tab-btn', { active: activeTab === 'settings' }]" @click="activeTab = 'settings'">Settings</button>
         <button :class="['tab-btn', { active: activeTab === 'debug' }]" @click="activeTab = 'debug'">Debug</button>
       </div>
 
@@ -71,47 +71,6 @@
       </div>
     </section>
 
-    <section
-      v-for="setup in (store.activeMode === 'manufacture' ? store.setups : [])"
-      :key="setup.id"
-      class="section-container"
-    >
-      <h3>Setup Sheet</h3>
-      <div class="property-card">
-        <label class="input-item">
-          <span>Name</span>
-          <input
-            data-testid="setup-name"
-            type="text"
-            :value="setup.name"
-            @change="onSetupField(setup.id, 'name', $event.target.value)"
-          />
-        </label>
-        <label class="input-item">
-          <span>Work Offset</span>
-          <select
-            data-testid="setup-work-offset"
-            :value="setup.workOffset"
-            @change="onSetupField(setup.id, 'workOffset', $event.target.value)"
-          >
-            <option>G54</option>
-            <option>G55</option>
-            <option>G56</option>
-          </select>
-        </label>
-        <label class="input-item">
-          <span>Stock Allowance</span>
-          <input
-            data-testid="setup-stock-allowance"
-            type="number"
-            min="0"
-            step="0.1"
-            :value="setup.stockAllowance"
-            @change="onSetupField(setup.id, 'stockAllowance', parseNumber($event.target.value))"
-          />
-        </label>
-      </div>
-    </section>
 
     <section v-if="store.activeMode === 'manufacture'" class="section-container">
       <h3>CAM Operations</h3>
@@ -163,7 +122,7 @@
             <button
               class="sim-btn"
               :disabled="operation.status !== 'Ready' || store.isSimulating"
-              @click="store.executeSimulation"
+              @click="store.startSimulation"
             >
               {{ store.isSimulating ? 'Simulating...' : 'SDF Simulate' }}
             </button>
@@ -188,17 +147,139 @@
         </div>
       </div>
     </section>
-  </div>
 
-  <div v-else-if="activeTab === 'debug'" class="tab-content debug-content">
-    <InteractiveTerminal />
+    <JogPanel v-if="store.activeMode === 'machine'" />
+    </div>
+
+    <div v-else-if="activeTab === 'setup'" class="tab-content">
+      <section
+        v-for="setup in store.setups"
+        :key="setup.id"
+        class="section-container"
+      >
+        <h3>CAM Setup Sheet</h3>
+        <div class="property-card">
+          <label class="input-item">
+            <span>Name</span>
+            <input
+              data-testid="setup-name"
+              type="text"
+              :value="setup.name"
+              @change="onSetupField(setup.id, 'name', $event.target.value)"
+            />
+          </label>
+          <label class="input-item">
+            <span>Work Offset</span>
+            <select
+              data-testid="setup-work-offset"
+              :value="setup.workOffset"
+              @change="onSetupField(setup.id, 'workOffset', $event.target.value)"
+            >
+              <option>G54</option>
+              <option>G55</option>
+              <option>G56</option>
+            </select>
+          </label>
+          <label class="input-item">
+            <span>Stock Allowance</span>
+            <input
+              data-testid="setup-stock-allowance"
+              type="number"
+              min="0"
+              step="0.1"
+              :value="setup.stockAllowance"
+              @change="onSetupField(setup.id, 'stockAllowance', parseNumber($event.target.value))"
+            />
+          </label>
+        </div>
+      </section>
+
+      <StockSetupPanel />
+    </div>
+
+    <div v-else-if="activeTab === 'gcode'" class="tab-content">
+      <GCodeEditorPanel />
+    </div>
+
+    <div v-else-if="activeTab === 'settings'" class="tab-content">
+      <ProjectSettingsPanel />
+    </div>
+
+    <div v-else-if="activeTab === 'debug'" class="tab-content debug-content">
+      <InteractiveTerminal />
+    </div>
+</div>
+
+<!-- G54 Origin Setup Modal -->
+<div v-if="store.showG54Modal" class="modal-overlay">
+  <div class="modal-card">
+    <h3>Set G54 Work Origin Offsets</h3>
+    <p class="modal-desc">Set the translation offset from the physical machine's home coordinates to the G54 workspace origin.</p>
+    <div class="modal-fields">
+      <label class="input-item">
+        <span>X Offset (mm)</span>
+        <input type="number" step="0.001" v-model="g54X" />
+      </label>
+      <label class="input-item">
+        <span>Y Offset (mm)</span>
+        <input type="number" step="0.001" v-model="g54Y" />
+      </label>
+      <label class="input-item">
+        <span>Z Offset (mm)</span>
+        <input type="number" step="0.001" v-model="g54Z" />
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="cancel-btn" @click="store.showG54Modal = false">Cancel</button>
+      <button class="confirm-btn" @click="store.setG54Origin(g54X, g54Y, g54Z)">Set Origin</button>
+    </div>
   </div>
 </div>
+
+<!-- Tool Table Modal -->
+<div v-if="store.showToolTableModal" class="modal-overlay">
+  <div class="modal-card tool-table-card">
+    <h3>Tool Offset Table</h3>
+    <p class="modal-desc">Configure tool length Z offsets. These are applied in the WASM core upon tool change commands (e.g. T1 M6).</p>
+    
+    <table class="offsets-table">
+      <thead>
+        <tr>
+          <th>Tool ID</th>
+          <th>Radius (mm)</th>
+          <th>Type</th>
+          <th>Z Offset (mm)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="t in toolsList" :key="t.id">
+          <td>T{{ t.id }}</td>
+          <td>{{ t.radius }}</td>
+          <td>{{ t.type }}</td>
+          <td>
+            <input 
+              type="number" 
+              step="0.01" 
+              :value="store.toolOffsets[t.id] || 0.0" 
+              @input="onToolOffsetInput(t.id, $event)" 
+              class="table-input"
+            />
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <div class="modal-actions">
+      <button class="confirm-btn" @click="store.showToolTableModal = false">Close</button>
+    </div>
+  </div>
+</div>
+
 </div>
 </template>
 
 <script>
-import { defineComponent, ref } from 'vue';
+import { defineComponent, ref, computed } from 'vue';
 import { useCoreStore } from '../store';
 import InteractiveTerminal from './InteractiveTerminal.vue';
 import SketchPalette from './SketchPalette.vue';
@@ -208,14 +289,30 @@ import SketchElementCommandPanel from './SketchElementCommandPanel.vue';
 import StockSetupPanel from './StockSetupPanel.vue';
 import ProjectSettingsPanel from './ProjectSettingsPanel.vue';
 import GCodeEditorPanel from './GCodeEditorPanel.vue';
+import JogPanel from './JogPanel.vue';
 
 export default defineComponent({
   name: 'PropertyGrid',
-  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel, StockSetupPanel, ProjectSettingsPanel, GCodeEditorPanel, InteractiveTerminal },
+  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel, StockSetupPanel, ProjectSettingsPanel, GCodeEditorPanel, InteractiveTerminal, JogPanel },
   setup() {
     const store = useCoreStore();
-    const activeTab = ref('properties');
+    const activeTab = computed({
+      get: () => store.rightPanelTab || 'properties',
+      set: (val) => store.setRightPanelTab(val)
+    });
     const parseNumber = (value) => Number.parseFloat(value);
+
+    // Modal data refs
+    const g54X = ref(0.0);
+    const g54Y = ref(0.0);
+    const g54Z = ref(0.0);
+
+    const toolsList = ref([
+      { id: 1, radius: 3.0, type: 'Flat Endmill' },
+      { id: 2, radius: 1.5, type: 'Ball Endmill' },
+      { id: 3, radius: 5.0, type: 'Face Mill' },
+      { id: 4, radius: 2.0, type: 'Drill Bit' }
+    ]);
 
     const onFeatureInput = (featureId, event) => {
       store.updateFeatureParameter(featureId, parseNumber(event.target.value));
@@ -229,13 +326,22 @@ export default defineComponent({
       store.updateOperationField(operationId, path, value);
     };
 
+    const onToolOffsetInput = (toolId, event) => {
+      store.setToolOffset(toolId, parseNumber(event.target.value) || 0.0);
+    };
+
     return {
       store,
       activeTab,
       parseNumber,
+      g54X,
+      g54Y,
+      g54Z,
+      toolsList,
       onFeatureInput,
       onSetupField,
-      onOperationField
+      onOperationField,
+      onToolOffsetInput
     };
   }
 });
@@ -261,6 +367,12 @@ export default defineComponent({
   gap: 8px;
   border-bottom: 1px solid hsla(220, 15%, 25%, 0.4);
   padding-bottom: 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+.panel-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab-btn {
@@ -268,6 +380,7 @@ export default defineComponent({
   border: none;
   color: hsl(220, 10%, 60%);
   font-size: 0.85rem;
+  flex-shrink: 0;
   font-weight: 600;
   cursor: pointer;
   padding: 4px 8px;
@@ -494,5 +607,127 @@ button:disabled {
 
 .text-success {
   color: hsl(145, 70%, 58%);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(10, 10, 14, 0.7);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.modal-card {
+  background-color: hsl(220, 15%, 13%);
+  border: 1px solid hsla(220, 15%, 25%, 0.8);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 450px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: modalFadeIn 0.2s ease-out;
+}
+
+.tool-table-card {
+  max-width: 600px;
+}
+
+.modal-card h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: hsl(200, 100%, 65%);
+}
+
+.modal-desc {
+  margin: 0;
+  font-size: 0.8rem;
+  color: hsl(220, 10%, 65%);
+  line-height: 1.4;
+}
+
+.modal-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.cancel-btn {
+  background-color: transparent;
+  border-color: hsla(220, 15%, 35%, 0.6);
+}
+
+.cancel-btn:hover {
+  background-color: hsla(220, 15%, 35%, 0.15);
+}
+
+.confirm-btn {
+  background-color: hsla(200, 100%, 50%, 0.18);
+  border-color: hsl(200, 100%, 50%);
+  color: hsl(200, 100%, 70%);
+}
+
+.confirm-btn:hover {
+  background-color: hsla(200, 100%, 50%, 0.3);
+}
+
+.offsets-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin: 8px 0;
+}
+
+.offsets-table th, 
+.offsets-table td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid hsla(220, 15%, 25%, 0.4);
+}
+
+.offsets-table th {
+  color: hsl(220, 10%, 60%);
+  font-weight: 700;
+}
+
+.offsets-table td {
+  color: hsl(220, 10%, 85%);
+}
+
+.table-input {
+  width: 80px;
+  padding: 4px 6px;
+  font-size: 0.8rem;
+  background-color: hsl(220, 20%, 9%);
+  border: 1px solid hsla(220, 15%, 25%, 0.8);
+  border-radius: 4px;
+  color: hsl(220, 10%, 90%);
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 </style>

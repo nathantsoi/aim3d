@@ -76,12 +76,23 @@
     /* Main Scaffold Grid */
     #app {
       display: grid;
-      grid-template-columns: 280px 1fr 340px;
+      grid-template-columns: var(--left-panel-width, 280px) 4px 1fr 4px var(--right-panel-width, 340px);
       grid-template-rows: 100%;
       flex: 1;
       min-height: 0;
       overflow: hidden;
       position: relative;
+    }
+
+    .resizer {
+      background-color: transparent;
+      cursor: col-resize;
+      z-index: 10;
+      transition: background-color 0.15s;
+    }
+
+    .resizer:hover, .resizer.dragging {
+      background-color: var(--accent);
     }
 
     /* Bottom bar holds its height and never gets squeezed by the grid */
@@ -124,10 +135,16 @@
       <!-- Vue will inject content here -->
     </div>
 
+    <!-- Left Resizer -->
+    <div class="resizer" id="left-resizer"></div>
+
     <!-- Center: WebGPU Viewport (Track B2) -->
     <div style="position: relative; width: 100%; height: 100%;" id="viewport-panel">
       <!-- Vue will inject content here -->
     </div>
+
+    <!-- Right Resizer -->
+    <div class="resizer" id="right-resizer"></div>
 
     <!-- Right Sidebar: Property Panel (Track B1) & Simulation Control -->
     <div class="app-panel right" id="property-panel">
@@ -146,6 +163,56 @@
     </div>
   </div>
 
+  <script src="/aim3d_core.js"></script>
   <script type="module" src="./src/main.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const app = document.getElementById('app');
+      const leftResizer = document.getElementById('left-resizer');
+      const rightResizer = document.getElementById('right-resizer');
+
+      let isDraggingLeft = false;
+      let isDraggingRight = false;
+
+      leftResizer.addEventListener('mousedown', (e) => {
+        isDraggingLeft = true;
+        leftResizer.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+      });
+
+      rightResizer.addEventListener('mousedown', (e) => {
+        isDraggingRight = true;
+        rightResizer.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (isDraggingLeft) {
+          const newWidth = Math.max(150, Math.min(500, e.clientX));
+          app.style.setProperty('--left-panel-width', `${newWidth}px`);
+          window.dispatchEvent(new Event('resize'));
+        } else if (isDraggingRight) {
+          const newWidth = Math.max(200, Math.min(600, window.innerWidth - e.clientX));
+          app.style.setProperty('--right-panel-width', `${newWidth}px`);
+          window.dispatchEvent(new Event('resize'));
+        }
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (isDraggingLeft) {
+          isDraggingLeft = false;
+          leftResizer.classList.remove('dragging');
+        }
+        if (isDraggingRight) {
+          isDraggingRight = false;
+          rightResizer.classList.remove('dragging');
+        }
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      });
+    });
+  </script>
 </body>
 </html>

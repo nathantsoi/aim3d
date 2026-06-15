@@ -251,7 +251,7 @@ export default defineComponent({
         case 'generateToolpath':
           return generateToolpath(command.operationId ?? `op_${command.id}`);
         case 'runSimulation':
-          return store.executeSimulation();
+          return store.startSimulation();
         case 'postProcess':
           return postProcess(store.activeSetup?.id ?? 'setup_Main_1');
         case 'recompute':
@@ -264,6 +264,15 @@ export default defineComponent({
           return null;
         case 'loadGcodeFile':
           onLoadGcodeFile();
+          return null;
+        case 'togglePhysicalMode':
+          store.togglePhysicalMode();
+          return null;
+        case 'showG54Dialog':
+          store.showG54Dialog();
+          return null;
+        case 'showToolTable':
+          store.showToolTable();
           return null;
         default:
           return null;

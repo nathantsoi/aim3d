@@ -105,12 +105,15 @@
         </div>
       </div>
     </div>
+
+    <SimulationPlaybackPanel />
   </div>
 </template>
 
 <script>
 import { computed, defineComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useCoreStore } from '../store';
+import SimulationPlaybackPanel from './SimulationPlaybackPanel.vue';
 import { createWebGpuViewportRenderer } from '../services/webgpuRenderer';
 import { createCameraRay, pickViewportEntity } from '../services/viewportPicking';
 import { overviewCamera } from '../services/viewportDebugGizmos';
@@ -135,6 +138,9 @@ const ORBIT_GESTURE_GAP_MS = 180;
 
 export default defineComponent({
   name: 'Viewport',
+  components: {
+    SimulationPlaybackPanel
+  },
   setup() {
     const canvas3D = ref(null);
     const debugCanvas = ref(null);
@@ -472,8 +478,7 @@ export default defineComponent({
       () => [store.viewportScene, store.selectedEntityId],
       () => {
         renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverTargetId.value);
-      },
-      { deep: true }
+      }
     );
 
     onUnmounted(() => {

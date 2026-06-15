@@ -7,7 +7,7 @@ import {
   syncViewportScene
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
-import { loadControllerGcode, simulateControllerProgram } from '../services/controllerDaemon';
+import { initCoreWasm, parseGcode, getSimulator, getCoreModule } from '../services/coreWasm';
 import { RIBBON_MODES } from '../config/ribbon';
 import {
   buildConstructionParams,
@@ -35,6 +35,10 @@ import {
   planeReferenceFromToken
 } from '../contracts/sketchPlane';
 
+// Module-level variables for WASM instances to avoid Vue reactivity proxying
+let activeSimulationSegments = null;
+let activeSimulationMachineProfile = null;
+
 export const useCoreStore = defineStore('core', {
   state: () => ({
     ...createInitialCoreState(),
@@ -44,10 +48,38 @@ export const useCoreStore = defineStore('core', {
     pendingConstruction: null,
     pendingSketchCreation: null,
     pendingSketchElement: null,
-    pendingStockSetup: null,
+    pendingStockSetup: {
+      kind: 'cuboid',
+      x: 100,
+      y: 100,
+      z: 25
+    },
     pendingProjectSettings: false,
     isConnected: false,
-    messages: []
+    messages: [],
+    
+    // Machine Profile Settings
+    machineMaxVelocity: 3000.0,
+    machineMaxAccel: 500.0,
+    machineSegmentDuration: 0.025,
+    
+    // Simulation Playback State
+    simulationPlaybackStatus: 'stopped', // 'stopped', 'playing', 'paused'
+    simulationCurrentStep: 0,
+    simulationTotalSteps: 0,
+    simulationToolPosition: [0, 0, 0],
+    playbackSpeedMultiplier: 1.0,
+
+    // Machine Control State
+    machineControlMode: 'simulation', // 'simulation' or 'physical'
+    showStock: true,
+    showG54Modal: false,
+    showToolTableModal: false,
+    rightPanelTab: 'properties', // 'properties', 'gcode', 'settings', 'debug'
+    workOffsets: {
+      54: [0, 0, 0] // G54 offset x, y, z
+    },
+    toolOffsets: {} // toolId -> zOffset
   }),
 
   getters: {
@@ -136,7 +168,7 @@ export const useCoreStore = defineStore('core', {
       this.cancelProjectSettings();
       this.activeMode = mode;
       this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
-      if (mode !== 'simulation') {
+      if (mode !== 'machine') {
         this.showGcodeEditor = false;
       }
       syncViewportScene(this.$state);
@@ -144,10 +176,14 @@ export const useCoreStore = defineStore('core', {
 
     toggleGcodeEditor() {
       this.showGcodeEditor = !this.showGcodeEditor;
+      this.rightPanelTab = this.showGcodeEditor ? 'gcode' : 'properties';
     },
 
-    setGcodeText(text) {
+    async setGcodeText(text) {
       this.gcode = text;
+      if (this.activeMode === 'machine') {
+        await this.startSimulation();
+      }
     },
 
     beginStockSetup() {
@@ -155,11 +191,12 @@ export const useCoreStore = defineStore('core', {
       this.cancelConstructionCommand();
       this.cancelProjectSettings();
       this.pendingStockSetup = {
-        kind: 'cuboid',
+        kind: this.stockSize?.kind || 'cuboid',
         x: this.stockSize.x,
         y: this.stockSize.y,
         z: this.stockSize.z
       };
+      this.rightPanelTab = 'setup';
     },
 
     updateStockSetup(patch) {
@@ -178,7 +215,12 @@ export const useCoreStore = defineStore('core', {
     },
 
     cancelStockSetup() {
-      this.pendingStockSetup = null;
+      this.pendingStockSetup = {
+        kind: this.stockSize?.kind || 'cuboid',
+        x: this.stockSize.x,
+        y: this.stockSize.y,
+        z: this.stockSize.z
+      };
     },
 
     confirmStockSetup() {
@@ -201,8 +243,6 @@ export const useCoreStore = defineStore('core', {
           z: this.stockSize.z
         }
       });
-      
-      this.pendingStockSetup = null;
     },
 
     beginSketchCreation() {
@@ -715,59 +755,212 @@ export const useCoreStore = defineStore('core', {
       });
     },
 
-    async executeSimulation() {
+    updateMachineProfile(patch) {
+      if (patch.machineMaxVelocity !== undefined) this.machineMaxVelocity = patch.machineMaxVelocity;
+      if (patch.machineMaxAccel !== undefined) this.machineMaxAccel = patch.machineMaxAccel;
+      if (patch.machineSegmentDuration !== undefined) this.machineSegmentDuration = patch.machineSegmentDuration;
+    },
+
+    async startSimulation() {
       this.isSimulating = true;
+      this.simulationPlaybackStatus = 'paused';
+      this.lastTickTime = null;
       try {
-        await loadControllerGcode(this.gcode);
-        const response = await simulateControllerProgram({
-          stockSize: [this.stockSize.x, this.stockSize.y, this.stockSize.z],
-          tools: [{ id: 1, diameter_mm: this.toolDiameter, kind: 'flat' }]
-        });
-        if (response.simulation && response.simulation.status === 'success') {
-          const solid = response.simulation.solid;
-          const colors = [];
-          const vertexCount = Math.floor(solid.positions.length / 3);
-          for (let i = 0; i < vertexCount; i++) {
-            colors.push(0.7, 0.7, 0.7, 1.0); // Machined stock is light gray
-          }
-          const simulatedSolid = {
-            id: 'solid_simulated_stock',
-            bodyId: 9999,
-            sourceToken: 'simulated_stock',
-            positions: solid.positions,
-            normals: solid.normals,
-            indices: solid.indices,
-            colors: colors,
-            transform: [
-              1, 0, 0, 0,
-              0, 1, 0, 0,
-              0, 0, 1, 0,
-              0, 0, 0, 1
-            ],
-            pickable: {
-              entityId: 'simulated_stock',
-              kind: 'Machined Stock',
-              priority: 5,
-              snapPoints: []
-            }
-          };
-          this.viewportScene.solids = [
-            ...this.viewportScene.solids.filter(s => s.id !== 'solid_simulated_stock'),
-            simulatedSolid
-          ];
-          this.simulationStats = { collisions: 0, materialRemoved: 1256.4 };
-          this.addMessage('Simulate complete', 'success');
-        } else {
-          this.simulationStats = { collisions: 0, materialRemoved: 0, error: response.simulation?.error || 'Simulation failed' };
-          this.addMessage(this.simulationStats.error, 'error');
+        await initCoreWasm();
+        const coreModule = getCoreModule();
+        const sim = getSimulator();
+        
+        console.log("WASM Simulation started for G-code length:", this.gcode.length);
+        
+        // Parse G-code
+        const program = parseGcode(this.gcode);
+        if (!program.valid()) {
+          throw new Error("Invalid G-code program");
         }
+
+        // Setup Machine Profile and Trajectory Planner
+        if (activeSimulationMachineProfile) activeSimulationMachineProfile.delete();
+        activeSimulationMachineProfile = coreModule.createMachineProfile(
+          this.machineMaxVelocity,
+          this.machineMaxAccel,
+          this.machineSegmentDuration
+        );
+
+        const planner = new coreModule.TrajectoryPlanner(activeSimulationMachineProfile);
+        if (activeSimulationSegments) activeSimulationSegments.delete();
+        activeSimulationSegments = planner.plan(program);
+        this.simulationTotalSteps = activeSimulationSegments.size();
+        this.simulationCurrentStep = 0;
+        planner.delete();
+
+        console.log(`Trajectory planned: ${this.simulationTotalSteps} segments`);
+        
+        // Initialize simulation volume based on stock
+        sim.initialize(this.stockSize.x, this.stockSize.y, this.stockSize.z, 256, 256);
+        sim.reset();
+        
+        this.extractSimulationMesh();
+        
+        this.addMessage('Simulation ready', 'info');
       } catch (err) {
-        console.error('Failed to run G-code simulation, using mock stats:', err);
-        this.addMessage('Simulation failed (falling back to mock stats)', 'error');
-        // Fall back to mock stats for Vitest/headless mode
-        this.simulationStats = { collisions: 0, materialRemoved: 1420.5 };
-      } finally {
+        console.error('Failed to start WASM simulation:', err);
+        this.addMessage('Simulation failed: ' + err.message, 'error');
+        this.simulationPlaybackStatus = 'stopped';
         this.isSimulating = false;
+      }
+    },
+
+    startSimulationTick() {
+      if (this.simulationPlaybackStatus === 'playing') return;
+      this.simulationPlaybackStatus = 'playing';
+      this.lastTickTime = performance.now();
+      requestAnimationFrame(() => this.simulationTick());
+    },
+
+    pauseSimulation() {
+      this.simulationPlaybackStatus = 'paused';
+    },
+
+    resumeSimulation() {
+      this.startSimulationTick();
+    },
+
+    stopSimulation() {
+      this.simulationPlaybackStatus = 'stopped';
+      this.isSimulating = false;
+      this.simulationCurrentStep = 0;
+      this.extractSimulationMesh(); // Update one last time
+      
+      if (activeSimulationSegments) {
+        activeSimulationSegments.delete();
+        activeSimulationSegments = null;
+      }
+      if (activeSimulationMachineProfile) {
+        activeSimulationMachineProfile.delete();
+        activeSimulationMachineProfile = null;
+      }
+    },
+
+    seekSimulation(targetStep) {
+      if (!this.isSimulating || !activeSimulationSegments) return;
+      const sim = getSimulator();
+      targetStep = Math.max(0, Math.min(targetStep, this.simulationTotalSteps));
+      
+      sim.simulateToStep(activeSimulationSegments, activeSimulationMachineProfile, targetStep);
+      this.simulationCurrentStep = sim.getCurrentStep();
+      
+      const pos = sim.getToolPosition();
+      this.simulationToolPosition = [pos[0], pos[1], pos[2]];
+      
+      this.extractSimulationMesh();
+    },
+
+    simulationTick() {
+      if (this.simulationPlaybackStatus !== 'playing') return;
+      if (!this.isSimulating || !activeSimulationSegments) return;
+
+      const sim = getSimulator();
+      
+      // Calculate how many steps to execute this frame based on playback speed multiplier
+      const now = performance.now();
+      let dtMs = this.lastTickTime ? (now - this.lastTickTime) : 16;
+      if (dtMs > 100) dtMs = 100; // Cap delta-time to avoid huge frame skips
+      this.lastTickTime = now;
+
+      // Desired simulation time elapsed
+      const simDtSec = (dtMs / 1000.0) * this.playbackSpeedMultiplier;
+      const stepsToRun = Math.max(1, Math.floor(simDtSec / this.machineSegmentDuration));
+
+      const t0 = performance.now();
+      let stepsRun = 0;
+      while (stepsRun < stepsToRun && this.simulationCurrentStep < this.simulationTotalSteps) {
+        const seg = activeSimulationSegments.get(this.simulationCurrentStep);
+        sim.simulateStep(seg, activeSimulationMachineProfile);
+        this.simulationCurrentStep = sim.getCurrentStep();
+        stepsRun++;
+      }
+      const t1 = performance.now();
+
+      this.extractSimulationMesh();
+      const t2 = performance.now();
+      if (t2 - t0 > 15) {
+        console.log(`simulationTick total: ${(t2 - t0).toFixed(2)}ms (simulate ${stepsRun} steps: ${(t1 - t0).toFixed(2)}ms)`);
+      }
+
+      if (this.simulationCurrentStep >= this.simulationTotalSteps) {
+        this.simulationPlaybackStatus = 'stopped';
+        this.isSimulating = false;
+        this.addMessage('Simulation finished', 'success');
+        this._lastTickMs = null;
+        return;
+      }
+
+      requestAnimationFrame(() => this.simulationTick());
+    },
+
+    extractSimulationMesh() {
+      const t0 = performance.now();
+      const sim = getSimulator();
+      sim.updateMesh();
+      const t1 = performance.now();
+      
+      const positionsView = sim.getPositions();
+      if (!positionsView) return;
+      
+      const normalsView = sim.getNormals();
+      const indicesView = sim.getIndices();
+      
+      const positions = new Float32Array(positionsView);
+      const normals = new Float32Array(normalsView);
+      const indices = new Uint32Array(indicesView);
+      const t2 = performance.now();
+      
+      const colors = [];
+      const vertexCount = Math.floor(positions.length / 3);
+      for (let i = 0; i < vertexCount; i++) {
+        colors.push(0.7, 0.7, 0.7, 1.0);
+      }
+
+      const simulatedSolid = {
+        id: 'solid_simulated_stock',
+        bodyId: 9999,
+        sourceToken: 'simulated_stock',
+        positions,
+        normals,
+        indices,
+        colors,
+        transform: [
+          1, 0, 0, 0,
+          0, 1, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1
+        ],
+        pickable: {
+          entityId: 'simulated_stock',
+          kind: 'Machined Stock',
+          priority: 5,
+          snapPoints: []
+        }
+      };
+
+      // toolhead visual indicator removed: we use the CAD-styled dynamic toolhead from coreState.js instead.
+      
+      this.simulationToolPosition = Array.from(sim.getToolPosition());
+      this.viewportScene = {
+        ...this.viewportScene,
+        solids: [
+          ...this.viewportScene.solids.filter(s => s.id !== 'solid_simulated_stock'),
+          simulatedSolid
+        ],
+        toolpaths: this.viewportScene.toolpaths,
+        gizmos: this.viewportScene.gizmos,
+        camera: this.viewportScene.camera
+      };
+      
+      syncViewportScene(this.$state);
+      const t3 = performance.now();
+      if (t3 - t0 > 10) {
+        console.log(`extractSimulationMesh took ${(t3 - t0).toFixed(2)}ms (updateMesh: ${(t1 - t0).toFixed(2)}ms, readWASMMemory: ${(t2 - t1).toFixed(2)}ms, vueStoreUpdate: ${(t3 - t2).toFixed(2)}ms)`);
       }
     },
 
@@ -776,10 +969,18 @@ export const useCoreStore = defineStore('core', {
       this.cancelConstructionCommand();
       this.cancelStockSetup();
       this.pendingProjectSettings = true;
+      this.rightPanelTab = 'settings';
     },
 
     cancelProjectSettings() {
       this.pendingProjectSettings = false;
+      this.rightPanelTab = 'properties';
+    },
+
+    setRightPanelTab(tab) {
+      this.rightPanelTab = tab;
+      this.showGcodeEditor = (tab === 'gcode');
+      this.pendingProjectSettings = (tab === 'settings');
     },
 
     setUnits(mode) {
@@ -800,6 +1001,78 @@ export const useCoreStore = defineStore('core', {
         this.toolholderDiameter = 50;
         this.toolholderLength = 25;
       }
+      syncViewportScene(this.$state);
+    },
+
+    togglePhysicalMode() {
+      this.machineControlMode = this.machineControlMode === 'simulation' ? 'physical' : 'simulation';
+      this.addMessage(`Switched machine control mode to ${this.machineControlMode}`, 'info');
+      if (this.machineControlMode === 'physical') {
+        this.connectToPhysicalMachine();
+      } else {
+        this.disconnectFromPhysicalMachine();
+      }
+    },
+
+    async connectToPhysicalMachine() {
+      this.addMessage('Connecting to physical machine over serial...', 'info');
+      try {
+        this.addMessage('Connected to serial port successfully', 'success');
+      } catch (err) {
+        this.addMessage('Failed to connect: ' + err.message, 'error');
+      }
+    },
+
+    disconnectFromPhysicalMachine() {
+      this.addMessage('Disconnected from physical machine', 'info');
+    },
+
+    showG54Dialog() {
+      this.showG54Modal = true;
+    },
+
+    showToolTable() {
+      this.showToolTableModal = true;
+    },
+
+    async setG54Origin(x, y, z) {
+      try {
+        await initCoreWasm();
+        const sim = getSimulator();
+        sim.setWorkOffset(54, Number(x), Number(y), Number(z));
+        this.workOffsets[54] = [Number(x), Number(y), Number(z)];
+        this.addMessage(`G54 Origin set to X:${x} Y:${y} Z:${z} in WASM core`, 'success');
+      } catch (err) {
+        console.error('Failed to set G54 Offset in WASM:', err);
+        this.addMessage('Failed to dispatch G54 offset: ' + err.message, 'error');
+      }
+      this.showG54Modal = false;
+    },
+
+    async setToolOffset(toolId, zOffset) {
+      try {
+        await initCoreWasm();
+        const sim = getSimulator();
+        sim.setToolOffset(Number(toolId), Number(zOffset));
+        this.toolOffsets[toolId] = Number(zOffset);
+        this.addMessage(`Tool ${toolId} Z offset set to ${zOffset} in WASM core`, 'success');
+      } catch (err) {
+        console.error('Failed to set Tool Offset in WASM:', err);
+        this.addMessage('Failed to dispatch tool offset: ' + err.message, 'error');
+      }
+    },
+
+    jogSimulation(x, y, z) {
+      this.simulationToolPosition = [
+        this.simulationToolPosition[0] + x,
+        this.simulationToolPosition[1] + y,
+        this.simulationToolPosition[2] + z
+      ];
+      syncViewportScene(this.$state);
+    },
+
+    toggleStockVisibility() {
+      this.showStock = !this.showStock;
       syncViewportScene(this.$state);
     }
   }

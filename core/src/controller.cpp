@@ -619,7 +619,22 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
         return segments;
     }
 
+    struct PathBlock {
+        std::array<double, 3> startMm;
+        std::array<double, 3> endMm;
+        double distanceMm;
+        double maxVelocity;
+        double maxAcceleration;
+        double entryVelocity;
+        double exitVelocity;
+        uint32_t flags;
+        std::size_t sourceLine;
+    };
+
+    std::vector<PathBlock> blocks;
     std::array<double, 3> current = {0.0, 0.0, 0.0};
+
+    // 1. Generate path blocks
     for (const auto& record : program.records) {
         if (record.type != ControllerRecordType::Rapid &&
             record.type != ControllerRecordType::LinearFeed &&
@@ -640,52 +655,190 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
             continue;
         }
 
-        std::array<double, 3> deltaMm = {
-            record.targetMm[0] - current[0],
-            record.targetMm[1] - current[1],
-            record.targetMm[2] - current[2],
-        };
-        const double distanceMm = std::sqrt(deltaMm[0] * deltaMm[0] + deltaMm[1] * deltaMm[1] + deltaMm[2] * deltaMm[2]);
-        if (distanceMm <= 1e-9) {
-            current = record.targetMm;
-            continue;
+        // For simplicity, we linearize arcs here into small segments (same as LightweightSimulator)
+        std::vector<std::array<double, 3>> waypoints;
+        if (record.type == ControllerRecordType::ArcCW || record.type == ControllerRecordType::ArcCCW) {
+            double startX = current[0];
+            double startY = current[1];
+            double endX = record.targetMm[0];
+            double endY = record.targetMm[1];
+            double cx = startX + record.arcCenterOffsetMm[0];
+            double cy = startY + record.arcCenterOffsetMm[1];
+            double rStart = std::hypot(startX - cx, startY - cy);
+            double rEnd = std::hypot(endX - cx, endY - cy);
+            double r = (rStart + rEnd) * 0.5;
+
+            if (r > 1e-4) {
+                double startAngle = std::atan2(startY - cy, startX - cx);
+                double endAngle = std::atan2(endY - cy, endX - cx);
+
+                bool isCW = (record.type == ControllerRecordType::ArcCW);
+                double sweep = endAngle - startAngle;
+                if (isCW) {
+                    if (sweep > 0) sweep -= 2.0 * M_PI;
+                } else {
+                    if (sweep < 0) sweep += 2.0 * M_PI;
+                }
+
+                int numSegments = std::max(4, static_cast<int>(std::ceil(std::abs(sweep) * r / 0.5))); // 0.5mm segments
+                for (int step = 1; step <= numSegments; ++step) {
+                    double ratio = (double)step / numSegments;
+                    double angle = startAngle + ratio * sweep;
+                    double z = current[2] + ratio * (record.targetMm[2] - current[2]);
+                    waypoints.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle), z});
+                }
+            } else {
+                waypoints.push_back(record.targetMm);
+            }
+        } else {
+            waypoints.push_back(record.targetMm);
         }
 
-        double feed = record.type == ControllerRecordType::Rapid ? m_profile.axes[0].maxVelocityMmPerMin : record.feedRateMmPerMin;
-        for (std::size_t i = 0; i < 3; ++i) {
-            feed = std::min(feed, m_profile.axes[i].maxVelocityMmPerMin);
-        }
-        if (feed <= 0.0) {
-            addDiagnostic(diagnostics, ControllerDiagnosticSeverity::Fatal, record.sourceLine, "planner.feed", "Planned feed must be positive");
-            continue;
-        }
+        for (const auto& wp : waypoints) {
+            std::array<double, 3> deltaMm = {
+                wp[0] - current[0],
+                wp[1] - current[1],
+                wp[2] - current[2],
+            };
+            const double distanceMm = std::sqrt(deltaMm[0] * deltaMm[0] + deltaMm[1] * deltaMm[1] + deltaMm[2] * deltaMm[2]);
+            if (distanceMm > 1e-9) {
+                double maxVel = record.type == ControllerRecordType::Rapid ? m_profile.axes[0].maxVelocityMmPerMin : record.feedRateMmPerMin;
+                double maxAccel = m_profile.axes[0].maxAccelerationMmPerSec2;
 
-        const double durationSec = std::max(0.001, distanceMm / (feed / 60.0));
-        const std::size_t splitCount = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(durationSec / m_profile.maxSegmentDurationSec)));
-        for (std::size_t split = 0; split < splitCount; ++split) {
-            SpeSegment segment;
-            segment.sourceLine = record.sourceLine;
-            segment.durationUsec = static_cast<uint32_t>(std::llround((durationSec / splitCount) * 1000000.0));
-            if (record.type == ControllerRecordType::Rapid) {
-                segment.flags |= kSegmentFlagRapid;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    maxVel = std::min(maxVel, m_profile.axes[i].maxVelocityMmPerMin);
+                    maxAccel = std::min(maxAccel, m_profile.axes[i].maxAccelerationMmPerSec2);
+                }
+
+                uint32_t flags = 0;
+                if (record.type == ControllerRecordType::Rapid) flags |= kSegmentFlagRapid;
+                if (record.modal.spindleRpm > 0.0) flags |= kSegmentFlagSpindleOn;
+                if (record.coolant != CoolantMode::Off) flags |= kSegmentFlagCoolantOn;
+
+                blocks.push_back({current, wp, distanceMm, maxVel / 60.0, maxAccel, 0.0, 0.0, flags, record.sourceLine});
+                current = wp;
             }
-            if (record.modal.spindleRpm > 0.0) {
-                segment.flags |= kSegmentFlagSpindleOn;
-            }
-            if (record.coolant != CoolantMode::Off) {
-                segment.flags |= kSegmentFlagCoolantOn;
-            }
-            for (std::size_t axis = 0; axis < 3; ++axis) {
-                const double partStart = static_cast<double>(split) / static_cast<double>(splitCount);
-                const double partEnd = static_cast<double>(split + 1) / static_cast<double>(splitCount);
-                const double mmStart = current[axis] + deltaMm[axis] * partStart;
-                const double mmEnd = current[axis] + deltaMm[axis] * partEnd;
-                segment.deltaSteps[axis] = static_cast<int32_t>(std::llround((mmEnd - mmStart) * m_profile.axes[axis].stepsPerMm));
-            }
-            segments.push_back(segment);
         }
-        current = record.targetMm;
     }
+
+    if (blocks.empty()) return segments;
+
+    // 2. Junction Velocity Planning (Lookahead)
+    // For simplicity, we assume continuous path blending for collinear segments.
+    // If the angle between segments is sharp, we decelerate to 0.
+    for (std::size_t i = 0; i < blocks.size() - 1; ++i) {
+        auto& b1 = blocks[i];
+        auto& b2 = blocks[i+1];
+        std::array<double, 3> dir1 = {(b1.endMm[0] - b1.startMm[0]) / b1.distanceMm, (b1.endMm[1] - b1.startMm[1]) / b1.distanceMm, (b1.endMm[2] - b1.startMm[2]) / b1.distanceMm};
+        std::array<double, 3> dir2 = {(b2.endMm[0] - b2.startMm[0]) / b2.distanceMm, (b2.endMm[1] - b2.startMm[1]) / b2.distanceMm, (b2.endMm[2] - b2.startMm[2]) / b2.distanceMm};
+        double dot = dir1[0] * dir2[0] + dir1[1] * dir2[1] + dir1[2] * dir2[2];
+        if (dot > 0.99) { // Roughly less than 8 degrees
+            b1.exitVelocity = std::min(b1.maxVelocity, b2.maxVelocity);
+            b2.entryVelocity = b1.exitVelocity;
+        } else {
+            b1.exitVelocity = 0.0;
+            b2.entryVelocity = 0.0;
+        }
+    }
+    blocks.front().entryVelocity = 0.0;
+    blocks.back().exitVelocity = 0.0;
+
+    // 3. Backward Pass
+    for (int i = static_cast<int>(blocks.size()) - 2; i >= 0; --i) {
+        auto& b = blocks[i];
+        auto& next = blocks[i+1];
+        b.exitVelocity = std::min(b.exitVelocity, next.entryVelocity);
+        double maxEntry = std::sqrt(b.exitVelocity * b.exitVelocity + 2.0 * b.maxAcceleration * b.distanceMm);
+        b.entryVelocity = std::min(b.entryVelocity, maxEntry);
+    }
+
+    // 4. Forward Pass
+    for (std::size_t i = 1; i < blocks.size(); ++i) {
+        auto& b = blocks[i];
+        auto& prev = blocks[i-1];
+        b.entryVelocity = std::min(b.entryVelocity, prev.exitVelocity);
+        double maxExit = std::sqrt(b.entryVelocity * b.entryVelocity + 2.0 * b.maxAcceleration * b.distanceMm);
+        b.exitVelocity = std::min(b.exitVelocity, maxExit);
+    }
+
+    // 5. Generate SpeSegments
+    std::array<double, 3> hardwarePos = {0.0, 0.0, 0.0};
+    for (const auto& block : blocks) {
+        double d = block.distanceMm;
+        double a = block.maxAcceleration;
+        double v0 = block.entryVelocity;
+        double v1 = block.exitVelocity;
+        double vmax = block.maxVelocity;
+
+        // Calculate intersection of accel and decel profiles
+        double maxReachableSq = (2.0 * a * d + v0 * v0 + v1 * v1) / 2.0;
+        if (vmax * vmax > maxReachableSq) {
+            vmax = std::sqrt(maxReachableSq);
+        }
+
+        double t_accel = (vmax - v0) / a;
+        double d_accel = v0 * t_accel + 0.5 * a * t_accel * t_accel;
+        
+        double t_decel = (vmax - v1) / a;
+        double d_decel = vmax * t_decel - 0.5 * a * t_decel * t_decel;
+        
+        double d_cruise = d - d_accel - d_decel;
+        double t_cruise = d_cruise / vmax;
+
+        double total_time = t_accel + t_cruise + t_decel;
+        
+        // Output fixed duration segments
+        double t = 0.0;
+        double dt = m_profile.maxSegmentDurationSec;
+        while (t < total_time) {
+            double current_dt = std::min(dt, total_time - t);
+            double v_start = 0.0;
+            if (t < t_accel) {
+                v_start = v0 + a * t;
+            } else if (t < t_accel + t_cruise) {
+                v_start = vmax;
+            } else {
+                v_start = vmax - a * (t - t_accel - t_cruise);
+            }
+
+            double next_t = t + current_dt;
+            double v_end = 0.0;
+            if (next_t < t_accel) {
+                v_end = v0 + a * next_t;
+            } else if (next_t < t_accel + t_cruise) {
+                v_end = vmax;
+            } else {
+                v_end = vmax - a * (next_t - t_accel - t_cruise);
+            }
+
+            double dist_step = (v_start + v_end) * 0.5 * current_dt;
+            double fraction = dist_step / d;
+
+            SpeSegment seg;
+            seg.sourceLine = block.sourceLine;
+            seg.durationUsec = static_cast<uint32_t>(current_dt * 1000000.0);
+            seg.flags = block.flags;
+            
+            for (std::size_t j = 0; j < 3; ++j) {
+                hardwarePos[j] += fraction * (block.endMm[j] - block.startMm[j]);
+                seg.deltaSteps[j] = static_cast<int32_t>(hardwarePos[j] * m_profile.axes[j].stepsPerMm);
+            }
+
+            segments.push_back(seg);
+            t += current_dt;
+        }
+    }
+
+    // Convert accumulated absolute steps back into delta steps for SpeSegment
+    std::array<int32_t, 3> lastSteps = {0, 0, 0};
+    for (auto& seg : segments) {
+        std::array<int32_t, 3> absSteps = seg.deltaSteps;
+        seg.deltaSteps[0] = absSteps[0] - lastSteps[0];
+        seg.deltaSteps[1] = absSteps[1] - lastSteps[1];
+        seg.deltaSteps[2] = absSteps[2] - lastSteps[2];
+        lastSteps = absSteps;
+    }
+
     return segments;
 }
 

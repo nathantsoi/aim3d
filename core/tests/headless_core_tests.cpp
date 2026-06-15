@@ -5,7 +5,7 @@
 #include "aim3d/document.hpp"
 #include "aim3d/sketch_solver.hpp"
 #include "aim3d/topo_naming.hpp"
-#include "aim3d/lightweight_simulator.hpp"
+#include "aim3d/machine_simulator.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -977,9 +977,9 @@ int main() {
     test_controller_planner_soft_limits_and_segments();
     test_spe_protocol_emulator_fail_closed();
     
-    // Run LightweightSimulator tests
+    // Run MachineSimulator tests
     {
-        aim3d::LightweightSimulator sim;
+        aim3d::MachineSimulator sim;
         sim.initialize(100.0, 100.0, 25.0, 10, 10);
         assert(sim.resolutionX() == 10);
         assert(sim.resolutionY() == 10);

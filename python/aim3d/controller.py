@@ -370,7 +370,7 @@ def simulate_program_mesh(
         if not ok:
             import sys
             print(f"[_native.simulator_run] FAILED. gcode bytes: {len(gcode.encode('utf-8'))}, stock: {stock_size}, tools: {tool_ids}, radii: {tool_radii}, ball: {tool_is_ball}", file=sys.stderr)
-            raise ValueError("C++ lightweight simulator run failed or G-code parsing failed")
+            raise ValueError("C++ machine simulator run failed or G-code parsing failed")
 
         v_count = _native.simulator_vertex_count(sim_handle)
         i_count = _native.simulator_index_count(sim_handle)

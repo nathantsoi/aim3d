@@ -356,7 +356,7 @@ export const syncViewportScene = (state) => {
   });
 
   // Dynamic Stock mesh for simulation
-  const hasStockFeature = state.features.some(f => f.type === 'Stock') || state.pendingStockSetup;
+  const hasStockFeature = (state.features.some(f => f.type === 'Stock') || state.pendingStockSetup) && (state.showStock !== false);
   if (hasStockFeature) {
     const x = state.pendingStockSetup?.x ?? state.stockSize?.x ?? 100;
     const y = state.pendingStockSetup?.y ?? state.stockSize?.y ?? 100;
@@ -465,21 +465,25 @@ export const syncViewportScene = (state) => {
     };
     
     state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_stock');
-    state.viewportScene.solids.push(stockSolid);
+    if (!state.viewportScene.solids.some(s => s.id === 'solid_simulated_stock')) {
+      state.viewportScene.solids.push(stockSolid);
+    }
   } else if (state.viewportScene?.solids) {
     state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_stock');
   }
 
   // Dynamic Toolhead mesh for simulation
-  if (state.activeMode === 'simulation' || state.isSimulating) {
+  if (state.activeMode === 'machine' || state.isSimulating) {
     const td = state.toolDiameter || 6;
     const tl = state.toolLength || 25;
     
     const hd = state.toolholderDiameter || 20;
     const hl = state.toolholderLength || 30;
     
-    // Position tool at the top of the stock (plus a small clearance if desired, but 0 is fine for preview)
-    const offsetZ = (state.pendingStockSetup?.z ?? state.stockSize?.z ?? 25);
+    // Position tool at current simulation position, or fall back to top of stock
+    const tX = state.simulationToolPosition?.[0] ?? 0;
+    const tY = state.simulationToolPosition?.[1] ?? 0;
+    const tZ = state.simulationToolPosition?.[2] ?? (state.pendingStockSetup?.z ?? state.stockSize?.z ?? 25);
     
     const toolPositions = [];
     const toolNormals = [];
@@ -493,8 +497,8 @@ export const syncViewportScene = (state) => {
       const startVertex = toolPositions.length / 3;
       for (let i = 0; i <= segments; i++) {
         const theta = (i / segments) * Math.PI * 2;
-        const cx = Math.cos(theta) * radius;
-        const cy = Math.sin(theta) * radius;
+        const cx = tX + Math.cos(theta) * radius;
+        const cy = tY + Math.sin(theta) * radius;
         
         // Bottom circle
         toolPositions.push(cx, cy, z0);
@@ -525,12 +529,12 @@ export const syncViewportScene = (state) => {
       
       // Caps
       const centerBottom = toolPositions.length / 3;
-      toolPositions.push(0, 0, z0);
+      toolPositions.push(tX, tY, z0);
       toolNormals.push(0, 0, -1);
       toolColors.push(r, g, b, a);
       
       const centerTop = toolPositions.length / 3;
-      toolPositions.push(0, 0, z1);
+      toolPositions.push(tX, tY, z1);
       toolNormals.push(0, 0, 1);
       toolColors.push(r, g, b, a);
       
@@ -541,9 +545,9 @@ export const syncViewportScene = (state) => {
     };
 
     // Tool body (red)
-    generateCylinder(td/2, offsetZ, offsetZ + tl, 0.9, 0.2, 0.2, 0.9);
+    generateCylinder(td/2, tZ, tZ + tl, 0.9, 0.2, 0.2, 0.9);
     // Tool holder (dark gray)
-    generateCylinder(hd/2, offsetZ + tl, offsetZ + tl + hl, 0.3, 0.3, 0.3, 1.0);
+    generateCylinder(hd/2, tZ + tl, tZ + tl + hl, 0.3, 0.3, 0.3, 1.0);
 
     const toolSolid = {
       id: 'solid_toolhead',

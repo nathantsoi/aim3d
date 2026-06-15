@@ -20,3 +20,8 @@ target/
 .DS_Store
 .idea/
 .vscode/
+
+# Emscripten SDK and build artifacts
+.emsdk/
+ui/frontend/public/aim3d_core.js
+ui/frontend/public/aim3d_core.wasm

@@ -119,10 +119,13 @@ const manufactureActionsGroup = {
   ]
 };
 
-const simulationSetupGroup = {
+const machineSetupGroup = {
   id: 'setup',
   label: 'SETUP',
   commands: [
+    { id: 'toggle-mode', label: 'Physical/Sim Toggle', action: 'togglePhysicalMode' },
+    { id: 'set-g54-origin', label: 'Set G54 Origin', action: 'showG54Dialog' },
+    { id: 'tool-table-offsets', label: 'Tool Table', action: 'showToolTable' },
     { id: 'create-stock', label: 'Create Stock', action: 'beginStockSetup' }
   ]
 };
@@ -136,13 +139,6 @@ const simulationGcodeGroup = {
   ]
 };
 
-const simulationActionsGroup = {
-  id: 'actions',
-  label: 'ACTIONS',
-  commands: [
-    { id: 'simulate', label: 'Simulate', action: 'runSimulation' }
-  ]
-};
 
 const sketchCreateGroup = {
   id: 'create',
@@ -299,16 +295,15 @@ export const RIBBON_MODES = {
       { id: 'utilities', label: 'UTILITIES', groups: placeholderGroups(['MAKE', 'ADD-INS']) }
     ]
   },
-  simulation: {
-    label: 'SIMULATION',
+  machine: {
+    label: 'MACHINE',
     tabs: [
       {
-        id: 'simulation',
-        label: 'SIMULATION',
+        id: 'machine',
+        label: 'MACHINE',
         groups: [
-          simulationSetupGroup,
+          machineSetupGroup,
           simulationGcodeGroup,
-          simulationActionsGroup,
           ...placeholderGroups(['INSPECT'])
         ]
       }
@@ -316,4 +311,4 @@ export const RIBBON_MODES = {
   }
 };
 
-export const RIBBON_MODE_ORDER = ['design', 'manufacture', 'simulation'];
+export const RIBBON_MODE_ORDER = ['design', 'manufacture', 'machine'];
