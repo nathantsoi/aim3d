@@ -1004,26 +1004,51 @@ export const useCoreStore = defineStore('core', {
       syncViewportScene(this.$state);
     },
 
-    togglePhysicalMode() {
-      this.machineControlMode = this.machineControlMode === 'simulation' ? 'physical' : 'simulation';
-      this.addMessage(`Switched machine control mode to ${this.machineControlMode}`, 'info');
-      if (this.machineControlMode === 'physical') {
-        this.connectToPhysicalMachine();
+    async togglePhysicalMode() {
+      if (this.machineControlMode === 'simulation') {
+        const connected = await this.connectToPhysicalMachine();
+        if (connected) {
+          this.machineControlMode = 'physical';
+          this.addMessage(`Switched machine control mode to physical`, 'info');
+        } else {
+          this.addMessage(`Failed to switch to physical mode`, 'error');
+        }
       } else {
-        this.disconnectFromPhysicalMachine();
+        await this.disconnectFromPhysicalMachine();
+        this.machineControlMode = 'simulation';
+        this.addMessage(`Switched machine control mode to simulation`, 'info');
       }
     },
 
     async connectToPhysicalMachine() {
       this.addMessage('Connecting to physical machine over serial...', 'info');
       try {
+        if (!navigator.serial) {
+          throw new Error('Web Serial API not supported in this browser.');
+        }
+        const port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        this.activeSerialPort = port;
+        this.setConnected(true);
         this.addMessage('Connected to serial port successfully', 'success');
+        return true;
       } catch (err) {
         this.addMessage('Failed to connect: ' + err.message, 'error');
+        this.setConnected(false);
+        return false;
       }
     },
 
-    disconnectFromPhysicalMachine() {
+    async disconnectFromPhysicalMachine() {
+      if (this.activeSerialPort) {
+        try {
+          await this.activeSerialPort.close();
+        } catch (err) {
+          console.error('Failed to close serial port:', err);
+        }
+        this.activeSerialPort = null;
+      }
+      this.setConnected(false);
       this.addMessage('Disconnected from physical machine', 'info');
     },
 
