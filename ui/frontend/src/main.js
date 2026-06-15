@@ -16,7 +16,9 @@ const AppShell = defineComponent({
     // Coordinate main page elements into the parent grid slots
     return h('div', { style: 'display: contents;' }, [
       h(Timeline, { class: 'app-panel' }),
+      h('div', { class: 'resizer', id: 'left-resizer' }),
       h(Viewport),
+      h('div', { class: 'resizer', id: 'right-resizer' }),
       h(PropertyGrid, { class: 'app-panel right' }),
       h(ToastContainer)
     ]);

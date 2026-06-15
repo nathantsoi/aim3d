@@ -76,7 +76,7 @@
     /* Main Scaffold Grid */
     #app {
       display: grid;
-      grid-template-columns: var(--left-panel-width, 280px) 4px 1fr 4px var(--right-panel-width, 340px);
+      grid-template-columns: var(--left-panel-width, 280px) 4px minmax(0, 1fr) 4px var(--right-panel-width, 30vw);
       grid-template-rows: 100%;
       flex: 1;
       min-height: 0;
@@ -168,24 +168,25 @@
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const app = document.getElementById('app');
-      const leftResizer = document.getElementById('left-resizer');
-      const rightResizer = document.getElementById('right-resizer');
-
       let isDraggingLeft = false;
       let isDraggingRight = false;
+      let activeLeftResizer = null;
+      let activeRightResizer = null;
 
-      leftResizer.addEventListener('mousedown', (e) => {
-        isDraggingLeft = true;
-        leftResizer.classList.add('dragging');
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-      });
-
-      rightResizer.addEventListener('mousedown', (e) => {
-        isDraggingRight = true;
-        rightResizer.classList.add('dragging');
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
+      document.addEventListener('mousedown', (e) => {
+        if (e.target.id === 'left-resizer') {
+          isDraggingLeft = true;
+          activeLeftResizer = e.target;
+          activeLeftResizer.classList.add('dragging');
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+        } else if (e.target.id === 'right-resizer') {
+          isDraggingRight = true;
+          activeRightResizer = e.target;
+          activeRightResizer.classList.add('dragging');
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+        }
       });
 
       document.addEventListener('mousemove', (e) => {
@@ -203,11 +204,13 @@
       document.addEventListener('mouseup', () => {
         if (isDraggingLeft) {
           isDraggingLeft = false;
-          leftResizer.classList.remove('dragging');
+          if (activeLeftResizer) activeLeftResizer.classList.remove('dragging');
+          activeLeftResizer = null;
         }
         if (isDraggingRight) {
           isDraggingRight = false;
-          rightResizer.classList.remove('dragging');
+          if (activeRightResizer) activeRightResizer.classList.remove('dragging');
+          activeRightResizer = null;
         }
         document.body.style.cursor = '';
         document.body.style.userSelect = '';

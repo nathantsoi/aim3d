@@ -7,9 +7,9 @@
     <div v-else class="property-grid">
       <div class="panel-tabs">
         <button :class="['tab-btn', { active: activeTab === 'properties' }]" @click="activeTab = 'properties'">Properties</button>
-        <button :class="['tab-btn', { active: activeTab === 'setup' }]" @click="activeTab = 'setup'">Setup</button>
-        <button :class="['tab-btn', { active: activeTab === 'gcode' }]" @click="activeTab = 'gcode'">G-Code</button>
-        <button :class="['tab-btn', { active: activeTab === 'settings' }]" @click="activeTab = 'settings'">Settings</button>
+        <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'setup' }]" @click="activeTab = 'setup'">Setup</button>
+        <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'gcode' }]" @click="activeTab = 'gcode'">G-Code</button>
+        <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'settings' }]" @click="activeTab = 'settings'">Settings</button>
         <button :class="['tab-btn', { active: activeTab === 'debug' }]" @click="activeTab = 'debug'">Debug</button>
       </div>
 
@@ -297,7 +297,12 @@ export default defineComponent({
   setup() {
     const store = useCoreStore();
     const activeTab = computed({
-      get: () => store.rightPanelTab || 'properties',
+      get: () => {
+        if (store.activeMode !== 'machine' && ['setup', 'gcode', 'settings'].includes(store.rightPanelTab)) {
+          return 'properties';
+        }
+        return store.rightPanelTab || 'properties';
+      },
       set: (val) => store.setRightPanelTab(val)
     });
     const parseNumber = (value) => Number.parseFloat(value);
