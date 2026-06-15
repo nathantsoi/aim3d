@@ -11,7 +11,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Setup Compiler flags
 if(NOT MSVC)
-    add_compile_options(-Wall -Wextra -Wpedantic -O3)
+    add_compile_options(-Wall -Wextra -Wpedantic -O3 -g)
 else()
     add_compile_options(/W4 /O2 /EHsc)
 endif()

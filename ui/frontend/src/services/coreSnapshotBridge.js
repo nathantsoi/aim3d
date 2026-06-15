@@ -10,7 +10,7 @@ const RECONNECT_DELAY_MS = 1500;
 
 const tauriListen = () => {
   if (typeof window === 'undefined') return null;
-  return window.__TAURI__?.event?.listen || null;
+  return window.__TAURI__?.event?.listen || window.__TAURI__?.core?.event?.listen || null;
 };
 
 const defaultBridgeUrl = () => {

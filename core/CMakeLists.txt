@@ -59,7 +59,7 @@ if(EMSCRIPTEN)
     set_target_properties(aim3d_core_wasm PROPERTIES
         OUTPUT_NAME "aim3d_core"
         SUFFIX ".js"
-        LINK_FLAGS "-s MODULARIZE=1 -s EXPORT_NAME='createAim3dCore' -s ENVIRONMENT=web -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4GB"
+        LINK_FLAGS "-g -s MODULARIZE=1 -s EXPORT_NAME='createAim3dCore' -s ENVIRONMENT=web -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4GB"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/ui/frontend/public"
     )
 else()

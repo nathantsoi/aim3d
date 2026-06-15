@@ -124,29 +124,14 @@
               :disabled="operation.status !== 'Ready' || store.isSimulating"
               @click="store.startSimulation"
             >
-              {{ store.isSimulating ? 'Simulating...' : 'SDF Simulate' }}
+              {{ store.isSimulating ? 'Simulating...' : 'Simulate' }}
             </button>
           </div>
         </div>
       </div>
     </section>
 
-    <section
-      v-if="store.activeMode === 'manufacture' && store.simulationStats.materialRemoved > 0"
-      class="section-container animate-fade"
-    >
-      <h3>Taichi Volume Report</h3>
-      <div class="property-card status-success">
-        <div class="prop-row">
-          <span class="label">Collisions</span>
-          <span class="value text-success">{{ store.simulationStats.collisions }}</span>
-        </div>
-        <div class="prop-row">
-          <span class="label">Material Subtracted</span>
-          <span class="value text-success">{{ store.simulationStats.materialRemoved }} mm3</span>
-        </div>
-      </div>
-    </section>
+
 
     <JogPanel v-if="store.activeMode === 'machine'" />
     </div>

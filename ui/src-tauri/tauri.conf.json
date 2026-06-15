@@ -1,60 +1,33 @@
 {
+  "$schema": "https://schema.tauri.app/2.0.0/tauri.conf.json",
+  "productName": "aim3d",
+  "version": "0.1.0",
+  "identifier": "com.aim3d.dev",
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "cd frontend && npm run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../frontend/dist",
-    "withGlobalTauri": true
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../frontend/dist"
   },
-  "package": {
-    "productName": "aim3d",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "shell": {
-        "all": false,
-        "open": true
-      }
-    },
-    "bundle": {
-      "active": true,
-      "category": "DeveloperTool",
-      "copyright": "",
-      "deb": {
-        "depends": []
-      },
-      "icon": [
-        "icons/32x32.png"
-      ],
-      "identifier": "com.aim3d.dev",
-      "longDescription": "",
-      "macOS": {
-        "entitlements": null,
-        "exceptionDomain": "",
-        "frameworks": [],
-        "signingIdentity": null
-      },
-      "resources": [],
-      "shortDescription": "",
-      "targets": ["app"],
-      "windows": {
-        "certificateThumbprint": null,
-        "digestAlgorithm": "sha256"
-      }
-    },
-    "security": {
-      "csp": null
-    },
+  "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
-        "fullscreen": false,
+        "title": "aim3d - High-Performance CAD/CAM",
+        "width": 1280,
         "height": 720,
         "resizable": true,
-        "title": "aim3d - High-Performance CAD/CAM",
-        "width": 1280
+        "fullscreen": false
       }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "targets": ["app"],
+    "icon": [
+      "icons/32x32.png"
     ]
   }
 }

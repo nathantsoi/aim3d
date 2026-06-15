@@ -5,7 +5,7 @@
 
 const tauriInvoke = () => {
   if (typeof window === 'undefined') return null;
-  return window.__TAURI__?.tauri?.invoke || window.__TAURI__?.invoke || null;
+  return window.__TAURI__?.core?.invoke || window.__TAURI__?.tauri?.invoke || window.__TAURI__?.invoke || null;
 };
 
 export const invokeCommand = async (name, args = {}) => {

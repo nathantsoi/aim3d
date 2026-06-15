@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 
 #[allow(dead_code)]
 pub struct Aim3dDocumentHandle;
@@ -314,7 +314,7 @@ fn generate_toolpath(operation_id: String) -> IPCResponse {
 
 #[tauri::command]
 fn run_simulation(_gcode: String) -> IPCResponse {
-    println!("[Tauri Rust IPC] Triggering Volumetric Taichi SDF Simulation sweep.");
+    println!("[Tauri Rust IPC] Triggering G-code parsing and volumetric trajectory Simulation sweep.");
     IPCResponse {
         status: "success".to_string(),
         message: "Simulation run complete".to_string(),
@@ -398,7 +398,7 @@ fn push_core_snapshot(app: tauri::AppHandle, snapshot_json: String) -> IPCRespon
         }
     };
 
-    match app.emit_all(CORE_CHANGED_EVENT, snapshot) {
+    match app.emit(CORE_CHANGED_EVENT, snapshot) {
         Ok(()) => IPCResponse {
             status: "success".to_string(),
             message: "Broadcast core snapshot".to_string(),
@@ -432,11 +432,11 @@ fn run_python_script(app: tauri::AppHandle, script_path: String) -> IPCResponse 
                     if let Some(channel) = snapshot.get("channel").and_then(|c| c.as_str()) {
                         if channel == "core://changed" {
                             if let Some(data) = snapshot.get("snapshot") {
-                                let _ = app.emit_all("core://changed", data.clone());
+                                let _ = app.emit("core://changed", data.clone());
                             }
                         }
                     } else {
-                        let _ = app.emit_all("core://changed", snapshot);
+                        let _ = app.emit("core://changed", snapshot);
                     }
                 }
             }

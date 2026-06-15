@@ -10,7 +10,6 @@
 2. **Stateless Thin Client (Tauri / Nuxt / WebGPU):** The client renders a 60fps WebGPU scene based on state streams dispatched by the Core. The UI is a pure projection.
 3. **Zero-Copy ML Integrations (Tier 3):** Exposes B-rep geometries, displays meshes, and generates toolpaths as flat contiguous memory views (NumPy/PyTorch compatible), bypassing heavy OOP serialization.
 4. **Clean-Room RS274 G-code Validation:** Incorporates a strict 100% clean-room parser that validates posted G-code back into canonical path streams.
-5. **Differentiable Manufacturing Engine (Taichi):** SDF subtraction enables gradient backpropagation for neural toolpath optimizations.
 
 ---
 
@@ -34,7 +33,7 @@ The repository is structured to enable parallelized development across 5 indepen
                          └───────────┬────────────┘
                                      ▼
                         [Track E: Simulation & Parser]
-                         (RS274, Taichi Sparse SDF)
+                         (RS274)
 ```
 
 ---
@@ -43,7 +42,6 @@ The repository is structured to enable parallelized development across 5 indepen
 
 - `core/`: Pure C++ computational engine. Handles parametric document products, topological naming databases, FFI solvers, G-code interpreters, and toolpath strategies.
 - `python/`: Two-Tiered Python API Bindings. Exposes native `aim3d.*` async/tensor modules and legacy Fusion `adsk.*` OOP adapters.
-- `simulation/`: Taichi SNode Volumetric SDF simulation models.
 - `ui/`: Tauri desktop app container and Vue/Nuxt.js WebGPU viewport.
 
 ---
@@ -110,7 +108,7 @@ By default, the core builds without linking OCCT so the scaffold can compile in 
 make build AIM3D_ENABLE_OCCT=1 AIM3D_OCCT_DIR=/path/to/occt/cmake/package
 ```
 
-The Python package currently exposes the Tier 1/2 scaffold: modern `aim3d.*` modules and Fusion-compatible `adsk.*` facade modules. `taichi` is the intended simulation backend; the current scaffold has a fallback path so the simulation module can import in environments where Taichi is not installed.
+The Python package currently exposes the Tier 1/2 scaffold: modern `aim3d.*` modules and Fusion-compatible `adsk.*` facade modules.
 
 ### Microcontroller (MCU) Firmware Setup (STM32)
 
@@ -139,7 +137,6 @@ make build-frontend
 make build-tauri
 make test-core
 make test-python
-make test-simulation
 ```
 
 Use `make deps` directly only when you want to refresh dependencies without building or running the app.
@@ -150,7 +147,6 @@ Use `make deps` directly only when you want to refresh dependencies without buil
 
 - C++ core: `make test-core` is expected to pass from the top-level `aim3d` directory.
 - Python: `make deps` installs the editable package and test dependencies before `make test-python`.
-- Simulation: `make deps` installs Taichi for the intended sparse SDF backend.
 - Frontend/Tauri: `make deps` installs Node packages; Cargo dependency resolution requires network access unless crates are already cached.
 
 ---

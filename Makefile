@@ -132,6 +132,14 @@ run-tauri:
 	$(NPM) run dev
 
 clean:
+	@if [ -d "$(BUILD_DIR)" ]; then \
+		find $(BUILD_DIR) -mindepth 1 -maxdepth 1 ! -name "occt" ! -name "occt-install" -exec rm -rf {} +; \
+	fi
+	rm -rf ui/frontend/dist ui/frontend/node_modules ui/node_modules ui/src-tauri/target
+	rm -rf ui/frontend/public/aim3d_core.js ui/frontend/public/aim3d_core.wasm
+	find . -type d -name __pycache__ -prune -exec rm -rf {} +
+
+clean-all:
 	rm -rf $(BUILD_DIR)
 	rm -rf ui/frontend/dist ui/frontend/node_modules ui/node_modules ui/src-tauri/target
 	rm -rf ui/frontend/public/aim3d_core.js ui/frontend/public/aim3d_core.wasm

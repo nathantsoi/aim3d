@@ -41,7 +41,7 @@ checkout_repo "FreeCAD" "https://github.com/FreeCAD/FreeCAD.git" "0108fd4b4850cc
 checkout_repo "OCCT" "https://github.com/Open-Cascade-SAS/OCCT.git" "d3056ef80c9668f395da40f5fd7be186cae4501f"
 checkout_repo "blender" "https://projects.blender.org/blender/blender.git" "ec6e62d40fa9e9d1bea33ad5d00148c99a4f0832"
 checkout_repo "blendercam" "https://github.com/vilemduha/blendercam" "ae5ab17ed7db880a389749c06f7e7aad48b96939"
-checkout_repo "diff-cam" "git@github.com:nathantsoi/diff-cam.git" "baaebb053545afb4d008d67105ef60f2ed59f17f"
+
 checkout_repo "gcad3d" "https://github.com/gcad3d/gcad3d.git" "168fcdb281948d00866f46e1635492ce1c61f80d"
 checkout_repo "klipper" "https://github.com/Klipper3d/klipper.git" "c707dd19214709dc23684b254a68e3bf69e4cfb3"
 checkout_repo "linuxcnc" "https://github.com/LinuxCNC/linuxcnc.git" "39bfc1874ac41eb9dd3088fe802dd1726fb68652"
