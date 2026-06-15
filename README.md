@@ -50,6 +50,30 @@ The repository is structured to enable parallelized development across 5 indepen
 
 ## Build and Getting Started
 
+### Workspace Setup
+
+To set up the complete development environment, organize your directories as siblings:
+
+```
+workspace-dir/
+├── aim3d/           # This repository (main project code)
+├── opensource/      # Reference open-source projects (OCCT, Clipper2, etc.)
+└── wiki/            # Sibling wiki repository for tracking progress and design docs
+```
+
+1. **Clone the project and the wiki as siblings**:
+   ```bash
+   git clone git@github.com:nathantsoi/aim3d.git
+   git clone git@github.com:nathantsoi/aim3d-wiki.git wiki
+   ```
+
+2. **Check out the reference open-source code**:
+   Run the provided checkout script to clone and pin all required reference open-source projects in the sibling `opensource/` directory:
+   ```bash
+   cd aim3d
+   ./scripts/checkout-opensource.sh
+   ```
+
 ### Prerequisites
 - C++17 compiler (GCC, Clang, AppleClang, or MSVC)
 - CMake 3.18+
