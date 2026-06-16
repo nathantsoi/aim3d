@@ -11,15 +11,21 @@ namespace aim3d {
 
 MachineSimulator::MachineSimulator() {}
 
+void MachineSimulator::setStockLocation(double x, double y, double z) {
+    m_locX = x;
+    m_locY = y;
+    m_locZ = z;
+}
+
 void MachineSimulator::initialize(double sizeX, double sizeY, double sizeZ, std::size_t resX, std::size_t resY) {
     m_resX = resX;
     m_resY = resY;
-    m_maxX = sizeX;
-    m_minX = 0.0;
-    m_maxY = sizeY;
-    m_minY = 0.0;
-    m_maxZ = sizeZ;
-    m_minZ = 0.0;
+    m_maxX = m_locX + sizeX;
+    m_minX = m_locX;
+    m_maxY = m_locY + sizeY;
+    m_minY = m_locY;
+    m_maxZ = m_locZ + sizeZ;
+    m_minZ = m_locZ;
 
     m_heightmap.assign(m_resX * m_resY, (float)m_maxZ);
     

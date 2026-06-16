@@ -12,6 +12,8 @@ class MachineSimulator {
 public:
     MachineSimulator();
 
+    // Stock volume management
+    void setStockLocation(double x, double y, double z);
     void initialize(double sizeX, double sizeY, double sizeZ, std::size_t resolutionX, std::size_t resolutionY);
     void cutLinear(const std::array<double, 3>& start, const std::array<double, 3>& end, double toolRadius, bool isBallEnd);
     void simulate(const std::vector<SpeSegment>& segments, const MachineProfile& profile);
@@ -59,6 +61,10 @@ private:
     double m_maxY = 0.0;
     double m_minZ = 0.0;
     double m_maxZ = 0.0;
+    
+    double m_locX = 0.0;
+    double m_locY = 0.0;
+    double m_locZ = 0.0;
 
     std::vector<float> m_heightmap;
 

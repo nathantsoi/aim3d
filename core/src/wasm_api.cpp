@@ -76,7 +76,11 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
     function("createMachineProfile", &createMachineProfile);
 
     class_<SpeSegment>("SpeSegment")
-        .constructor<>();
+        .constructor<>()
+        .property("durationUsec", &SpeSegment::durationUsec)
+        .function("getDeltaX", optional_override([](SpeSegment& s) { return s.deltaSteps[0]; }))
+        .function("getDeltaY", optional_override([](SpeSegment& s) { return s.deltaSteps[1]; }))
+        .function("getDeltaZ", optional_override([](SpeSegment& s) { return s.deltaSteps[2]; }));
         
     register_vector<SpeSegment>("VectorSpeSegment");
 
@@ -86,6 +90,7 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
 
     class_<MachineSimulator>("MachineSimulator")
         .constructor<>()
+        .function("setStockLocation", &MachineSimulator::setStockLocation)
         .function("initialize", &MachineSimulator::initialize)
         .function("simulate", &MachineSimulator::simulate)
         .function("reset", &MachineSimulator::reset)

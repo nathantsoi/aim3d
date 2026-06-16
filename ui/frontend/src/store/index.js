@@ -62,6 +62,7 @@ export const useCoreStore = defineStore('core', {
     machineMaxVelocity: 3000.0,
     machineMaxAccel: 500.0,
     machineSegmentDuration: 0.025,
+    simulationResolution: 256,
     
     // Simulation Playback State
     simulationPlaybackStatus: 'stopped', // 'stopped', 'playing', 'paused'
@@ -80,7 +81,8 @@ export const useCoreStore = defineStore('core', {
     workOffsets: {
       54: [0, 0, 0] // G54 offset x, y, z
     },
-    toolOffsets: {} // toolId -> zOffset
+    toolOffsets: {}, // toolId -> zOffset
+    _machineInitialized: false
   }),
 
   getters: {
@@ -182,7 +184,9 @@ export const useCoreStore = defineStore('core', {
 
     async setGcodeText(text) {
       this.gcode = text;
-      if (this.activeMode === 'machine') {
+      if (this.pendingStockSetup) {
+        this.confirmStockSetup();
+      } else if (this.activeMode === 'machine') {
         await this.startSimulation();
       }
     },
@@ -259,6 +263,11 @@ export const useCoreStore = defineStore('core', {
           locZ: this.stockLocation.z
         }
       });
+      this.pendingStockSetup = null;
+      this._machineInitialized = false;
+      if (this.activeMode === 'machine') {
+        this.startSimulation();
+      }
     },
 
     beginSketchCreation() {
@@ -777,6 +786,7 @@ export const useCoreStore = defineStore('core', {
 
     setSimulationResolution(resolution) {
       this.simulationResolution = resolution;
+      this._machineInitialized = false;
     },
 
     async startSimulation() {
@@ -809,13 +819,30 @@ export const useCoreStore = defineStore('core', {
         activeSimulationSegments = planner.plan(program);
         this.simulationTotalSteps = activeSimulationSegments.size();
         this.simulationCurrentStep = 0;
-        planner.delete();
-
-        console.log(`Trajectory planned: ${this.simulationTotalSteps} segments`);
         
-        // Initialize simulation volume based on stock
-        sim.initialize(this.stockSize.x, this.stockSize.y, this.stockSize.z, this.simulationResolution, this.simulationResolution);
-        sim.reset();
+        console.log(`Trajectory planned: ${this.simulationTotalSteps} segments`);
+        if (this.simulationTotalSteps > 0) {
+          const firstSeg = activeSimulationSegments.get(0);
+          console.log(`First segment deltaSteps: X=${firstSeg.getDeltaX()}, Y=${firstSeg.getDeltaY()}, Z=${firstSeg.getDeltaZ()}`);
+        }
+        
+        planner.delete();
+        
+        // Sync GUI setup and settings to WASM core
+        for (const [code, offset] of Object.entries(this.workOffsets)) {
+          sim.setWorkOffset(Number(code), offset[0], offset[1], offset[2]);
+        }
+        for (const [toolId, zOffset] of Object.entries(this.toolOffsets)) {
+          sim.setToolOffset(Number(toolId), zOffset);
+        }
+
+        // Initialize simulation volume based on stock, only if not yet initialized
+        if (!this._machineInitialized) {
+          sim.setStockLocation(this.stockLocation.x || 0, this.stockLocation.y || 0, this.stockLocation.z || 0);
+          sim.initialize(this.stockSize.x, this.stockSize.y, this.stockSize.z, this.simulationResolution, this.simulationResolution);
+          sim.reset();
+          this._machineInitialized = true;
+        }
         
         this.extractSimulationMesh();
         
@@ -899,6 +926,7 @@ export const useCoreStore = defineStore('core', {
       }
       const t1 = performance.now();
 
+      this.simulationToolPosition = Array.from(sim.getToolPosition());
       this.extractSimulationMesh();
       const t2 = performance.now();
       if (t2 - t0 > 15) {
@@ -922,7 +950,10 @@ export const useCoreStore = defineStore('core', {
       const t1 = performance.now();
       
       const positionsView = sim.getPositions();
-      if (!positionsView) return;
+      if (!positionsView) {
+        syncViewportScene(this.$state);
+        return;
+      }
       
       const normalsView = sim.getNormals();
       const indicesView = sim.getIndices();
@@ -930,6 +961,7 @@ export const useCoreStore = defineStore('core', {
       const positions = new Float32Array(positionsView);
       const normals = new Float32Array(normalsView);
       const indices = new Uint32Array(indicesView);
+      
       const t2 = performance.now();
       
       const colors = [];
@@ -937,6 +969,8 @@ export const useCoreStore = defineStore('core', {
       for (let i = 0; i < vertexCount; i++) {
         colors.push(0.7, 0.7, 0.7, 1.0);
       }
+
+      this.simulationVertexCount = vertexCount;
 
       const simulatedSolid = {
         id: 'solid_simulated_stock',
@@ -951,7 +985,7 @@ export const useCoreStore = defineStore('core', {
           1, 0, 0, 0,
           0, 1, 0, 0,
           0, 0, 1, 0,
-          0, 0, 0, 1
+          this.stockLocation.x || 0, this.stockLocation.y || 0, this.stockLocation.z || 0, 1
         ],
         pickable: {
           entityId: 'simulated_stock',
@@ -963,7 +997,6 @@ export const useCoreStore = defineStore('core', {
 
       // toolhead visual indicator removed: we use the CAD-styled dynamic toolhead from coreState.js instead.
       
-      this.simulationToolPosition = Array.from(sim.getToolPosition());
       this.viewportScene = {
         ...this.viewportScene,
         solids: [
@@ -1019,6 +1052,7 @@ export const useCoreStore = defineStore('core', {
         this.toolholderDiameter = 50;
         this.toolholderLength = 25;
       }
+      this._machineInitialized = false;
       syncViewportScene(this.$state);
     },
 
