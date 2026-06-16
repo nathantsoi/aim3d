@@ -141,6 +141,27 @@ make test-python
 
 Use `make deps` directly only when you want to refresh dependencies without building or running the app.
 
+### Performance Profiling (Wasm & C++ Core)
+
+To profile the performance of the WebAssembly-compiled C++ core and the Vue frontend together:
+
+1. **Enable Debug Symbols**: The core's CMake builds are configured to emit DWARF debug symbols (via the `-g` compile and linker flags). Make sure to rebuild the project to apply them:
+   ```bash
+   make clean && make build
+   ```
+2. **Launch the Dev Server**: Run the dev server to start the frontend:
+   ```bash
+   make run
+   ```
+3. **Use Standalone Chrome (macOS Webview limitation)**: Because Tauri on macOS uses `WKWebView` (Safari's engine) which does not support Chrome extensions, you must profile using a standalone Google Chrome browser.
+4. **Install the DWARF Extension**: In Google Chrome, install the [C/C++ DevTools Support (DWARF) Extension](https://chromewebstore.google.com/detail/cc++-devtools-support-dwa/pdcpmagijalfljmkmjngeonclgbbannb).
+5. **Enable WebAssembly Debugging**: Open Chrome DevTools, click the gear settings icon, select **Experiments**, and ensure **"WebAssembly Debugging: Enable DWARF support"** is enabled. See the Chrome Developer blog post [Debugging WebAssembly with modern tools](https://developer.chrome.com/docs/devtools/wasm) for more details.
+6. **Record a Profile**:
+   - Navigate to `http://127.0.0.1:1420` in Chrome.
+   - Open Chrome DevTools and switch to the **Performance** tab.
+   - Click **Record**, interact with the application (e.g. click the Z+ jog button), wait for the lag/action to complete, and click **Stop**.
+   - The generated flamegraph under the main thread will display de-mangled C++ function calls (e.g., `MachineSimulator` methods) directly interwoven with your JavaScript execution stack.
+
 ---
 
 ## Current Validation Status
