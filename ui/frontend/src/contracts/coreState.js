@@ -563,7 +563,8 @@ export const syncViewportScene = (state) => {
         0, 0, 1, 0,
         0, 0, 0, 1
       ],
-      pickable: null
+      pickable: null,
+      _positionKey: `${tX},${tY},${tZ}`
     };
     
     state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_toolhead');

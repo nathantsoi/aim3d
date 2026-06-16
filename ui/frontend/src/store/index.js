@@ -929,6 +929,7 @@ export const useCoreStore = defineStore('core', {
         normals,
         indices,
         colors,
+        _revision: Date.now(),
         transform: [
           1, 0, 0, 0,
           0, 1, 0, 0,
