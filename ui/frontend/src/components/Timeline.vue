@@ -282,6 +282,28 @@
             </div>
           </div>
         </div>
+
+        <!-- G54 Frame folder -->
+        <div class="browser-folder">
+          <div class="folder-header">
+            <span class="folder-label">G54 Work Offset</span>
+            <button
+              class="visibility-toggle"
+              data-testid="g54-visibility-toggle"
+              :title="store.showG54Frame ? 'Hide G54 Frame' : 'Show G54 Frame'"
+              :class="{ dimmed: !store.showG54Frame }"
+              @click="store.toggleG54FrameVisibility()"
+            >
+              👁
+            </button>
+          </div>
+          <div v-if="store.showG54Frame" class="folder-children">
+            <div class="browser-leaf">
+              <span>Origin: {{ store.workOffsets[54][0] }}, {{ store.workOffsets[54][1] }}, {{ store.workOffsets[54][2] }}</span>
+              <span class="leaf-kind">G54</span>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>

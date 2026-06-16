@@ -117,15 +117,7 @@
       <span>EXPORT DXF</span>
     </button>
 
-    <button
-      class="settings-btn"
-      data-testid="ribbon-settings"
-      @click.stop="store.beginProjectSettings()"
-    >
-      <span>SETTINGS</span>
-    </button>
-
-
+    <!-- Settings button removed -->
   </div>
 </template>
 

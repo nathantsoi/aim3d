@@ -137,6 +137,92 @@
     </div>
 
     <div v-else-if="activeTab === 'setup'" class="tab-content">
+      <section class="section-container">
+        <h3>Machine Environment</h3>
+        <div class="property-card">
+          <label class="input-item">
+            <span>Machine Control Mode</span>
+            <select
+              :value="store.machineControlMode"
+              @change="store.togglePhysicalMode()"
+            >
+              <option value="simulation">Simulation</option>
+              <option value="physical">Physical Control</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="section-container">
+        <h3>G54 Work Origin Offsets</h3>
+        <div class="property-card">
+          <div class="input-item">
+            <span>X Offset (mm)</span>
+            <input type="number" step="0.001" v-model="g54X" />
+          </div>
+          <div class="input-item">
+            <span>Y Offset (mm)</span>
+            <input type="number" step="0.001" v-model="g54Y" />
+          </div>
+          <div class="input-item">
+            <span>Z Offset (mm)</span>
+            <input type="number" step="0.001" v-model="g54Z" />
+          </div>
+          <button class="confirm-btn" style="margin-top: 8px;" @click="store.setG54Origin(g54X, g54Y, g54Z)">Set Origin</button>
+        </div>
+      </section>
+
+      <section class="section-container">
+        <h3>Tool Offset Table</h3>
+        <div class="property-card">
+          <table class="offsets-table" style="margin: 0; min-width: 300px; display: block; overflow-x: auto;">
+            <thead>
+              <tr>
+                <th>Tool ID</th>
+                <th>Diameter</th>
+                <th>Radius</th>
+                <th>Z Offset</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in toolsList" :key="t.id">
+                <td>T{{ t.id }}</td>
+                <td>
+                  <input 
+                    type="number" 
+                    step="0.1" 
+                    :value="t.radius * 2" 
+                    @input="onToolDiameterInput(t.id, $event)" 
+                    class="table-input"
+                    style="width: 65px;"
+                  />
+                </td>
+                <td>
+                  <input 
+                    type="number" 
+                    step="0.1" 
+                    :value="t.radius" 
+                    @input="onToolRadiusInput(t.id, $event)" 
+                    class="table-input"
+                    style="width: 65px;"
+                  />
+                </td>
+                <td>
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    :value="store.toolOffsets[t.id] || 0.0" 
+                    @input="onToolOffsetInput(t.id, $event)" 
+                    class="table-input"
+                    style="width: 65px;"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section
         v-for="setup in store.setups"
         :key="setup.id"
@@ -195,70 +281,6 @@
     </div>
 </div>
 
-<!-- G54 Origin Setup Modal -->
-<div v-if="store.showG54Modal" class="modal-overlay">
-  <div class="modal-card">
-    <h3>Set G54 Work Origin Offsets</h3>
-    <p class="modal-desc">Set the translation offset from the physical machine's home coordinates to the G54 workspace origin.</p>
-    <div class="modal-fields">
-      <label class="input-item">
-        <span>X Offset (mm)</span>
-        <input type="number" step="0.001" v-model="g54X" />
-      </label>
-      <label class="input-item">
-        <span>Y Offset (mm)</span>
-        <input type="number" step="0.001" v-model="g54Y" />
-      </label>
-      <label class="input-item">
-        <span>Z Offset (mm)</span>
-        <input type="number" step="0.001" v-model="g54Z" />
-      </label>
-    </div>
-    <div class="modal-actions">
-      <button class="cancel-btn" @click="store.showG54Modal = false">Cancel</button>
-      <button class="confirm-btn" @click="store.setG54Origin(g54X, g54Y, g54Z)">Set Origin</button>
-    </div>
-  </div>
-</div>
-
-<!-- Tool Table Modal -->
-<div v-if="store.showToolTableModal" class="modal-overlay">
-  <div class="modal-card tool-table-card">
-    <h3>Tool Offset Table</h3>
-    <p class="modal-desc">Configure tool length Z offsets. These are applied in the WASM core upon tool change commands (e.g. T1 M6).</p>
-    
-    <table class="offsets-table">
-      <thead>
-        <tr>
-          <th>Tool ID</th>
-          <th>Radius (mm)</th>
-          <th>Type</th>
-          <th>Z Offset (mm)</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="t in toolsList" :key="t.id">
-          <td>T{{ t.id }}</td>
-          <td>{{ t.radius }}</td>
-          <td>{{ t.type }}</td>
-          <td>
-            <input 
-              type="number" 
-              step="0.01" 
-              :value="store.toolOffsets[t.id] || 0.0" 
-              @input="onToolOffsetInput(t.id, $event)" 
-              class="table-input"
-            />
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    
-    <div class="modal-actions">
-      <button class="confirm-btn" @click="store.showToolTableModal = false">Close</button>
-    </div>
-  </div>
-</div>
 
 </div>
 </template>
@@ -320,6 +342,20 @@ export default defineComponent({
       store.setToolOffset(toolId, parseNumber(event.target.value) || 0.0);
     };
 
+    const onToolRadiusInput = (toolId, event) => {
+      const tool = toolsList.value.find(t => t.id === toolId);
+      if (tool) {
+        tool.radius = parseNumber(event.target.value) || 0.0;
+      }
+    };
+
+    const onToolDiameterInput = (toolId, event) => {
+      const tool = toolsList.value.find(t => t.id === toolId);
+      if (tool) {
+        tool.radius = (parseNumber(event.target.value) || 0.0) / 2;
+      }
+    };
+
     return {
       store,
       activeTab,
@@ -331,7 +367,9 @@ export default defineComponent({
       onFeatureInput,
       onSetupField,
       onOperationField,
-      onToolOffsetInput
+      onToolOffsetInput,
+      onToolRadiusInput,
+      onToolDiameterInput
     };
   }
 });

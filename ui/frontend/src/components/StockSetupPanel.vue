@@ -32,6 +32,24 @@
       </section>
 
       <section class="section-container">
+        <h3>Location</h3>
+        <div class="property-card">
+          <label class="input-item">
+            <span>X Offset</span>
+            <input type="number" v-model.number="locX" step="1" />
+          </label>
+          <label class="input-item">
+            <span>Y Offset</span>
+            <input type="number" v-model.number="locY" step="1" />
+          </label>
+          <label class="input-item">
+            <span>Z Offset</span>
+            <input type="number" v-model.number="locZ" step="1" />
+          </label>
+        </div>
+      </section>
+
+      <section class="section-container">
         <h3>Tool</h3>
         <div class="property-card">
           <label class="input-item">
@@ -94,6 +112,18 @@ const y = computed({
 const z = computed({
   get: () => store.pendingStockSetup?.z ?? 25,
   set: (val) => store.updateStockSetup({ z: val })
+});
+const locX = computed({
+  get: () => store.pendingStockSetup?.locX ?? 0,
+  set: (val) => store.updateStockSetup({ locX: val })
+});
+const locY = computed({
+  get: () => store.pendingStockSetup?.locY ?? 0,
+  set: (val) => store.updateStockSetup({ locY: val })
+});
+const locZ = computed({
+  get: () => store.pendingStockSetup?.locZ ?? 0,
+  set: (val) => store.updateStockSetup({ locZ: val })
 });
 const toolDiameter = computed({
   get: () => store.toolDiameter,

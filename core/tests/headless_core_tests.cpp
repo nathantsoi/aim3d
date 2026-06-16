@@ -986,12 +986,12 @@ int main() {
         assert(sim.heightmap().size() == 100);
 
         for (float h : sim.heightmap()) {
-            assert(h == 0.0f);
+            assert(h == 25.0f);
         }
 
-        sim.cutLinear({10.0, 50.0, -5.0}, {90.0, 50.0, -5.0}, 10.0, false);
+        sim.cutLinear({10.0, 50.0, 20.0}, {90.0, 50.0, 20.0}, 10.0, false);
         std::size_t idx = 5 + 5 * 10;
-        assert(sim.heightmap()[idx] == -5.0f);
+        assert(sim.heightmap()[idx] == 20.0f);
 
         std::vector<float> positions;
         std::vector<float> normals;
@@ -1003,6 +1003,28 @@ int main() {
         assert(!indices.empty());
         assert(positions.size() == 10 * 10 * 2 * 3);
         assert(normals.size() == positions.size());
+
+        // Test work offset application
+        sim.setWorkOffset(54, 10.0, 10.0, 5.0);
+        assert(sim.getWorkOffset(54)[0] == 10.0);
+        assert(sim.getWorkOffset(54)[1] == 10.0);
+        assert(sim.getWorkOffset(54)[2] == 5.0);
+        
+        sim.reset();
+        aim3d::SpeSegment seg;
+        seg.deltaSteps = {10, 0, 0};
+        seg.flags = 2; // kSegmentFlagSpindleOn
+        aim3d::MachineProfile profile = aim3d::MachineProfile::defaultThreeAxisMill();
+        profile.axes[0].stepsPerMm = 1.0;
+        sim.simulateStep(seg, profile);
+        
+        // The tool moves +10mm in X. It starts at (0,0,0) WCS.
+        // It cuts from (0,0,0) to (10,0,0) in WCS.
+        // In Machine coordinates, it's (10,10,5) to (20,10,5).
+        // It should cut heightmap at Y=10 to Z=5.
+        // StepX/Y is (100-0)/9 = 11.11. So X=10 -> idx X=1, Y=10 -> idx Y=1.
+        std::size_t idx2 = 1 + 1 * 10;
+        assert(sim.heightmap()[idx2] < 25.0f);
 
         // Test C FFI API
         Aim3dSimulatorHandle* handle = aim3d_simulator_create();

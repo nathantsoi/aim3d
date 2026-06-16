@@ -73,6 +73,7 @@ export const useCoreStore = defineStore('core', {
     // Machine Control State
     machineControlMode: 'simulation', // 'simulation' or 'physical'
     showStock: true,
+    showG54Frame: true,
     showG54Modal: false,
     showToolTableModal: false,
     rightPanelTab: 'properties', // 'properties', 'gcode', 'settings', 'debug'
@@ -194,7 +195,10 @@ export const useCoreStore = defineStore('core', {
         kind: this.stockSize?.kind || 'cuboid',
         x: this.stockSize.x,
         y: this.stockSize.y,
-        z: this.stockSize.z
+        z: this.stockSize.z,
+        locX: this.stockLocation?.x || 0,
+        locY: this.stockLocation?.y || 0,
+        locZ: this.stockLocation?.z || 0
       };
       this.rightPanelTab = 'setup';
     },
@@ -219,7 +223,10 @@ export const useCoreStore = defineStore('core', {
         kind: this.stockSize?.kind || 'cuboid',
         x: this.stockSize.x,
         y: this.stockSize.y,
-        z: this.stockSize.z
+        z: this.stockSize.z,
+        locX: this.stockLocation?.x || 0,
+        locY: this.stockLocation?.y || 0,
+        locZ: this.stockLocation?.z || 0
       };
     },
 
@@ -228,7 +235,13 @@ export const useCoreStore = defineStore('core', {
       this.stockSize = {
         x: Number(this.pendingStockSetup.x),
         y: Number(this.pendingStockSetup.y),
-        z: Number(this.pendingStockSetup.z)
+        z: Number(this.pendingStockSetup.z),
+        kind: this.pendingStockSetup.kind
+      };
+      this.stockLocation = {
+        x: Number(this.pendingStockSetup.locX),
+        y: Number(this.pendingStockSetup.locY),
+        z: Number(this.pendingStockSetup.locZ)
       };
       
       this.dispatchAction({
@@ -240,7 +253,10 @@ export const useCoreStore = defineStore('core', {
           kind: this.pendingStockSetup.kind,
           x: this.stockSize.x,
           y: this.stockSize.y,
-          z: this.stockSize.z
+          z: this.stockSize.z,
+          locX: this.stockLocation.x,
+          locY: this.stockLocation.y,
+          locZ: this.stockLocation.z
         }
       });
     },
@@ -755,10 +771,12 @@ export const useCoreStore = defineStore('core', {
       });
     },
 
-    updateMachineProfile(patch) {
-      if (patch.machineMaxVelocity !== undefined) this.machineMaxVelocity = patch.machineMaxVelocity;
-      if (patch.machineMaxAccel !== undefined) this.machineMaxAccel = patch.machineMaxAccel;
-      if (patch.machineSegmentDuration !== undefined) this.machineSegmentDuration = patch.machineSegmentDuration;
+    updateMachineProfile(updates) {
+      Object.assign(this, updates);
+    },
+
+    setSimulationResolution(resolution) {
+      this.simulationResolution = resolution;
     },
 
     async startSimulation() {
@@ -796,7 +814,7 @@ export const useCoreStore = defineStore('core', {
         console.log(`Trajectory planned: ${this.simulationTotalSteps} segments`);
         
         // Initialize simulation volume based on stock
-        sim.initialize(this.stockSize.x, this.stockSize.y, this.stockSize.z, 256, 256);
+        sim.initialize(this.stockSize.x, this.stockSize.y, this.stockSize.z, this.simulationResolution, this.simulationResolution);
         sim.reset();
         
         this.extractSimulationMesh();
@@ -889,7 +907,6 @@ export const useCoreStore = defineStore('core', {
 
       if (this.simulationCurrentStep >= this.simulationTotalSteps) {
         this.simulationPlaybackStatus = 'stopped';
-        this.isSimulating = false;
         this.addMessage('Simulation finished', 'success');
         this._lastTickMs = null;
         return;
@@ -1100,6 +1117,18 @@ export const useCoreStore = defineStore('core', {
     toggleStockVisibility() {
       this.showStock = !this.showStock;
       syncViewportScene(this.$state);
+    },
+
+    toggleG54FrameVisibility() {
+      this.showG54Frame = !this.showG54Frame;
+      syncViewportScene(this.$state);
+    },
+
+    toggleOriginVisibility() {
+      if (this.browser?.origin) {
+        this.browser.origin.visible = !this.browser.origin.visible;
+        syncViewportScene(this.$state);
+      }
     }
   }
 });

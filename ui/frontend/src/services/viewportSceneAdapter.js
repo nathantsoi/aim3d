@@ -247,6 +247,38 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     });
   }
 
+  axes.forEach((axis) => {
+    if (scene?.gizmos?.originVisible === false && axis.id.startsWith('axis_')) return;
+      if (axis.positions && axis.indices) {
+        const selected = axis.id === selectedEntityId;
+        const hovered = !selected && axis.id === hoverEntityId;
+        const color = selected
+          ? SELECTED_SOLID_COLOR
+          : hovered
+            ? HOVERED_SOLID_COLOR
+            : axis.color;
+
+        const axisItem = { ...axis, color, renderMode: 'planeFill' };
+        constructionVertexOffset += pushPlaneFill(
+          constructionVertices,
+          constructionIndices,
+          axisItem,
+          constructionVertexOffset
+        );
+
+        pickables.push({
+          solidId: axis.id,
+          bodyId: null,
+          entityId: axis.id,
+          kind: 'Axis',
+          priority: 10,
+          snapPoints: [],
+          vertexOffset: 0,
+          indexStart: 0,
+          indexCount: axis.indices.length
+        });
+      }
+    });
   if (scene?.gizmos?.showSketchPlaneIndicator && scene?.gizmos?.sketchGridFrame) {
     const frame = scene.gizmos.sketchGridFrame;
     const { origin, axisU, axisV, normal, extent = 5 } = frame;
@@ -318,11 +350,12 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     if (item.visible === false || isPlaneFillItem(item)) return;
     pushSegmentPairs(lineVertices, item.points ?? [], item.color ?? [0.95, 0.85, 0.25, 1]);
   });
-  if (scene?.gizmos?.originVisible !== false) {
-    axes.forEach((axis) => {
+  axes.forEach((axis) => {
+    if (scene?.gizmos?.originVisible === false && axis.id.startsWith('axis_')) return;
+    if (!axis.positions || !axis.indices) {
       pushSegmentPairs(lineVertices, axis.points ?? [], axis.color ?? [1, 1, 1, 1]);
-    });
-  }
+    }
+  });
 
   const debug = scene?.gizmos?.debug;
   if (debug?.enabled) {

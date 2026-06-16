@@ -22,15 +22,62 @@ const identityTransform = [
   0, 0, 0, 1
 ];
 
+export const createAxisCylinder = (id, label, color, axisIndex, ox = 0, oy = 0, oz = 0, length = 1.1, radius = 0.015, segments = 6) => {
+  const positions = [];
+  const normals = [];
+  const indices = [];
+  
+  for (let i = 0; i < segments; i++) {
+    const theta0 = (i / segments) * Math.PI * 2;
+    const theta1 = ((i + 1) / segments) * Math.PI * 2;
+    
+    const c0 = Math.cos(theta0) * radius;
+    const s0 = Math.sin(theta0) * radius;
+    const c1 = Math.cos(theta1) * radius;
+    const s1 = Math.sin(theta1) * radius;
+    
+    const p = (v1, v2, l) => {
+      if (axisIndex === 0) return [ox + l, oy + v1, oz + v2];
+      if (axisIndex === 1) return [ox + v2, oy + l, oz + v1];
+      return [ox + v1, oy + v2, oz + l];
+    };
+    
+    const b0 = p(c0, s0, 0);
+    const b1 = p(c1, s1, 0);
+    const t0 = p(c0, s0, length);
+    const t1 = p(c1, s1, length);
+    
+    const pN = (v1, v2, l) => {
+      if (axisIndex === 0) return [l, v1, v2];
+      if (axisIndex === 1) return [v2, l, v1];
+      return [v1, v2, l];
+    };
+    
+    const nx = Math.cos((theta0 + theta1) / 2);
+    const ny = Math.sin((theta0 + theta1) / 2);
+    const n = pN(nx, ny, 0);
+    
+    const baseIndex = positions.length / 3;
+    positions.push(...b0, ...b1, ...t1, ...t0);
+    normals.push(...n, ...n, ...n, ...n);
+    indices.push(
+      baseIndex, baseIndex + 1, baseIndex + 2,
+      baseIndex, baseIndex + 2, baseIndex + 3
+    );
+  }
+  
+  return { id, label, color, positions, normals, indices };
+};
+
 export const createDefaultViewportScene = () => ({
   solids: [],
   toolpaths: [],
   construction: [],
   gizmos: {
     axes: [
-      { id: 'axis_x', label: 'X', color: [0.95, 0.18, 0.2, 1], points: [0, 0, 0, 1.1, 0, 0] },
-      { id: 'axis_y', label: 'Y', color: [0.2, 0.82, 0.28, 1], points: [0, 0, 0, 0, 1.1, 0] },
-      { id: 'axis_z', label: 'Z', color: [0.28, 0.48, 1, 1], points: [0, 0, 0, 0, 0, 1.1] }
+      createAxisCylinder('axis_x', 'X', [0.95, 0.18, 0.2, 1], 0),
+      createAxisCylinder('axis_y', 'Y', [0.2, 0.82, 0.28, 1], 1),
+      createAxisCylinder('axis_z', 'Z', [0.28, 0.48, 1, 1], 2)
     ],
     originVisible: true,
     originPlanes: [
@@ -163,6 +210,8 @@ export const createInitialCoreState = () => ({
   showGcodeEditor: false,
   units: 'inch',
   stockSize: { x: 1, y: 1, z: 1, kind: 'cuboid' },
+  stockLocation: { x: 0, y: 0, z: 0 },
+  simulationResolution: 256,
   toolDiameter: 0.25,
   toolLength: 1,
   toolRadius: 0,
@@ -338,6 +387,10 @@ export const syncViewportScene = (state) => {
     state.viewportScene = createDefaultViewportScene();
   }
 
+  if (state.browser?.origin?.visible !== undefined) {
+    state.viewportScene.gizmos.originVisible = state.browser.origin.visible;
+  }
+
   // A toolpath only has meaning relative to a body it machines. Once every
   // solid is gone, drop any orphaned toolpaths so the 3D view doesn't keep
   // showing a path floating in empty space.
@@ -362,6 +415,9 @@ export const syncViewportScene = (state) => {
     const y = state.pendingStockSetup?.y ?? state.stockSize?.y ?? 100;
     const z = state.pendingStockSetup?.z ?? state.stockSize?.z ?? 25;
     const kind = state.pendingStockSetup?.kind ?? state.stockSize?.kind ?? 'cuboid';
+    const locX = state.pendingStockSetup?.locX ?? state.stockLocation?.x ?? 0;
+    const locY = state.pendingStockSetup?.locY ?? state.stockLocation?.y ?? 0;
+    const locZ = state.pendingStockSetup?.locZ ?? state.stockLocation?.z ?? 0;
     
     let stockPositions = [];
     let stockNormals = [];
@@ -378,19 +434,21 @@ export const syncViewportScene = (state) => {
         const cy = Math.sin(theta) * radius;
         
         // Bottom circle
-        stockPositions.push(cx, cy, 0);
+        stockPositions.push(cx + locX, cy + locY, 0 + locZ);
         stockNormals.push(0, 0, -1);
+        stockColors.push(c, c, c, 0.7);
         
         // Top circle
-        stockPositions.push(cx, cy, h);
+        stockPositions.push(cx + locX, cy + locY, h + locZ);
         stockNormals.push(0, 0, 1);
         
         // Side bottom
-        stockPositions.push(cx, cy, 0);
+        stockPositions.push(cx + locX, cy + locY, 0 + locZ);
         stockNormals.push(cx, cy, 0);
+        stockColors.push(c, c, c, 0.7);
         
         // Side top
-        stockPositions.push(cx, cy, h);
+        stockPositions.push(cx + locX, cy + locY, h + locZ);
         stockNormals.push(cx, cy, 0);
         
         const c = i % 2 === 0 ? 0.7 : 0.8;
@@ -406,12 +464,12 @@ export const syncViewportScene = (state) => {
       
       // Caps
       const centerBottom = stockPositions.length / 3;
-      stockPositions.push(0, 0, 0);
+      stockPositions.push(0 + locX, 0 + locY, 0 + locZ);
       stockNormals.push(0, 0, -1);
       stockColors.push(0.7, 0.7, 0.7, 0.7);
       
       const centerTop = stockPositions.length / 3;
-      stockPositions.push(0, 0, h);
+      stockPositions.push(0 + locX, 0 + locY, h + locZ);
       stockNormals.push(0, 0, 1);
       stockColors.push(0.8, 0.8, 0.8, 0.7);
       
@@ -424,8 +482,8 @@ export const syncViewportScene = (state) => {
       const d = y;
       const h = z;
       stockPositions = [
-          0, 0, 0,  w, 0, 0,  w, d, 0,  0, d, 0,
-          0, 0, h,  w, 0, h,  w, d, h,  0, d, h
+          0 + locX, 0 + locY, 0 + locZ,  w + locX, 0 + locY, 0 + locZ,  w + locX, d + locY, 0 + locZ,  0 + locX, d + locY, 0 + locZ,
+          0 + locX, 0 + locY, h + locZ,  w + locX, 0 + locY, h + locZ,  w + locX, d + locY, h + locZ,  0 + locX, d + locY, h + locZ
       ];
       stockNormals = [
           0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
@@ -581,6 +639,27 @@ export const syncViewportScene = (state) => {
     (count, toolpath) => count + Math.max(0, Math.floor((toolpath.points?.length ?? 0) / 3) - 1),
     0
   );
+
+  // Dynamic G54 Frame
+  if (state.activeMode === 'machine' && state.showG54Frame && state.workOffsets && state.workOffsets[54]) {
+    const ox = state.workOffsets[54][0] || 0;
+    const oy = state.workOffsets[54][1] || 0;
+    const oz = state.workOffsets[54][2] || 0;
+    
+    const size = 1.1; // Same size as normal origin frame
+    
+    // Remove old g54 axes
+    state.viewportScene.gizmos.axes = state.viewportScene.gizmos.axes.filter(a => !a.id.startsWith('g54_axis_'));
+    
+    state.viewportScene.gizmos.axes.push(
+      createAxisCylinder('g54_axis_x', 'G54 X', [0.95, 0.4, 0.2, 1], 0, ox, oy, oz, size),
+      createAxisCylinder('g54_axis_y', 'G54 Y', [0.4, 0.95, 0.2, 1], 1, ox, oy, oz, size),
+      createAxisCylinder('g54_axis_z', 'G54 Z', [0.2, 0.6, 1.0, 1], 2, ox, oy, oz, size)
+    );
+  } else if (state.viewportScene?.gizmos?.axes) {
+    state.viewportScene.gizmos.axes = state.viewportScene.gizmos.axes.filter(a => !a.id.startsWith('g54_axis_'));
+  }
+
   const axisSegments = state.viewportScene.gizmos?.axes?.length ?? 0;
   const constructionSegments = (state.viewportScene.construction ?? []).reduce((count, item) => {
     if (item.renderMode === 'planeFill' || item.category === 'plane' || item.category === 'ucs') {

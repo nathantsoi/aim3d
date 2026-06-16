@@ -158,6 +158,45 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
     });
   }
 
+  if (Array.isArray(scene?.gizmos?.axes)) {
+    scene.gizmos.axes.forEach((axis) => {
+      if (scene?.gizmos?.originVisible === false && axis.id.startsWith('axis_')) return;
+      const positions = axis.positions ?? [];
+      const indices = axis.indices ?? [];
+      const entityId = axis.id;
+      const priority = 10;
+
+      if (!positions.length || !indices.length) return;
+
+      for (let i = 0; i + 2 < indices.length; i += 3) {
+        const hit = intersectTriangle(
+          ray,
+          vertexAt(positions, indices[i]),
+          vertexAt(positions, indices[i + 1]),
+          vertexAt(positions, indices[i + 2])
+        );
+        if (!hit) continue;
+
+        if (
+          !best ||
+          hit.distance < best.distance - 1e-6 ||
+          (Math.abs(hit.distance - best.distance) <= 1e-6 && priority > best.priority)
+        ) {
+          best = {
+            entityId,
+            solidId: axis.id,
+            bodyId: null,
+            kind: 'Axis',
+            priority,
+            distance: hit.distance,
+            position: hit.position,
+            snapCandidate: null
+          };
+        }
+      }
+    });
+  }
+
   return {
     hit: best,
     latencyMs: performance.now() - startedAt

@@ -32,6 +32,10 @@
         <span class="label">Selected Entity:</span>
         <span class="value highlight-text">{{ store.selectedEntityId || 'None' }}</span>
       </div>
+      <div class="stat-row">
+        <span class="label">Hovered Entity:</span>
+        <span class="value highlight-text">{{ diagnostics.hoverTargetId || 'None' }}</span>
+      </div>
       <div v-if="debugModeEnabled" class="stat-row">
         <span class="label">Orbit pivot:</span>
         <span class="value">{{ orbitPivotLabel }}</span>

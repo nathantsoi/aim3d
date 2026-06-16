@@ -35,7 +35,14 @@ public:
     const std::vector<float>& getNormals() const { return m_normals; }
     const std::vector<uint32_t>& getIndices() const { return m_indices; }
 
-    std::array<double, 3> getToolPosition() const { return m_currentPosMm; }
+    std::array<double, 3> getToolPosition() const {
+        std::array<double, 3> activeOffset = getWorkOffset(54);
+        return {
+            m_currentPosMm[0] + activeOffset[0],
+            m_currentPosMm[1] + activeOffset[1],
+            m_currentPosMm[2] + activeOffset[2]
+        };
+    }
     std::size_t getCurrentStep() const { return m_currentStepIndex; }
 
     // Direct accessors for testing

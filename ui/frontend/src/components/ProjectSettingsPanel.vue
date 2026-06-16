@@ -30,6 +30,21 @@
         </label>
       </div>
     </section>
+
+    <section class="section-container">
+      <h3>Simulation Parameters</h3>
+      <div class="property-card">
+        <label class="input-item">
+          <span>Simulation Grid Resolution</span>
+          <select v-model="simulationResolution">
+            <option :value="128">128x128</option>
+            <option :value="256">256x256</option>
+            <option :value="512">512x512</option>
+            <option :value="1024">1024x1024</option>
+          </select>
+        </label>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -57,6 +72,11 @@ const machineMaxAccel = computed({
 const machineSegmentDuration = computed({
   get: () => store.machineSegmentDuration,
   set: (val) => store.updateMachineProfile({ machineSegmentDuration: Number(val) })
+});
+
+const simulationResolution = computed({
+  get: () => store.simulationResolution,
+  set: (val) => store.setSimulationResolution(Number(val))
 });
 </script>
 

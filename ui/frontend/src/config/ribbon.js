@@ -302,7 +302,6 @@ export const RIBBON_MODES = {
         id: 'machine',
         label: 'MACHINE',
         groups: [
-          machineSetupGroup,
           simulationGcodeGroup,
           ...placeholderGroups(['INSPECT'])
         ]

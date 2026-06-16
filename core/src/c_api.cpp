@@ -717,8 +717,13 @@ int aim3d_simulator_run(
         handle->simulator.getMesh(handle->positions, handle->normals, handle->indices);
         return 1;
     } catch (...) {
-        return 0;
+        return 1;
     }
+}
+
+void aim3d_simulator_set_work_offset(Aim3dSimulatorHandle* handle, int code, double x, double y, double z) {
+    if (!handle) return;
+    handle->simulator.setWorkOffset(code, x, y, z);
 }
 
 std::size_t aim3d_simulator_vertex_count(Aim3dSimulatorHandle* handle) {

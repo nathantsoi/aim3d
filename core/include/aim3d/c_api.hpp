@@ -141,6 +141,8 @@ int aim3d_simulator_run(
     const int* toolIsBall,
     int toolCount);
 
+void aim3d_simulator_set_work_offset(Aim3dSimulatorHandle* handle, int code, double x, double y, double z);
+
 std::size_t aim3d_simulator_vertex_count(Aim3dSimulatorHandle* handle);
 std::size_t aim3d_simulator_index_count(Aim3dSimulatorHandle* handle);
 void aim3d_simulator_copy_mesh(

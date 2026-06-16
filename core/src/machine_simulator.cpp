@@ -18,8 +18,8 @@ void MachineSimulator::initialize(double sizeX, double sizeY, double sizeZ, std:
     m_minX = 0.0;
     m_maxY = sizeY;
     m_minY = 0.0;
-    m_maxZ = 0.0;
-    m_minZ = -sizeZ;
+    m_maxZ = sizeZ;
+    m_minZ = 0.0;
 
     m_heightmap.assign(m_resX * m_resY, (float)m_maxZ);
     
@@ -138,10 +138,20 @@ bool MachineSimulator::simulateStep(const SpeSegment& segment, const MachineProf
         nextPosMm[i] = static_cast<double>(m_currentSteps[i]) / profile.axes[i].stepsPerMm;
     }
 
-    // Only cut if the spindle is on
     constexpr uint32_t kSegmentFlagSpindleOn = 1u << 1;
     if (segment.flags & kSegmentFlagSpindleOn) {
-        cutLinear(m_currentPosMm, nextPosMm, radius, isBall);
+        std::array<double, 3> activeOffset = getWorkOffset(54);
+        std::array<double, 3> mcsStart = {
+            m_currentPosMm[0] + activeOffset[0],
+            m_currentPosMm[1] + activeOffset[1],
+            m_currentPosMm[2] + activeOffset[2]
+        };
+        std::array<double, 3> mcsEnd = {
+            nextPosMm[0] + activeOffset[0],
+            nextPosMm[1] + activeOffset[1],
+            nextPosMm[2] + activeOffset[2]
+        };
+        cutLinear(mcsStart, mcsEnd, radius, isBall);
     }
 
     m_currentPosMm = nextPosMm;
