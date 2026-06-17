@@ -44,6 +44,13 @@ timelineBarApp.mount('#timeline-bar');
 // Project live core-state snapshots onto the store. Primary transport is the
 // native Tauri IPC `core://changed` event.
 const coreStore = useCoreStore(pinia);
+
+// Restore the last active workspace from local storage
+const savedMode = localStorage.getItem('aim3d_activeMode');
+if (savedMode && ['design', 'manufacture', 'machine'].includes(savedMode)) {
+  coreStore.setMode(savedMode);
+}
+
 subscribeCoreSnapshots(coreStore).catch((error) => {
   console.warn('[aim3d Frontend] core snapshot subscription unavailable', error);
 });

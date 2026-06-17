@@ -118,7 +118,7 @@ MachineProfile MachineProfile::defaultThreeAxisMill() {
     profile.axes = {
         AxisProfile{"X", -1.0, 300.0, 3000.0, 500.0, 80.0, true},
         AxisProfile{"Y", -1.0, 300.0, 3000.0, 500.0, 80.0, true},
-        AxisProfile{"Z", -100.0, 50.0, 1200.0, 350.0, 400.0, true},
+        AxisProfile{"Z", -100.0, 60.0, 1200.0, 350.0, 400.0, true},
     };
     return profile;
 }
@@ -1059,6 +1059,12 @@ bool MachineController::submitMdi(const std::string& gcode) {
     }
     std::vector<SpeSegment> segs = m_planner.plan(prog, m_lastDiagnostics);
     std::cout << "[Controller] Planner generated " << segs.size() << " segments." << std::endl;
+    if (!segs.empty()) {
+        std::cout << "[Controller] First segment distance: " 
+                  << segs.front().deltaSteps[0] << ", " 
+                  << segs.front().deltaSteps[1] << ", " 
+                  << segs.front().deltaSteps[2] << " steps" << std::endl;
+    }
     for (const auto& diag : m_lastDiagnostics) {
         if (diag.severity == ControllerDiagnosticSeverity::Error || diag.severity == ControllerDiagnosticSeverity::Fatal) {
             std::cerr << "[Controller] Planner error: " << diag.message << std::endl;

@@ -7,7 +7,7 @@ import {
   syncViewportScene
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
-import { initCoreWasm, parseGcode, getController, getCoreModule, extractMaterialMesh } from '../services/coreWasm';
+import { initCoreWasm, parseGcode, getController, resetController, getCoreModule, extractMaterialMesh } from '../services/coreWasm';
 import { RIBBON_MODES } from '../config/ribbon';
 import {
   buildConstructionParams,
@@ -75,7 +75,11 @@ export const useCoreStore = defineStore('core', {
       54: [0, 0, 0] // G54 offset x, y, z
     },
     toolOffsets: {}, // toolId -> zOffset
-    _machineInitialized: false
+    _machineInitialized: false,
+    machineInitGcode: localStorage.getItem('aim3d_machineInitGcode') !== null
+      ? localStorage.getItem('aim3d_machineInitGcode')
+      : '(Machine Initialization)\nG17 (Select XY plane)\nG20 (Select imperial units)\nG40 (Cancel cutter radius compensation)\nG49 (Cancel tool length offset)\nG54 (Select Work Coordinate System 1)\nG80 (Cancel canned cycles)\nG90 (Set absolute distance mode)\nG94 (Set feed rate units per minute)\nM5 (Spindle stop)\nM9 (Coolant off)',
+    machineInitEnabled: localStorage.getItem('aim3d_machineInitEnabled') !== 'false'
   }),
 
   getters: {
@@ -164,8 +168,15 @@ export const useCoreStore = defineStore('core', {
       this.cancelProjectSettings();
       this.activeMode = mode;
       this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
+      
+      localStorage.setItem('aim3d_activeMode', mode);
+
       if (mode !== 'machine') {
         this.showGcodeEditor = false;
+      } else {
+        if (this.machineTaskMode === 'manual') this.rightPanelTab = 'jog';
+        else if (this.machineTaskMode === 'mdi') this.rightPanelTab = 'mdi';
+        else if (this.machineTaskMode === 'auto') this.rightPanelTab = 'gcode';
       }
       syncViewportScene(this.$state);
     },
@@ -206,11 +217,25 @@ export const useCoreStore = defineStore('core', {
     },
 
     async setGcodeText(text) {
-      this.gcode = text;
-      if (this.pendingStockSetup) {
-        this.confirmStockSetup();
-      } else if (this.activeMode === 'machine') {
-        await this.startSimulation();
+      this.gcodeText = text;
+      if (this.activeMode === 'machine' && this.machineTaskMode === 'mdi') {
+        try {
+          await initCoreWasm();
+          const controller = getController();
+          const prefix = this.units === 'inch' ? 'G20\n' : 'G21\n';
+          const success = controller.submitMdi(prefix + text);
+          if (success) {
+            console.log("[MDI] Successfully submitted. Queued segments:", controller.getQueuedSegments());
+            this.isSimulating = true;
+            this.simulationTotalSteps = this.simulationCurrentStep + controller.getQueuedSegments();
+            this.startSimulationTick();
+          } else {
+            console.error("[MDI] Failed to submit MDI command");
+            this.addMessage("Invalid MDI command", "error");
+          }
+        } catch (e) {
+          console.error("Failed to run MDI:", e);
+        }
       }
     },
 
@@ -830,20 +855,24 @@ export const useCoreStore = defineStore('core', {
 
         // Initialize Material Simulator
         const matSim = controller.materialSimulator();
+        const scaleToMm = this.units === 'inch' ? 25.4 : 1.0;
         matSim.initialize(
-          this.stockSize?.x ?? 1,
-          this.stockSize?.y ?? 1,
-          this.stockSize?.z ?? 1
+          (this.stockSize?.x ?? 1) * scaleToMm,
+          (this.stockSize?.y ?? 1) * scaleToMm,
+          (this.stockSize?.z ?? 1) * scaleToMm
         );
         matSim.setLocation(
-          this.stockLocation?.x ?? 0,
-          this.stockLocation?.y ?? 0,
-          this.stockLocation?.z ?? 0
+          (this.stockLocation?.x ?? 0) * scaleToMm,
+          (this.stockLocation?.y ?? 0) * scaleToMm,
+          (this.stockLocation?.z ?? 0) * scaleToMm
         );
 
-        const success = controller.submitMdi(this.gcode);
-        if (!success) {
-          throw new Error("Invalid G-code program or trajectory planning failed.");
+        if (this.machineTaskMode === 'auto') {
+          const prefix = this.units === 'inch' ? 'G20\n' : 'G21\n';
+          const success = controller.submitMdi(prefix + this.gcodeText);
+          if (!success) {
+            throw new Error("Invalid G-code program or trajectory planning failed.");
+          }
         }
         
         this.simulationTotalSteps = controller.getQueuedSegments();
@@ -889,8 +918,63 @@ export const useCoreStore = defineStore('core', {
       }
     },
 
+    resetSimulation() {
+      this.simulationPlaybackStatus = 'stopped';
+      this.isSimulating = false;
+      this.simulationCurrentStep = 0;
+      this.simulationTotalSteps = 0;
+      try {
+        if (resetController) {
+          const controller = resetController();
+
+          // Sync work offsets and tool offsets to the new controller instance
+          for (const [code, offset] of Object.entries(this.workOffsets)) {
+            controller.setWorkOffset(Number(code), offset[0], offset[1], offset[2]);
+          }
+          for (const [toolId, zOffset] of Object.entries(this.toolOffsets)) {
+            controller.setToolOffset(Number(toolId), zOffset);
+          }
+
+          // Execute initialization G-code if enabled
+          if (this.machineInitEnabled) {
+            const initGcode = this.getFormattedInitGcode();
+            if (initGcode) {
+              console.log("[Machine Reset] Running init G-code:\n" + initGcode);
+              const success = controller.submitMdi(initGcode);
+              if (success) {
+                console.log("[Machine Reset] Init G-code submitted successfully");
+              } else {
+                console.error("[Machine Reset] Init G-code execution failed");
+                this.addMessage("Machine initialization G-code failed to execute", "error");
+              }
+            }
+          }
+
+          // Ensure controller starts in Manual mode (0)
+          controller.setTaskMode(0);
+          this.machineTaskMode = 'manual';
+          this.rightPanelTab = 'jog'; // Default to Jog tab on reset
+
+          // Fetch the actual tool position from the controller, scaled to active UI units
+          const pos = Array.from(controller.getToolPosition());
+          const scaleToUi = this.units === 'inch' ? 1/25.4 : 1.0;
+          this.simulationToolPosition = [pos[0] * scaleToUi, pos[1] * scaleToUi, pos[2] * scaleToUi];
+        } else {
+          this.simulationToolPosition = this.units === 'inch' ? [0, 0, 2] : [0, 0, 50.8];
+        }
+      } catch (err) {
+        console.warn("Failed to reset controller", err);
+        this.simulationToolPosition = this.units === 'inch' ? [0, 0, 2] : [0, 0, 50.8];
+      }
+      syncViewportScene(this.$state);
+    },
+
     seekSimulation(targetStep) {
-      this.addMessage("Seek simulation not supported in backend controller mode yet.", "warning");
+      if (targetStep === 0) {
+        this.resetSimulation();
+      } else {
+        this.addMessage("Seek simulation not supported in backend controller mode yet.", "warning");
+      }
     },
 
     simulationTick() {
@@ -911,12 +995,25 @@ export const useCoreStore = defineStore('core', {
       this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - controller.getQueuedSegments());
 
       const pos = Array.from(controller.getToolPosition());
-      this.simulationToolPosition = pos;
+      const scaleToUi = this.units === 'inch' ? 1/25.4 : 1.0;
+      const newPos = [pos[0]*scaleToUi, pos[1]*scaleToUi, pos[2]*scaleToUi];
+      
+      if (!this.simulationToolPosition || 
+          Math.abs(this.simulationToolPosition[0] - newPos[0]) > 0.001 ||
+          Math.abs(this.simulationToolPosition[1] - newPos[1]) > 0.001 ||
+          Math.abs(this.simulationToolPosition[2] - newPos[2]) > 0.001) {
+        console.log(`[Core Debug] Tool Pos: ${newPos[0].toFixed(3)}, ${newPos[1].toFixed(3)}, ${newPos[2].toFixed(3)} | Queued: ${controller.getQueuedSegments()}`);
+      }
+      this.simulationToolPosition = newPos;
 
       const mesh = extractMaterialMesh();
       if (mesh) {
+        let posArray = Array.from(mesh.positions);
+        if (scaleToUi !== 1.0) {
+          posArray = posArray.map(v => v * scaleToUi);
+        }
         this.simulatedStockMesh = {
-          positions: Array.from(mesh.positions),
+          positions: posArray,
           normals: Array.from(mesh.normals),
           indices: Array.from(mesh.indices)
         };
@@ -965,6 +1062,12 @@ export const useCoreStore = defineStore('core', {
         this.toolRadius = 0;
         this.toolholderDiameter = 2;
         this.toolholderLength = 1;
+
+        // Dynamically replace G21 with G20 and its comment in machineInitGcode
+        if (this.machineInitGcode) {
+          this.machineInitGcode = this.machineInitGcode.replace(/\bG21\s*(\(Select metric units\))?/gi, 'G20 (Select imperial units)');
+          localStorage.setItem('aim3d_machineInitGcode', this.machineInitGcode);
+        }
       } else {
         this.stockSize = { x: 25, y: 25, z: 25, kind: this.stockSize?.kind || 'cuboid' };
         this.toolDiameter = 6;
@@ -972,9 +1075,41 @@ export const useCoreStore = defineStore('core', {
         this.toolRadius = 0;
         this.toolholderDiameter = 50;
         this.toolholderLength = 25;
+
+        // Dynamically replace G20 with G21 and its comment in machineInitGcode
+        if (this.machineInitGcode) {
+          this.machineInitGcode = this.machineInitGcode.replace(/\bG20\s*(\(Select imperial units\))?/gi, 'G21 (Select metric units)');
+          localStorage.setItem('aim3d_machineInitGcode', this.machineInitGcode);
+        }
       }
       this._machineInitialized = false;
       syncViewportScene(this.$state);
+    },
+
+    setMachineInitGcode(gcode) {
+      this.machineInitGcode = gcode;
+      localStorage.setItem('aim3d_machineInitGcode', gcode);
+    },
+
+    setMachineInitEnabled(enabled) {
+      this.machineInitEnabled = enabled;
+      localStorage.setItem('aim3d_machineInitEnabled', enabled ? 'true' : 'false');
+    },
+
+    getFormattedInitGcode() {
+      let gcode = this.machineInitGcode || '';
+      if (this.units === 'inch') {
+        gcode = gcode.replace(/\bG21\s*(\(Select metric units\))?/gi, 'G20 (Select imperial units)');
+        if (!/\bG20\b/i.test(gcode)) {
+          gcode = 'G20 (Select imperial units)\n' + gcode;
+        }
+      } else {
+        gcode = gcode.replace(/\bG20\s*(\(Select imperial units\))?/gi, 'G21 (Select metric units)');
+        if (!/\bG21\b/i.test(gcode)) {
+          gcode = 'G21 (Select metric units)\n' + gcode;
+        }
+      }
+      return gcode;
     },
 
     syncWithController() {

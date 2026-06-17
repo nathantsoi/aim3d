@@ -50,7 +50,7 @@ struct MachineProfile {
     bool hasProbe = true;
     bool hasLimitSwitches = true;
     bool hasEstop = true;
-    UnitMode nativeUnits = UnitMode::Inches;
+    UnitMode nativeUnits = UnitMode::Millimeters;
 
     static MachineProfile defaultThreeAxisMill();
     std::vector<ControllerDiagnostic> validate() const;

@@ -463,4 +463,28 @@ describe('core snapshot projection', () => {
     store.cancelSketchCreation();
     expect(store.viewportScene.gizmos.showSketchPlaneIndicator).toBeUndefined();
   });
+
+  it('tracks machine initialization G-code and updates unit codes dynamically', () => {
+    const store = useCoreStore();
+
+    // Verify initial values
+    expect(store.machineInitEnabled).toBe(true);
+    expect(store.machineInitGcode).toContain('G20 (Select imperial units)');
+
+    // Toggle units to 'mm' and verify that G20 is replaced with G21 and comments are updated
+    store.setUnits('mm');
+    expect(store.units).toBe('mm');
+    expect(store.machineInitGcode).toContain('G21 (Select metric units)');
+    expect(store.machineInitGcode).not.toContain('G20');
+
+    // Test getFormattedInitGcode
+    const formatted = store.getFormattedInitGcode();
+    expect(formatted).toContain('G21 (Select metric units)');
+
+    // Toggle units back to 'inch'
+    store.setUnits('inch');
+    expect(store.units).toBe('inch');
+    expect(store.machineInitGcode).toContain('G20 (Select imperial units)');
+    expect(store.machineInitGcode).not.toContain('G21');
+  });
 });

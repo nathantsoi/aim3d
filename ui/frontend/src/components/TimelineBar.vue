@@ -1,5 +1,5 @@
 <template>
-  <div class="timeline-bar">
+  <div class="timeline-bar" v-show="store.activeMode === 'design'">
     <!-- Sketch mode: replace the timeline with the active sketch's constraints. -->
     <template v-if="store.isSketchMode">
       <div class="bar-label">Constraints</div>

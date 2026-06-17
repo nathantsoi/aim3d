@@ -6,11 +6,11 @@
     <SketchPalette v-else-if="store.isSketchMode" />
     <div v-else class="property-grid">
       <div class="panel-tabs">
+        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'manual'" :class="['tab-btn', { active: activeTab === 'jog' }]" @click="activeTab = 'jog'">Jog</button>
+        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'mdi'" :class="['tab-btn', { active: activeTab === 'mdi' }]" @click="activeTab = 'mdi'">MDI</button>
+        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'auto'" :class="['tab-btn', { active: activeTab === 'gcode' }]" @click="activeTab = 'gcode'">Program</button>
         <button :class="['tab-btn', { active: activeTab === 'properties' }]" @click="activeTab = 'properties'">Properties</button>
         <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'setup' }]" @click="activeTab = 'setup'">Setup</button>
-        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'auto'" :class="['tab-btn', { active: activeTab === 'gcode' }]" @click="activeTab = 'gcode'">Program</button>
-        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'mdi'" :class="['tab-btn', { active: activeTab === 'mdi' }]" @click="activeTab = 'mdi'">MDI</button>
-        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'manual'" :class="['tab-btn', { active: activeTab === 'jog' }]" @click="activeTab = 'jog'">Jog</button>
         <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'settings' }]" @click="activeTab = 'settings'">Settings</button>
         <button :class="['tab-btn', { active: activeTab === 'debug' }]" @click="activeTab = 'debug'">Debug</button>
       </div>
@@ -298,7 +298,7 @@ export default defineComponent({
     const store = useCoreStore();
     const activeTab = computed({
       get: () => {
-        if (store.activeMode !== 'machine' && ['setup', 'gcode', 'settings'].includes(store.rightPanelTab)) {
+        if (store.activeMode !== 'machine' && ['setup', 'gcode', 'settings', 'jog', 'mdi'].includes(store.rightPanelTab)) {
           return 'properties';
         }
         return store.rightPanelTab || 'properties';

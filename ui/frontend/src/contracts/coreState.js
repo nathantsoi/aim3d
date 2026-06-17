@@ -209,6 +209,8 @@ export const createInitialCoreState = () => ({
   gcode: '; No code posted',
   showGcodeEditor: false,
   units: 'inch',
+  machineInitGcode: '(Machine Initialization)\nG17 (Select XY plane)\nG20 (Select imperial units)\nG40 (Cancel cutter radius compensation)\nG49 (Cancel tool length offset)\nG54 (Select Work Coordinate System 1)\nG80 (Cancel canned cycles)\nG90 (Set absolute distance mode)\nG94 (Set feed rate units per minute)\nM5 (Spindle stop)\nM9 (Coolant off)',
+  machineInitEnabled: true,
   stockSize: { x: 1, y: 1, z: 1, kind: 'cuboid' },
   stockLocation: { x: 0, y: 0, z: 0 },
   simulationResolution: 256,

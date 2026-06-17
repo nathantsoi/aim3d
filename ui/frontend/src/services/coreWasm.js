@@ -45,6 +45,13 @@ export function getController() {
   return controllerInstance;
 }
 
+export function resetController() {
+  if (!coreModule) throw new Error("WASM not initialized");
+  const profile = coreModule.MachineProfile.defaultThreeAxisMill();
+  controllerInstance = new coreModule.MachineController(profile);
+  return controllerInstance;
+}
+
 export function getCoreModule() {
   if (!coreModule) throw new Error("WASM not initialized");
   return coreModule;

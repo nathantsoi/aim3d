@@ -9,7 +9,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
       </button>
 
-      <button @click="stepBackward" class="control-btn" title="Step Backward">
+      <button @click="stepBackward" class="control-btn" title="Step Backward" disabled>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
       </button>
       
@@ -18,7 +18,7 @@
         <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
       </button>
 
-      <button @click="stepForward" class="control-btn" title="Step Forward">
+      <button @click="stepForward" class="control-btn" title="Step Forward" disabled>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
       </button>
 
@@ -45,6 +45,7 @@
         v-model.number="currentStep"
         @mousedown="onScrubStart"
         @mouseup="onScrubEnd"
+        disabled
       />
     </div>
   </div>
@@ -72,6 +73,7 @@ const currentStep = computed({
 });
 
 function togglePlay() {
+  console.log("[Playback] togglePlay, was playing?", isPlaying.value);
   if (isPlaying.value) {
     store.pauseSimulation();
   } else {
@@ -80,15 +82,18 @@ function togglePlay() {
 }
 
 function stop() {
+  console.log("[Playback] stop");
   store.stopSimulation();
 }
 
 function resetPlayback() {
+  console.log("[Playback] resetPlayback");
   store.pauseSimulation();
   store.seekSimulation(0);
 }
 
 function onScrubStart() {
+  console.log("[Playback] onScrubStart");
   wasPlayingBeforeScrub.value = isPlaying.value;
   if (isPlaying.value) {
     store.pauseSimulation();
@@ -96,17 +101,20 @@ function onScrubStart() {
 }
 
 function onScrubEnd() {
+  console.log("[Playback] onScrubEnd");
   if (wasPlayingBeforeScrub.value) {
     store.resumeSimulation();
   }
 }
 
 function stepForward() {
+  console.log("[Playback] stepForward");
   store.pauseSimulation();
   currentStep.value = Math.min(store.simulationTotalSteps, currentStep.value + 1);
 }
 
 function stepBackward() {
+  console.log("[Playback] stepBackward");
   store.pauseSimulation();
   currentStep.value = Math.max(0, currentStep.value - 1);
 }
