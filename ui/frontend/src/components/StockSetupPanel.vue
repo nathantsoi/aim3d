@@ -98,31 +98,31 @@ import { useCoreStore } from '../store';
 const store = useCoreStore();
 
 const kind = computed({
-  get: () => store.pendingStockSetup?.kind ?? 'cuboid',
+  get: () => store.pendingStockSetup?.kind ?? store.stockSize?.kind ?? 'cuboid',
   set: (val) => store.updateStockSetup({ kind: val })
 });
 const x = computed({
-  get: () => store.pendingStockSetup?.x ?? 100,
+  get: () => store.pendingStockSetup?.x ?? store.stockSize?.x ?? 100,
   set: (val) => store.updateStockSetup({ x: val })
 });
 const y = computed({
-  get: () => store.pendingStockSetup?.y ?? 100,
+  get: () => store.pendingStockSetup?.y ?? store.stockSize?.y ?? 100,
   set: (val) => store.updateStockSetup({ y: val })
 });
 const z = computed({
-  get: () => store.pendingStockSetup?.z ?? 25,
+  get: () => store.pendingStockSetup?.z ?? store.stockSize?.z ?? 25,
   set: (val) => store.updateStockSetup({ z: val })
 });
 const locX = computed({
-  get: () => store.pendingStockSetup?.locX ?? 0,
+  get: () => store.pendingStockSetup?.locX ?? store.stockLocation?.x ?? 0,
   set: (val) => store.updateStockSetup({ locX: val })
 });
 const locY = computed({
-  get: () => store.pendingStockSetup?.locY ?? 0,
+  get: () => store.pendingStockSetup?.locY ?? store.stockLocation?.y ?? 0,
   set: (val) => store.updateStockSetup({ locY: val })
 });
 const locZ = computed({
-  get: () => store.pendingStockSetup?.locZ ?? 0,
+  get: () => store.pendingStockSetup?.locZ ?? store.stockLocation?.z ?? 0,
   set: (val) => store.updateStockSetup({ locZ: val })
 });
 const toolDiameter = computed({

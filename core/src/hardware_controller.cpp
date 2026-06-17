@@ -333,13 +333,13 @@ void JetsonHardwareController::disconnect() {
     m_connected = false;
 }
 
-bool JetsonHardwareController::sendSegment(const SpeSegment& segment) {
+bool JetsonHardwareController::sendSegment(const SpeSegment& /*segment*/) {
     if (!m_connected) return false;
     // Implementation would write segment to Tegra IVC mailbox
     return true;
 }
 
-bool JetsonHardwareController::sendCommand(SpeCommand command, const std::array<int32_t, 3>& params) {
+bool JetsonHardwareController::sendCommand(SpeCommand command, const std::array<int32_t, 3>& /*params*/) {
     if (!m_connected) return false;
     std::lock_guard<std::mutex> lock(m_statusMutex);
     if (command == SpeCommand::Arm) {
@@ -362,7 +362,7 @@ SpeStatusMailbox JetsonHardwareController::getStatus() {
 // PiHardwareController Implementation
 // ==========================================
 
-bool PiHardwareController::connect(const std::string& connectionString) {
+bool PiHardwareController::connect(const std::string& /*connectionString*/) {
     std::lock_guard<std::mutex> lock(m_statusMutex);
     m_connected = true;
     m_status.state = SpeState::Disarmed;
@@ -374,11 +374,11 @@ void PiHardwareController::disconnect() {
     m_connected = false;
 }
 
-bool PiHardwareController::sendSegment(const SpeSegment& segment) {
+bool PiHardwareController::sendSegment(const SpeSegment& /*segment*/) {
     return m_connected;
 }
 
-bool PiHardwareController::sendCommand(SpeCommand command, const std::array<int32_t, 3>& params) {
+bool PiHardwareController::sendCommand(SpeCommand command, const std::array<int32_t, 3>& /*params*/) {
     if (!m_connected) return false;
     std::lock_guard<std::mutex> lock(m_statusMutex);
     if (command == SpeCommand::Arm) {

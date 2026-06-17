@@ -409,11 +409,16 @@ export const syncViewportScene = (state) => {
   });
 
   // Dynamic Stock mesh for simulation
-  const hasStockFeature = (state.features.some(f => f.type === 'Stock') || state.pendingStockSetup) && (state.showStock !== false);
+  const hasStockFeature = (
+    state.features.some(f => f.type === 'Stock') || 
+    state.pendingStockSetup || 
+    state.activeMode === 'machine' || 
+    state.isSimulating
+  ) && (state.showStock !== false);
   if (hasStockFeature) {
-    const x = state.pendingStockSetup?.x ?? state.stockSize?.x ?? 100;
-    const y = state.pendingStockSetup?.y ?? state.stockSize?.y ?? 100;
-    const z = state.pendingStockSetup?.z ?? state.stockSize?.z ?? 25;
+    const x = state.pendingStockSetup?.x ?? state.stockSize?.x ?? 1;
+    const y = state.pendingStockSetup?.y ?? state.stockSize?.y ?? 1;
+    const z = state.pendingStockSetup?.z ?? state.stockSize?.z ?? 1;
     const kind = state.pendingStockSetup?.kind ?? state.stockSize?.kind ?? 'cuboid';
     const locX = state.pendingStockSetup?.locX ?? state.stockLocation?.x ?? 0;
     const locY = state.pendingStockSetup?.locY ?? state.stockLocation?.y ?? 0;
@@ -498,6 +503,19 @@ export const syncViewportScene = (state) => {
           3, 0, 4, 3, 4, 7
       ];
       stockColors = Array(8 * 4).fill(0).map((_, i) => i % 4 === 3 ? 0.7 : 0.8);
+    }
+    
+    // Override with simulated mesh if available
+    if (state.simulatedStockMesh && state.simulatedStockMesh.positions?.length > 0) {
+      stockPositions = state.simulatedStockMesh.positions;
+      stockNormals = state.simulatedStockMesh.normals;
+      stockIndices = state.simulatedStockMesh.indices;
+      // Re-generate solid colors based on the number of vertices
+      const numVerts = stockPositions.length / 3;
+      stockColors = new Array(numVerts * 4);
+      for (let i = 0; i < numVerts * 4; i++) {
+        stockColors[i] = i % 4 === 3 ? 0.8 : 0.7;
+      }
     }
     
     const stockSolid = {

@@ -7,7 +7,7 @@ import {
   syncViewportScene
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
-import { initCoreWasm, parseGcode, getSimulator, getCoreModule } from '../services/coreWasm';
+import { initCoreWasm, parseGcode, getController, getCoreModule, extractMaterialMesh } from '../services/coreWasm';
 import { RIBBON_MODES } from '../config/ribbon';
 import {
   buildConstructionParams,
@@ -36,8 +36,6 @@ import {
 } from '../contracts/sketchPlane';
 
 // Module-level variables for WASM instances to avoid Vue reactivity proxying
-let activeSimulationSegments = null;
-let activeSimulationMachineProfile = null;
 
 export const useCoreStore = defineStore('core', {
   state: () => ({
@@ -48,12 +46,7 @@ export const useCoreStore = defineStore('core', {
     pendingConstruction: null,
     pendingSketchCreation: null,
     pendingSketchElement: null,
-    pendingStockSetup: {
-      kind: 'cuboid',
-      x: 100,
-      y: 100,
-      z: 25
-    },
+    pendingStockSetup: null,
     pendingProjectSettings: false,
     isConnected: false,
     messages: [],
@@ -68,11 +61,11 @@ export const useCoreStore = defineStore('core', {
     simulationPlaybackStatus: 'stopped', // 'stopped', 'playing', 'paused'
     simulationCurrentStep: 0,
     simulationTotalSteps: 0,
-    simulationToolPosition: [0, 0, 0],
+    simulationToolPosition: [0, 0, 2],
     playbackSpeedMultiplier: 1.0,
 
     // Machine Control State
-    machineControlMode: 'simulation', // 'simulation' or 'physical'
+    machineTaskMode: 'manual', // 'manual', 'mdi', 'auto'
     showStock: true,
     showG54Frame: true,
     showG54Modal: false,
@@ -177,9 +170,39 @@ export const useCoreStore = defineStore('core', {
       syncViewportScene(this.$state);
     },
 
+    setMachineTaskMode(mode) {
+      if (!['manual', 'mdi', 'auto'].includes(mode)) return;
+      this.machineTaskMode = mode;
+      
+      try {
+        const controller = getController();
+        if (controller && controller.setTaskMode) {
+          const modeMap = {
+            'manual': 0, // SpeTaskMode::Manual
+            'mdi': 1,    // SpeTaskMode::Mdi
+            'auto': 2    // SpeTaskMode::Auto
+          };
+          controller.setTaskMode(modeMap[mode]);
+        }
+      } catch (e) {
+        // Core wasm might not be loaded yet
+      }
+
+      // Update right panel tab explicitly based on mode
+      if (mode === 'manual') {
+        this.rightPanelTab = 'jog';
+      } else if (mode === 'mdi') {
+        this.rightPanelTab = 'mdi';
+      } else if (mode === 'auto') {
+        this.rightPanelTab = 'gcode';
+      }
+    },
+
     toggleGcodeEditor() {
       this.showGcodeEditor = !this.showGcodeEditor;
-      this.rightPanelTab = this.showGcodeEditor ? 'gcode' : 'properties';
+      if (this.showGcodeEditor) {
+        this.setMachineTaskMode('auto');
+      }
     },
 
     async setGcodeText(text) {
@@ -223,15 +246,7 @@ export const useCoreStore = defineStore('core', {
     },
 
     cancelStockSetup() {
-      this.pendingStockSetup = {
-        kind: this.stockSize?.kind || 'cuboid',
-        x: this.stockSize.x,
-        y: this.stockSize.y,
-        z: this.stockSize.z,
-        locX: this.stockLocation?.x || 0,
-        locY: this.stockLocation?.y || 0,
-        locZ: this.stockLocation?.z || 0
-      };
+      this.pendingStockSetup = null;
     },
 
     confirmStockSetup() {
@@ -790,63 +805,54 @@ export const useCoreStore = defineStore('core', {
     },
 
     async startSimulation() {
+      if (this.machineTaskMode === 'manual') {
+        this.addMessage("Cannot run program in Manual mode. Switch to Auto or MDI.", "warning");
+        return;
+      }
       this.isSimulating = true;
       this.simulationPlaybackStatus = 'paused';
       this.lastTickTime = null;
       try {
         await initCoreWasm();
-        const coreModule = getCoreModule();
-        const sim = getSimulator();
+        const controller = getController();
         
-        console.log("WASM Simulation started for G-code length:", this.gcode.length);
+        console.log("Submitting G-code to MachineController");
         
-        // Parse G-code
-        const program = parseGcode(this.gcode);
-        if (!program.valid()) {
-          throw new Error("Invalid G-code program");
-        }
-
-        // Setup Machine Profile and Trajectory Planner
-        if (activeSimulationMachineProfile) activeSimulationMachineProfile.delete();
-        activeSimulationMachineProfile = coreModule.createMachineProfile(
-          this.machineMaxVelocity,
-          this.machineMaxAccel,
-          this.machineSegmentDuration
-        );
-
-        const planner = new coreModule.TrajectoryPlanner(activeSimulationMachineProfile);
-        if (activeSimulationSegments) activeSimulationSegments.delete();
-        activeSimulationSegments = planner.plan(program);
-        this.simulationTotalSteps = activeSimulationSegments.size();
-        this.simulationCurrentStep = 0;
-        
-        console.log(`Trajectory planned: ${this.simulationTotalSteps} segments`);
-        if (this.simulationTotalSteps > 0) {
-          const firstSeg = activeSimulationSegments.get(0);
-          console.log(`First segment deltaSteps: X=${firstSeg.getDeltaX()}, Y=${firstSeg.getDeltaY()}, Z=${firstSeg.getDeltaZ()}`);
-        }
-        
-        planner.delete();
+        this.syncWithController();
         
         // Sync GUI setup and settings to WASM core
         for (const [code, offset] of Object.entries(this.workOffsets)) {
-          sim.setWorkOffset(Number(code), offset[0], offset[1], offset[2]);
+          controller.setWorkOffset(Number(code), offset[0], offset[1], offset[2]);
         }
         for (const [toolId, zOffset] of Object.entries(this.toolOffsets)) {
-          sim.setToolOffset(Number(toolId), zOffset);
+          controller.setToolOffset(Number(toolId), zOffset);
         }
 
-        // Initialize simulation volume based on stock, only if not yet initialized
-        if (!this._machineInitialized) {
-          sim.setStockLocation(this.stockLocation.x || 0, this.stockLocation.y || 0, this.stockLocation.z || 0);
-          sim.initialize(this.stockSize.x, this.stockSize.y, this.stockSize.z, this.simulationResolution, this.simulationResolution);
-          sim.reset();
-          this._machineInitialized = true;
+        // Initialize Material Simulator
+        const matSim = controller.materialSimulator();
+        matSim.initialize(
+          this.stockSize?.x ?? 1,
+          this.stockSize?.y ?? 1,
+          this.stockSize?.z ?? 1
+        );
+        matSim.setLocation(
+          this.stockLocation?.x ?? 0,
+          this.stockLocation?.y ?? 0,
+          this.stockLocation?.z ?? 0
+        );
+
+        const success = controller.submitMdi(this.gcode);
+        if (!success) {
+          throw new Error("Invalid G-code program or trajectory planning failed.");
         }
         
-        this.extractSimulationMesh();
+        this.simulationTotalSteps = controller.getQueuedSegments();
+        this.simulationCurrentStep = 0;
         
         this.addMessage('Simulation ready', 'info');
+        
+        // Auto-start tick loop so the execution actually runs
+        this.startSimulationTick();
       } catch (err) {
         console.error('Failed to start WASM simulation:', err);
         this.addMessage('Simulation failed: ' + err.message, 'error');
@@ -874,66 +880,51 @@ export const useCoreStore = defineStore('core', {
       this.simulationPlaybackStatus = 'stopped';
       this.isSimulating = false;
       this.simulationCurrentStep = 0;
-      this.extractSimulationMesh(); // Update one last time
       
-      if (activeSimulationSegments) {
-        activeSimulationSegments.delete();
-        activeSimulationSegments = null;
-      }
-      if (activeSimulationMachineProfile) {
-        activeSimulationMachineProfile.delete();
-        activeSimulationMachineProfile = null;
+      try {
+        const controller = getController();
+        controller.setTaskMode(0); // Set back to manual or stop
+      } catch (err) {
+        // ignore
       }
     },
 
     seekSimulation(targetStep) {
-      if (!this.isSimulating || !activeSimulationSegments) return;
-      const sim = getSimulator();
-      targetStep = Math.max(0, Math.min(targetStep, this.simulationTotalSteps));
-      
-      sim.simulateToStep(activeSimulationSegments, activeSimulationMachineProfile, targetStep);
-      this.simulationCurrentStep = sim.getCurrentStep();
-      
-      const pos = sim.getToolPosition();
-      this.simulationToolPosition = [pos[0], pos[1], pos[2]];
-      
-      this.extractSimulationMesh();
+      this.addMessage("Seek simulation not supported in backend controller mode yet.", "warning");
     },
 
     simulationTick() {
       if (this.simulationPlaybackStatus !== 'playing') return;
-      if (!this.isSimulating || !activeSimulationSegments) return;
+      if (!this.isSimulating) return;
 
-      const sim = getSimulator();
+      const controller = getController();
       
-      // Calculate how many steps to execute this frame based on playback speed multiplier
       const now = performance.now();
       let dtMs = this.lastTickTime ? (now - this.lastTickTime) : 16;
-      if (dtMs > 100) dtMs = 100; // Cap delta-time to avoid huge frame skips
+      if (dtMs > 100) dtMs = 100;
       this.lastTickTime = now;
 
-      // Desired simulation time elapsed
       const simDtSec = (dtMs / 1000.0) * this.playbackSpeedMultiplier;
-      const stepsToRun = Math.max(1, Math.floor(simDtSec / this.machineSegmentDuration));
 
-      const t0 = performance.now();
-      let stepsRun = 0;
-      while (stepsRun < stepsToRun && this.simulationCurrentStep < this.simulationTotalSteps) {
-        const seg = activeSimulationSegments.get(this.simulationCurrentStep);
-        sim.simulateStep(seg, activeSimulationMachineProfile);
-        this.simulationCurrentStep = sim.getCurrentStep();
-        stepsRun++;
-      }
-      const t1 = performance.now();
+      controller.tick(simDtSec);
+      
+      this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - controller.getQueuedSegments());
 
-      this.simulationToolPosition = Array.from(sim.getToolPosition());
-      this.extractSimulationMesh();
-      const t2 = performance.now();
-      if (t2 - t0 > 15) {
-        console.log(`simulationTick total: ${(t2 - t0).toFixed(2)}ms (simulate ${stepsRun} steps: ${(t1 - t0).toFixed(2)}ms)`);
+      const pos = Array.from(controller.getToolPosition());
+      this.simulationToolPosition = pos;
+
+      const mesh = extractMaterialMesh();
+      if (mesh) {
+        this.simulatedStockMesh = {
+          positions: Array.from(mesh.positions),
+          normals: Array.from(mesh.normals),
+          indices: Array.from(mesh.indices)
+        };
       }
 
-      if (this.simulationCurrentStep >= this.simulationTotalSteps) {
+      syncViewportScene(this.$state);
+
+      if (controller.getQueuedSegments() === 0 && controller.getState() !== 2 /* Running */) {
         this.simulationPlaybackStatus = 'stopped';
         this.addMessage('Simulation finished', 'success');
         this._lastTickMs = null;
@@ -943,77 +934,7 @@ export const useCoreStore = defineStore('core', {
       requestAnimationFrame(() => this.simulationTick());
     },
 
-    extractSimulationMesh() {
-      const t0 = performance.now();
-      const sim = getSimulator();
-      sim.updateMesh();
-      const t1 = performance.now();
-      
-      const positionsView = sim.getPositions();
-      if (!positionsView) {
-        syncViewportScene(this.$state);
-        return;
-      }
-      
-      const normalsView = sim.getNormals();
-      const indicesView = sim.getIndices();
-      
-      const positions = new Float32Array(positionsView);
-      const normals = new Float32Array(normalsView);
-      const indices = new Uint32Array(indicesView);
-      
-      const t2 = performance.now();
-      
-      const colors = [];
-      const vertexCount = Math.floor(positions.length / 3);
-      for (let i = 0; i < vertexCount; i++) {
-        colors.push(0.7, 0.7, 0.7, 1.0);
-      }
 
-      this.simulationVertexCount = vertexCount;
-
-      const simulatedSolid = {
-        id: 'solid_simulated_stock',
-        bodyId: 9999,
-        sourceToken: 'simulated_stock',
-        positions,
-        normals,
-        indices,
-        colors,
-        _revision: Date.now(),
-        transform: [
-          1, 0, 0, 0,
-          0, 1, 0, 0,
-          0, 0, 1, 0,
-          this.stockLocation.x || 0, this.stockLocation.y || 0, this.stockLocation.z || 0, 1
-        ],
-        pickable: {
-          entityId: 'simulated_stock',
-          kind: 'Machined Stock',
-          priority: 5,
-          snapPoints: []
-        }
-      };
-
-      // toolhead visual indicator removed: we use the CAD-styled dynamic toolhead from coreState.js instead.
-      
-      this.viewportScene = {
-        ...this.viewportScene,
-        solids: [
-          ...this.viewportScene.solids.filter(s => s.id !== 'solid_simulated_stock'),
-          simulatedSolid
-        ],
-        toolpaths: this.viewportScene.toolpaths,
-        gizmos: this.viewportScene.gizmos,
-        camera: this.viewportScene.camera
-      };
-      
-      syncViewportScene(this.$state);
-      const t3 = performance.now();
-      if (t3 - t0 > 10) {
-        console.log(`extractSimulationMesh took ${(t3 - t0).toFixed(2)}ms (updateMesh: ${(t1 - t0).toFixed(2)}ms, readWASMMemory: ${(t2 - t1).toFixed(2)}ms, vueStoreUpdate: ${(t3 - t2).toFixed(2)}ms)`);
-      }
-    },
 
     beginProjectSettings() {
       this.cancelSketchCreation();
@@ -1056,52 +977,19 @@ export const useCoreStore = defineStore('core', {
       syncViewportScene(this.$state);
     },
 
-    async togglePhysicalMode() {
-      if (this.machineControlMode === 'simulation') {
-        const connected = await this.connectToPhysicalMachine();
-        if (connected) {
-          this.machineControlMode = 'physical';
-          this.addMessage(`Switched machine control mode to physical`, 'info');
-        } else {
-          this.addMessage(`Failed to switch to physical mode`, 'error');
-        }
-      } else {
-        await this.disconnectFromPhysicalMachine();
-        this.machineControlMode = 'simulation';
-        this.addMessage(`Switched machine control mode to simulation`, 'info');
-      }
-    },
+    syncWithController() {
+      const controller = getController();
+      if (!controller) return;
 
-    async connectToPhysicalMachine() {
-      this.addMessage('Connecting to physical machine over serial...', 'info');
-      try {
-        if (!navigator.serial) {
-          throw new Error('Web Serial API not supported in this browser.');
-        }
-        const port = await navigator.serial.requestPort();
-        await port.open({ baudRate: 115200 });
-        this.activeSerialPort = port;
-        this.setConnected(true);
-        this.addMessage('Connected to serial port successfully', 'success');
-        return true;
-      } catch (err) {
-        this.addMessage('Failed to connect: ' + err.message, 'error');
-        this.setConnected(false);
-        return false;
-      }
-    },
+      const profile = controller.getProfile();
+      if (!profile) return;
 
-    async disconnectFromPhysicalMachine() {
-      if (this.activeSerialPort) {
-        try {
-          await this.activeSerialPort.close();
-        } catch (err) {
-          console.error('Failed to close serial port:', err);
-        }
-        this.activeSerialPort = null;
-      }
-      this.setConnected(false);
-      this.addMessage('Disconnected from physical machine', 'info');
+      this.machineMaxVelocity = profile.axes ? profile.axes.maxVelocityMmPerMin : 3000.0;
+      this.machineMaxAccel = profile.axes ? profile.axes.maxAccelerationMmPerSec2 : 500.0;
+      this.machineSegmentDuration = profile.maxSegmentDurationSec;
+      // Convert core UnitMode (0 = Millimeters, 1 = Inches) to store config if needed
+      // Currently core state uses 'mm' vs 'inch' 
+      this.units = profile.nativeUnits?.value === 1 ? 'inch' : 'mm';
     },
 
     showG54Dialog() {
@@ -1115,8 +1003,8 @@ export const useCoreStore = defineStore('core', {
     async setG54Origin(x, y, z) {
       try {
         await initCoreWasm();
-        const sim = getSimulator();
-        sim.setWorkOffset(54, Number(x), Number(y), Number(z));
+        const controller = getController();
+        controller.setWorkOffset(54, Number(x), Number(y), Number(z));
         this.workOffsets[54] = [Number(x), Number(y), Number(z)];
         this.addMessage(`G54 Origin set to X:${x} Y:${y} Z:${z} in WASM core`, 'success');
       } catch (err) {
@@ -1129,8 +1017,8 @@ export const useCoreStore = defineStore('core', {
     async setToolOffset(toolId, zOffset) {
       try {
         await initCoreWasm();
-        const sim = getSimulator();
-        sim.setToolOffset(Number(toolId), Number(zOffset));
+        const controller = getController();
+        controller.setToolOffset(Number(toolId), Number(zOffset));
         this.toolOffsets[toolId] = Number(zOffset);
         this.addMessage(`Tool ${toolId} Z offset set to ${zOffset} in WASM core`, 'success');
       } catch (err) {
@@ -1140,11 +1028,28 @@ export const useCoreStore = defineStore('core', {
     },
 
     jogSimulation(x, y, z) {
-      this.simulationToolPosition = [
-        this.simulationToolPosition[0] + x,
-        this.simulationToolPosition[1] + y,
-        this.simulationToolPosition[2] + z
-      ];
+      if (this.machineTaskMode !== 'manual') {
+        this.addMessage("Cannot jog outside of Manual mode.", "warning");
+        return;
+      }
+      
+      try {
+        const controller = getController();
+        if (controller && controller.jog) {
+          controller.jog(x, y, z);
+          // Sync it back from controller to ensure exact value
+          const pos = controller.getToolPosition();
+          this.simulationToolPosition = [pos[0], pos[1], pos[2]];
+        }
+      } catch (err) {
+        // Fallback for tests
+        this.simulationToolPosition = [
+          this.simulationToolPosition[0] + x,
+          this.simulationToolPosition[1] + y,
+          this.simulationToolPosition[2] + z
+        ];
+      }
+
       syncViewportScene(this.$state);
     },
 

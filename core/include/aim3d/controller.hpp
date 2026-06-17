@@ -5,6 +5,9 @@
 #include <deque>
 #include <string>
 #include <vector>
+#include <unordered_map>
+
+#include "aim3d/material_simulator.hpp"
 
 namespace aim3d {
 
@@ -32,6 +35,11 @@ struct AxisProfile {
     bool homingRequired = true;
 };
 
+enum class UnitMode {
+    Millimeters,
+    Inches
+};
+
 struct MachineProfile {
     std::string id = "jetson-orin-nano-spe-mill";
     std::array<AxisProfile, 3> axes;
@@ -42,6 +50,7 @@ struct MachineProfile {
     bool hasProbe = true;
     bool hasLimitSwitches = true;
     bool hasEstop = true;
+    UnitMode nativeUnits = UnitMode::Inches;
 
     static MachineProfile defaultThreeAxisMill();
     std::vector<ControllerDiagnostic> validate() const;
@@ -61,11 +70,6 @@ enum class ControllerRecordType {
     SetCoolant,
     ChangeTool,
     ProgramEnd
-};
-
-enum class UnitMode {
-    Millimeters,
-    Inches
 };
 
 enum class PlaneMode {
@@ -108,6 +112,7 @@ struct ControllerRecord {
 struct ControllerProgram {
     std::vector<ControllerRecord> records;
     std::vector<ControllerDiagnostic> diagnostics;
+    std::array<double, 3> startPositionMm = {0.0, 0.0, 0.0};
 
     bool valid() const;
 };
@@ -115,6 +120,7 @@ struct ControllerProgram {
 class LinuxCncCompatParser {
 public:
     ControllerProgram parse(const std::string& gcode) const;
+    ControllerProgram parseWithPosition(const std::string& gcode, double x, double y, double z) const;
 
 private:
     static bool isSupportedMCode(int code);
@@ -145,7 +151,8 @@ enum class SpeCommand {
     Stop,
     EstopReset,
     Home,
-    Jog
+    Jog,
+    SetTaskMode
 };
 
 enum class SpeState {
@@ -156,12 +163,20 @@ enum class SpeState {
     Fault
 };
 
+enum class SpeTaskMode {
+    Manual,
+    Mdi,
+    Auto
+};
+
 struct SpeCommandMailbox {
     SpeCommand command = SpeCommand::None;
     std::array<int32_t, 3> jogSteps = {0, 0, 0};
+    SpeTaskMode requestedTaskMode = SpeTaskMode::Manual;
 };
 
 struct SpeStatusMailbox {
+    SpeTaskMode taskMode = SpeTaskMode::Manual;
     SpeState state = SpeState::Disarmed;
     std::array<int64_t, 3> positionSteps = {0, 0, 0};
     bool heartbeatOk = false;
@@ -202,6 +217,48 @@ private:
     SpeStatusMailbox m_status;
     SpeSegmentRing m_ring;
     bool m_seenHeartbeat = false;
+};
+
+class MachineController {
+public:
+    explicit MachineController(MachineProfile profile);
+
+    void setWorkOffset(int code, double x, double y, double z);
+    std::array<double, 3> getWorkOffset(int code) const;
+
+    void setToolOffset(int toolId, double zOffset);
+    double getToolOffset(int toolId) const;
+
+    void jog(double dx, double dy, double dz);
+    
+    bool submitMdi(const std::string& gcode);
+    
+    void tick(double dtSeconds);
+
+    std::array<double, 3> getToolPosition() const;
+    const MachineProfile& getProfile() const;
+    SpeTaskMode getTaskMode() const;
+    void setTaskMode(SpeTaskMode mode);
+    SpeState getState() const;
+    
+    std::size_t getQueuedSegments() const;
+
+    MaterialSimulator& materialSimulator();
+    const MaterialSimulator& materialSimulator() const;
+
+private:
+    MachineProfile m_profile;
+    SpeProtocolEmulator m_emulator;
+    LinuxCncCompatParser m_parser;
+    TrajectoryPlanner m_planner;
+    MaterialSimulator m_materialSimulator;
+
+    std::unordered_map<int, std::array<double, 3>> m_workOffsets;
+    std::unordered_map<int, double> m_toolOffsets;
+
+    std::deque<SpeSegment> m_plannedSegments;
+    double m_timeAccumulator = 0.0;
+    std::vector<ControllerDiagnostic> m_lastDiagnostics;
 };
 
 } // namespace aim3d

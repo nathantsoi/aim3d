@@ -1,22 +1,10 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
-#include "aim3d/machine_simulator.hpp"
 #include "aim3d/controller.hpp"
 
 using namespace emscripten;
 using namespace aim3d;
-
-// Helper to create and configure a MachineProfile
-MachineProfile createMachineProfile(double maxVel, double maxAccel, double segmentDuration) {
-    MachineProfile profile = MachineProfile::defaultThreeAxisMill();
-    for (auto& axis : profile.axes) {
-        axis.maxVelocityMmPerMin = maxVel;
-        axis.maxAccelerationMmPerSec2 = maxAccel;
-    }
-    profile.maxSegmentDurationSec = segmentDuration;
-    return profile;
-}
 
 // Helper to plan trajectory and discard diagnostics for now
 std::vector<SpeSegment> planTrajectory(const TrajectoryPlanner& planner, const ControllerProgram& program) {
@@ -24,56 +12,57 @@ std::vector<SpeSegment> planTrajectory(const TrajectoryPlanner& planner, const C
     return planner.plan(program, diagnostics);
 }
 
-// Wrapper for getPositions to return a typed array view
-val getPositionsView(const MachineSimulator& sim) {
-    const auto& pos = sim.getPositions();
-    if (pos.empty()) return val::null();
-    return val(typed_memory_view(pos.size(), pos.data()));
-}
-
-val getNormalsView(const MachineSimulator& sim) {
-    const auto& norm = sim.getNormals();
-    if (norm.empty()) return val::null();
-    return val(typed_memory_view(norm.size(), norm.data()));
-}
-
-val getIndicesView(const MachineSimulator& sim) {
-    const auto& idx = sim.getIndices();
-    if (idx.empty()) return val::null();
-    return val(typed_memory_view(idx.size(), idx.data()));
-}
-
-val getToolPositionJS(const MachineSimulator& sim) {
-    auto pos = sim.getToolPosition();
-    val arr = val::array();
-    arr.set(0, pos[0]);
-    arr.set(1, pos[1]);
-    arr.set(2, pos[2]);
-    return arr;
-}
-
-val getWorkOffsetJS(const MachineSimulator& sim, int code) {
-    auto pos = sim.getWorkOffset(code);
-    val arr = val::array();
-    arr.set(0, pos[0]);
-    arr.set(1, pos[1]);
-    arr.set(2, pos[2]);
-    return arr;
-}
-
 EMSCRIPTEN_BINDINGS(aim3d_core) {
+    enum_<SpeTaskMode>("SpeTaskMode")
+        .value("Manual", SpeTaskMode::Manual)
+        .value("Mdi", SpeTaskMode::Mdi)
+        .value("Auto", SpeTaskMode::Auto);
+
+    enum_<SpeState>("SpeState")
+        .value("Disarmed", SpeState::Disarmed)
+        .value("Armed", SpeState::Armed)
+        .value("Running", SpeState::Running)
+        .value("FeedHold", SpeState::FeedHold)
+        .value("Fault", SpeState::Fault);
+
     class_<ControllerProgram>("ControllerProgram")
         .constructor<>()
         .function("valid", &ControllerProgram::valid);
 
     class_<LinuxCncCompatParser>("LinuxCncCompatParser")
         .constructor<>()
-        .function("parse", &LinuxCncCompatParser::parse);
+        .function("parse", &LinuxCncCompatParser::parse)
+        .function("parseWithPosition", &LinuxCncCompatParser::parseWithPosition);
+
+    enum_<UnitMode>("UnitMode")
+        .value("Millimeters", UnitMode::Millimeters)
+        .value("Inches", UnitMode::Inches);
+
+    class_<AxisProfile>("AxisProfile")
+        .constructor<>()
+        .property("name", &AxisProfile::name)
+        .property("minPositionMm", &AxisProfile::minPositionMm)
+        .property("maxPositionMm", &AxisProfile::maxPositionMm)
+        .property("maxVelocityMmPerMin", &AxisProfile::maxVelocityMmPerMin)
+        .property("maxAccelerationMmPerSec2", &AxisProfile::maxAccelerationMmPerSec2)
+        .property("stepsPerMm", &AxisProfile::stepsPerMm)
+        .property("homingRequired", &AxisProfile::homingRequired);
 
     class_<MachineProfile>("MachineProfile")
-        .constructor<>();
-        
-    function("createMachineProfile", &createMachineProfile);
+        .constructor<>()
+        .property("nativeUnits", &MachineProfile::nativeUnits)
+        .property("maxSegmentDurationSec", &MachineProfile::maxSegmentDurationSec)
+        .property("stepPulseWidthNs", &MachineProfile::stepPulseWidthNs)
+        .property("hasSpindle", &MachineProfile::hasSpindle)
+        .property("hasCoolant", &MachineProfile::hasCoolant)
+        .property("hasProbe", &MachineProfile::hasProbe)
+        .property("hasLimitSwitches", &MachineProfile::hasLimitSwitches)
+        .property("hasEstop", &MachineProfile::hasEstop)
+        .function("getAxis", optional_override([](MachineProfile& self, int index) -> AxisProfile {
+            if (index >= 0 && index < 3) return self.axes[index];
+            return AxisProfile();
+        }))
+        .class_function("defaultThreeAxisMill", &MachineProfile::defaultThreeAxisMill);
 
     class_<SpeSegment>("SpeSegment")
         .constructor<>()
@@ -88,23 +77,49 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
         .constructor<MachineProfile>()
         .function("plan", &planTrajectory);
 
-    class_<MachineSimulator>("MachineSimulator")
+    class_<MachineController>("MachineController")
+        .constructor<MachineProfile>()
+        .function("tick", &MachineController::tick)
+        .function("jog", &MachineController::jog)
+        .function("submitMdi", &MachineController::submitMdi)
+        .function("getToolPosition", optional_override([](MachineController& self) {
+            std::array<double, 3> pos = self.getToolPosition();
+            return val::array(std::vector<double>(pos.begin(), pos.end()));
+        }))
+        .function("getTaskMode", &MachineController::getTaskMode)
+        .function("setTaskMode", &MachineController::setTaskMode)
+        .function("getState", &MachineController::getState)
+        .function("getQueuedSegments", &MachineController::getQueuedSegments)
+        .function("setWorkOffset", &MachineController::setWorkOffset)
+        .function("getWorkOffset", optional_override([](MachineController& self, int code) {
+            std::array<double, 3> offset = self.getWorkOffset(code);
+            return val::array(std::vector<double>(offset.begin(), offset.end()));
+        }))
+        .function("setToolOffset", &MachineController::setToolOffset)
+        .function("getToolOffset", &MachineController::getToolOffset)
+        .function("getProfile", optional_override([](MachineController& self) -> MachineProfile {
+            return self.getProfile();
+        }))
+        .function("materialSimulator", optional_override([](MachineController& self) -> MaterialSimulator& {
+            return self.materialSimulator();
+        }), allow_raw_pointers());
+
+    class_<MaterialSimulator>("MaterialSimulator")
         .constructor<>()
-        .function("setStockLocation", &MachineSimulator::setStockLocation)
-        .function("initialize", &MachineSimulator::initialize)
-        .function("simulate", &MachineSimulator::simulate)
-        .function("reset", &MachineSimulator::reset)
-        .function("simulateStep", &MachineSimulator::simulateStep)
-        .function("simulateToStep", &MachineSimulator::simulateToStep)
-        .function("updateMesh", &MachineSimulator::updateMesh)
-        .function("getPositions", &getPositionsView)
-        .function("getNormals", &getNormalsView)
-        .function("getIndices", &getIndicesView)
-        .function("getToolPosition", &getToolPositionJS)
-        .function("getCurrentStep", &MachineSimulator::getCurrentStep)
-        .function("setWorkOffset", &MachineSimulator::setWorkOffset)
-        .function("getWorkOffset", &getWorkOffsetJS)
-        .function("setToolOffset", &MachineSimulator::setToolOffset)
-        .function("getToolOffset", &MachineSimulator::getToolOffset);
+        .function("initialize", &MaterialSimulator::initialize)
+        .function("setLocation", &MaterialSimulator::setLocation)
+        .function("reset", &MaterialSimulator::reset)
+        .function("getPositions", optional_override([](const MaterialSimulator& self) {
+            if (self.getPositions().empty()) return val::array();
+            return val(typed_memory_view(self.getPositions().size(), self.getPositions().data()));
+        }))
+        .function("getNormals", optional_override([](const MaterialSimulator& self) {
+            if (self.getNormals().empty()) return val::array();
+            return val(typed_memory_view(self.getNormals().size(), self.getNormals().data()));
+        }))
+        .function("getIndices", optional_override([](const MaterialSimulator& self) {
+            if (self.getIndices().empty()) return val::array();
+            return val(typed_memory_view(self.getIndices().size(), self.getIndices().data()));
+        }));
 }
 #endif

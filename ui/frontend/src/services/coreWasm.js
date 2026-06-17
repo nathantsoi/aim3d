@@ -1,5 +1,5 @@
 let coreModule = null;
-let simulatorInstance = null;
+let controllerInstance = null;
 let parserInstance = null;
 
 /**
@@ -17,9 +17,9 @@ export async function initCoreWasm() {
     coreModule = await window.createAim3dCore();
     console.log("WASM module loaded successfully.");
 
-
     // Initialize global instances
-    simulatorInstance = new coreModule.MachineSimulator();
+    const profile = coreModule.MachineProfile.defaultThreeAxisMill();
+    controllerInstance = new coreModule.MachineController(profile);
     parserInstance = new coreModule.LinuxCncCompatParser();
 
     return coreModule;
@@ -38,14 +38,36 @@ export function parseGcode(gcodeText) {
 }
 
 /**
- * Gets the singleton simulator instance.
+ * Gets the singleton controller instance.
  */
-export function getSimulator() {
-  if (!simulatorInstance) throw new Error("WASM not initialized");
-  return simulatorInstance;
+export function getController() {
+  if (!controllerInstance) throw new Error("WASM not initialized");
+  return controllerInstance;
 }
 
 export function getCoreModule() {
   if (!coreModule) throw new Error("WASM not initialized");
   return coreModule;
+}
+
+/**
+ * Extracts the triangulated mesh from the MaterialSimulator inside the MachineController.
+ * Returns { positions, normals, indices } arrays for WebGL rendering.
+ */
+export function extractMaterialMesh() {
+  if (!controllerInstance) return null;
+  const matSim = controllerInstance.materialSimulator();
+  if (!matSim) return null;
+
+  const positionsView = matSim.getPositions();
+  const normalsView = matSim.getNormals();
+  const indicesView = matSim.getIndices();
+
+  if (!positionsView || positionsView.length === 0) return null;
+
+  return {
+    positions: new Float32Array(positionsView),
+    normals: new Float32Array(normalsView),
+    indices: new Uint32Array(indicesView)
+  };
 }

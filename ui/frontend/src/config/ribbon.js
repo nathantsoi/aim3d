@@ -130,12 +130,13 @@ const machineSetupGroup = {
   ]
 };
 
-const simulationGcodeGroup = {
-  id: 'gcode',
-  label: 'GCODE',
+const machineTaskModeGroup = {
+  id: 'task-mode',
+  label: 'TASK MODE',
   commands: [
-    { id: 'edit-gcode', label: 'Edit G-Code', action: 'toggleGcodeEditor' },
-    { id: 'load-gcode', label: 'Load G-Code', action: 'loadGcodeFile' }
+    { id: 'mode-manual', label: 'Manual (Jog)', action: 'setTaskModeManual' },
+    { id: 'mode-mdi', label: 'MDI', action: 'setTaskModeMdi' },
+    { id: 'mode-auto', label: 'Auto (Program)', action: 'setTaskModeAuto' }
   ]
 };
 
@@ -302,8 +303,7 @@ export const RIBBON_MODES = {
         id: 'machine',
         label: 'MACHINE',
         groups: [
-          simulationGcodeGroup,
-          ...placeholderGroups(['INSPECT'])
+          machineTaskModeGroup
         ]
       }
     ]

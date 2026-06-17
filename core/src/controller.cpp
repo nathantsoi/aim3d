@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <utility>
+#include <iostream>
 
 namespace aim3d {
 namespace {
@@ -178,8 +179,14 @@ bool LinuxCncCompatParser::isSupportedMCode(int code) {
 }
 
 ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
+    return parseWithPosition(gcode, 0.0, 0.0, 0.0);
+}
+
+ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gcode, double x, double y, double z) const {
     ControllerProgram program;
+    program.startPositionMm = {x, y, z};
     ControllerModalState modal;
+    modal.positionMm = {x, y, z};
     int activeMotion = -1;
     bool programEnded = false;
     bool hasR = false;
@@ -211,8 +218,8 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
         bool toolSelected = false;
         bool motionChanged = false;
         int lValue = 1;
-        bool hasP = false;
-        double pValue = 0.0;
+        [[maybe_unused]] bool hasP = false;
+        [[maybe_unused]] double pValue = 0.0;
         ControllerRecord record;
         record.sourceLine = lineNumber;
         record.sourceText = line;
@@ -632,7 +639,7 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
     };
 
     std::vector<PathBlock> blocks;
-    std::array<double, 3> current = {0.0, 0.0, 0.0};
+    std::array<double, 3> current = program.startPositionMm;
 
     // 1. Generate path blocks
     for (const auto& record : program.records) {
@@ -926,13 +933,20 @@ void SpeProtocolEmulator::submitCommand(const SpeCommandMailbox& command) {
         case SpeCommand::Home:
             if (m_status.state == SpeState::Armed) {
                 m_status.positionSteps = {0, 0, 0};
+                // Wait, to do it cleanly without having profile here, maybe MachineController handles Home differently?
+                // For now, emulator Home just zeros. MachineController might need to zero XY and set Z.
             }
             break;
         case SpeCommand::Jog:
-            if (m_status.state == SpeState::Armed) {
+            if (m_status.state == SpeState::Armed && m_status.taskMode == SpeTaskMode::Manual) {
                 for (std::size_t i = 0; i < 3; ++i) {
                     m_status.positionSteps[i] += command.jogSteps[i];
                 }
+            }
+            break;
+        case SpeCommand::SetTaskMode:
+            if (m_status.state == SpeState::Armed || m_status.state == SpeState::Disarmed) {
+                m_status.taskMode = command.requestedTaskMode;
             }
             break;
         case SpeCommand::None:
@@ -976,6 +990,162 @@ void SpeProtocolEmulator::tick(bool estopActive, bool limitActive) {
         }
     }
     m_status.queuedSegments = m_ring.size();
+}
+
+MachineController::MachineController(MachineProfile profile)
+    : m_profile(std::move(profile)), m_emulator(256), m_planner(m_profile) {
+    // Initial setup
+    m_workOffsets[54] = {0.0, 0.0, 0.0};
+    
+    double zHomeMm = (m_profile.nativeUnits == UnitMode::Inches) ? (2.0 * 25.4) : 2.0;
+    m_emulator.mutableStatus().positionSteps[2] = static_cast<int32_t>(zHomeMm * m_profile.axes[2].stepsPerMm);
+
+    
+    SpeCommandMailbox cmd;
+    cmd.command = SpeCommand::SetTaskMode;
+    cmd.requestedTaskMode = SpeTaskMode::Manual;
+    m_emulator.submitCommand(cmd);
+
+    m_emulator.hostHeartbeat();
+    cmd.command = SpeCommand::Arm;
+    m_emulator.submitCommand(cmd);
+}
+
+void MachineController::setWorkOffset(int code, double x, double y, double z) {
+    m_workOffsets[code] = {x, y, z};
+}
+
+std::array<double, 3> MachineController::getWorkOffset(int code) const {
+    auto it = m_workOffsets.find(code);
+    if (it != m_workOffsets.end()) {
+        return it->second;
+    }
+    return {0.0, 0.0, 0.0};
+}
+
+void MachineController::setToolOffset(int toolId, double zOffset) {
+    m_toolOffsets[toolId] = zOffset;
+}
+
+double MachineController::getToolOffset(int toolId) const {
+    auto it = m_toolOffsets.find(toolId);
+    if (it != m_toolOffsets.end()) {
+        return it->second;
+    }
+    return 0.0;
+}
+
+void MachineController::jog(double dx, double dy, double dz) {
+    SpeCommandMailbox cmd;
+    cmd.command = SpeCommand::Jog;
+    cmd.jogSteps[0] = static_cast<int32_t>(dx * m_profile.axes[0].stepsPerMm);
+    cmd.jogSteps[1] = static_cast<int32_t>(dy * m_profile.axes[1].stepsPerMm);
+    cmd.jogSteps[2] = static_cast<int32_t>(dz * m_profile.axes[2].stepsPerMm);
+    m_emulator.submitCommand(cmd);
+}
+
+bool MachineController::submitMdi(const std::string& gcode) {
+    std::array<double, 3> pos = getToolPosition();
+    ControllerProgram prog = m_parser.parseWithPosition(gcode, pos[0], pos[1], pos[2]);
+    std::cout << "[Controller] Parsed program with " << prog.records.size() << " records. Start pos: "
+              << pos[0] << ", " << pos[1] << ", " << pos[2] << std::endl;
+
+    if (!prog.valid()) {
+        m_lastDiagnostics = prog.diagnostics;
+        for (const auto& diag : prog.diagnostics) {
+            std::cerr << "[Controller] Parser error on line " << diag.line << ": " << diag.message << std::endl;
+        }
+        return false;
+    }
+    std::vector<SpeSegment> segs = m_planner.plan(prog, m_lastDiagnostics);
+    std::cout << "[Controller] Planner generated " << segs.size() << " segments." << std::endl;
+    for (const auto& diag : m_lastDiagnostics) {
+        if (diag.severity == ControllerDiagnosticSeverity::Error || diag.severity == ControllerDiagnosticSeverity::Fatal) {
+            std::cerr << "[Controller] Planner error: " << diag.message << std::endl;
+        }
+    }
+
+    m_plannedSegments.insert(m_plannedSegments.end(), segs.begin(), segs.end());
+    
+    SpeCommandMailbox cmd;
+    cmd.command = SpeCommand::SetTaskMode;
+    cmd.requestedTaskMode = SpeTaskMode::Mdi;
+    m_emulator.submitCommand(cmd);
+
+    m_emulator.hostHeartbeat();
+    cmd.command = SpeCommand::Arm;
+    m_emulator.submitCommand(cmd);
+
+    return true;
+}
+
+void MachineController::tick(double dtSeconds) {
+    m_timeAccumulator += dtSeconds;
+    double segmentDt = m_profile.maxSegmentDurationSec;
+    if (segmentDt <= 0.0) return;
+
+    while (m_timeAccumulator >= segmentDt) {
+        while (!m_plannedSegments.empty() && m_emulator.ring().size() < m_emulator.ring().capacity()) {
+            m_emulator.ring().push(m_plannedSegments.front());
+            m_plannedSegments.pop_front();
+        }
+        m_emulator.hostHeartbeat();
+
+        std::array<double, 3> oldPos = getToolPosition();
+        m_emulator.tick(false, false);
+        std::array<double, 3> newPos = getToolPosition();
+
+        if (oldPos[0] != newPos[0] || oldPos[1] != newPos[1] || oldPos[2] != newPos[2]) {
+            // Cut segment (assume a tool radius of 3.175mm / 1/8" for now)
+            m_materialSimulator.cutSegment(oldPos, newPos, 3.175);
+        }
+
+        m_timeAccumulator -= segmentDt;
+    }
+}
+
+MaterialSimulator& MachineController::materialSimulator() {
+    return m_materialSimulator;
+}
+
+const MaterialSimulator& MachineController::materialSimulator() const {
+    return m_materialSimulator;
+}
+
+std::array<double, 3> MachineController::getToolPosition() const {
+    auto steps = m_emulator.status().positionSteps;
+    std::array<double, 3> activeOffset = getWorkOffset(54); // Assume G54 active for now
+    std::array<double, 3> pos = {0.0, 0.0, 0.0};
+    for (std::size_t i = 0; i < 3; ++i) {
+        if (m_profile.axes[i].stepsPerMm != 0.0) {
+            pos[i] = static_cast<double>(steps[i]) / m_profile.axes[i].stepsPerMm;
+        }
+        pos[i] += activeOffset[i];
+    }
+    return pos;
+}
+
+const MachineProfile& MachineController::getProfile() const {
+    return m_profile;
+}
+
+SpeTaskMode MachineController::getTaskMode() const {
+    return m_emulator.status().taskMode;
+}
+
+void MachineController::setTaskMode(SpeTaskMode mode) {
+    SpeCommandMailbox cmd;
+    cmd.command = SpeCommand::SetTaskMode;
+    cmd.requestedTaskMode = mode;
+    m_emulator.submitCommand(cmd);
+}
+
+SpeState MachineController::getState() const {
+    return m_emulator.status().state;
+}
+
+std::size_t MachineController::getQueuedSegments() const {
+    return m_plannedSegments.size() + m_emulator.status().queuedSegments;
 }
 
 } // namespace aim3d

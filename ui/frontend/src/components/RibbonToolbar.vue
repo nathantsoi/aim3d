@@ -266,6 +266,15 @@ export default defineComponent({
         case 'showToolTable':
           store.showToolTable();
           return null;
+        case 'setTaskModeManual':
+          store.setMachineTaskMode('manual');
+          return null;
+        case 'setTaskModeMdi':
+          store.setMachineTaskMode('mdi');
+          return null;
+        case 'setTaskModeAuto':
+          store.setMachineTaskMode('auto');
+          return null;
         default:
           return null;
       }

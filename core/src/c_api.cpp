@@ -2,7 +2,8 @@
 #include "aim3d/application.hpp"
 #include "aim3d/cam_ir.hpp"
 #include "aim3d/document.hpp"
-#include "aim3d/machine_simulator.hpp"
+#include "aim3d/controller.hpp"
+#include "aim3d/material_simulator.hpp"
 #include <iostream>
 
 #include <atomic>
@@ -598,10 +599,13 @@ void aim3d_buffer_release(Aim3dBufferHandle* handle) {
 }
 
 struct Aim3dSimulatorHandle {
-    aim3d::MachineSimulator simulator;
+    aim3d::MachineProfile profile;
+    aim3d::MachineController controller;
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<uint32_t> indices;
+
+    Aim3dSimulatorHandle() : profile(aim3d::MachineProfile::defaultThreeAxisMill()), controller(profile) {}
 };
 
 Aim3dSimulatorHandle* aim3d_simulator_create(void) {
@@ -625,105 +629,47 @@ int aim3d_simulator_run(
     const int* toolIsBall,
     int toolCount) {
     
+    (void)resX;
+    (void)resY;
+    (void)toolRadii;
+    (void)toolIsBall;
+
     if (!handle || !gcode) return 0;
     
     try {
-        aim3d::LinuxCncCompatParser parser;
-        const auto program = parser.parse(gcode);
-        if (!program.valid()) {
-            for (const auto& diag : program.diagnostics) {
-                std::cerr << "[C++ Parser Diagnostic] Line " << diag.line 
-                          << " (" << diag.code << "): " << diag.message << std::endl;
-            }
+        handle->controller.materialSimulator().initialize(stockX, stockY, stockZ);
+        
+        for (int i = 0; i < toolCount; ++i) {
+            handle->controller.setToolOffset(toolIds[i], 0.0);
+        }
+        
+        if (!handle->controller.submitMdi(gcode)) {
             return 0;
         }
-        
-        std::unordered_map<int, double> radii;
-        std::unordered_map<int, bool> ballFlags;
-        for (int i = 0; i < toolCount; ++i) {
-            radii[toolIds[i]] = toolRadii[i];
-            ballFlags[toolIds[i]] = (toolIsBall[i] != 0);
+
+        handle->controller.setTaskMode(aim3d::SpeTaskMode::Mdi);
+        while (handle->controller.getQueuedSegments() > 0 || handle->controller.getState() == aim3d::SpeState::Running) {
+            handle->controller.tick(0.01);
         }
-        
-        handle->simulator.initialize(stockX, stockY, stockZ, resX, resY);
-        
-        std::array<double, 3> currentPos = {0.0, 0.0, 0.0};
-        bool hasPosition = false;
-        int activeTool = 0;
-        for (const auto& record : program.records) {
-            activeTool = record.tool;
-            double radius = radii.count(activeTool) ? radii.at(activeTool) : 3.0;
-            bool isBall = ballFlags.count(activeTool) ? ballFlags.at(activeTool) : false;
 
-            if (record.type == aim3d::ControllerRecordType::Rapid) {
-                currentPos = record.targetMm;
-                hasPosition = true;
-            } else if (record.type == aim3d::ControllerRecordType::LinearFeed) {
-                if (hasPosition) {
-                    handle->simulator.cutLinear(currentPos, record.targetMm, radius, isBall);
-                }
-                currentPos = record.targetMm;
-                hasPosition = true;
-            } else if (record.type == aim3d::ControllerRecordType::ArcCW || record.type == aim3d::ControllerRecordType::ArcCCW) {
-                if (hasPosition) {
-                    double startX = currentPos[0];
-                    double startY = currentPos[1];
-                    double endX = record.targetMm[0];
-                    double endY = record.targetMm[1];
-                    double cx = startX + record.arcCenterOffsetMm[0];
-                    double cy = startY + record.arcCenterOffsetMm[1];
-                    double rStart = std::hypot(startX - cx, startY - cy);
-                    double rEnd = std::hypot(endX - cx, endY - cy);
-                    double r = (rStart + rEnd) * 0.5;
-
-                    if (r > 1e-4) {
-                        double startAngle = std::atan2(startY - cy, startX - cx);
-                        double endAngle = std::atan2(endY - cy, endX - cx);
-
-                        bool isCW = (record.type == aim3d::ControllerRecordType::ArcCW);
-                        double sweep = endAngle - startAngle;
-                        if (isCW) {
-                            if (sweep > 0) sweep -= 2.0 * M_PI;
-                        } else {
-                            if (sweep < 0) sweep += 2.0 * M_PI;
-                        }
-
-                        int numSegments = 16;
-                        std::array<double, 3> lastPt = currentPos;
-                        for (int step = 1; step <= numSegments; ++step) {
-                            double ratio = (double)step / numSegments;
-                            double angle = startAngle + ratio * sweep;
-                            double z = currentPos[2] + ratio * (record.targetMm[2] - currentPos[2]);
-                            std::array<double, 3> pt = {
-                                cx + r * std::cos(angle),
-                                cy + r * std::sin(angle),
-                                z
-                            };
-                            handle->simulator.cutLinear(lastPt, pt, radius, isBall);
-                            lastPt = pt;
-                        }
-                    } else {
-                        handle->simulator.cutLinear(currentPos, record.targetMm, radius, isBall);
-                    }
-                }
-                currentPos = record.targetMm;
-                hasPosition = true;
-            }
-        }
-        
         handle->positions.clear();
         handle->normals.clear();
         handle->indices.clear();
-        handle->simulator.getMesh(handle->positions, handle->normals, handle->indices);
+        const auto& pos = handle->controller.materialSimulator().getPositions();
+        handle->positions.assign(pos.begin(), pos.end());
+        const auto& norm = handle->controller.materialSimulator().getNormals();
+        handle->normals.assign(norm.begin(), norm.end());
+        const auto& ind = handle->controller.materialSimulator().getIndices();
+        handle->indices.assign(ind.begin(), ind.end());
         return 1;
     } catch (...) {
-        return 1;
+        return 0;
     }
 }
 
 void aim3d_simulator_set_work_offset(Aim3dSimulatorHandle* handle, int code, double x, double y, double z) {
     if (!handle) return;
-    handle->simulator.setWorkOffset(code, x, y, z);
+    handle->controller.setWorkOffset(code, x, y, z);
 }
 
 std::size_t aim3d_simulator_vertex_count(Aim3dSimulatorHandle* handle) {

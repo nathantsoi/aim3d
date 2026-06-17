@@ -11,7 +11,9 @@
     
     <section class="section-container button-section">
       <div class="button-group">
-        <button class="apply-btn" @click="save">Apply Changes</button>
+          <button class="action-btn" @click="save" data-testid="gcode-save">
+            Save
+          </button>
       </div>
     </section>
   </div>
@@ -25,7 +27,9 @@ const store = useCoreStore();
 const gcode = ref(store.gcode);
 
 watch(() => store.gcode, (newVal) => {
-  gcode.value = newVal;
+  if (gcode.value !== newVal) {
+    gcode.value = newVal;
+  }
 });
 
 function save() {

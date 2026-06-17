@@ -8,7 +8,9 @@
       <div class="panel-tabs">
         <button :class="['tab-btn', { active: activeTab === 'properties' }]" @click="activeTab = 'properties'">Properties</button>
         <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'setup' }]" @click="activeTab = 'setup'">Setup</button>
-        <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'gcode' }]" @click="activeTab = 'gcode'">G-Code</button>
+        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'auto'" :class="['tab-btn', { active: activeTab === 'gcode' }]" @click="activeTab = 'gcode'">Program</button>
+        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'mdi'" :class="['tab-btn', { active: activeTab === 'mdi' }]" @click="activeTab = 'mdi'">MDI</button>
+        <button v-if="store.activeMode === 'machine' && store.machineTaskMode === 'manual'" :class="['tab-btn', { active: activeTab === 'jog' }]" @click="activeTab = 'jog'">Jog</button>
         <button v-if="store.activeMode === 'machine'" :class="['tab-btn', { active: activeTab === 'settings' }]" @click="activeTab = 'settings'">Settings</button>
         <button :class="['tab-btn', { active: activeTab === 'debug' }]" @click="activeTab = 'debug'">Debug</button>
       </div>
@@ -131,27 +133,9 @@
       </div>
     </section>
 
-
-
-    <JogPanel v-if="store.activeMode === 'machine'" />
     </div>
 
     <div v-else-if="activeTab === 'setup'" class="tab-content">
-      <section class="section-container">
-        <h3>Machine Environment</h3>
-        <div class="property-card">
-          <label class="input-item">
-            <span>Machine Control Mode</span>
-            <select
-              :value="store.machineControlMode"
-              @change="store.togglePhysicalMode()"
-            >
-              <option value="simulation">Simulation</option>
-              <option value="physical">Physical Control</option>
-            </select>
-          </label>
-        </div>
-      </section>
 
       <section class="section-container">
         <h3>G54 Work Origin Offsets</h3>
@@ -272,6 +256,14 @@
       <GCodeEditorPanel />
     </div>
 
+    <div v-else-if="activeTab === 'mdi'" class="tab-content">
+      <MdiPanel />
+    </div>
+
+    <div v-else-if="activeTab === 'jog'" class="tab-content">
+      <JogPanel />
+    </div>
+
     <div v-else-if="activeTab === 'settings'" class="tab-content">
       <ProjectSettingsPanel />
     </div>
@@ -297,10 +289,11 @@ import StockSetupPanel from './StockSetupPanel.vue';
 import ProjectSettingsPanel from './ProjectSettingsPanel.vue';
 import GCodeEditorPanel from './GCodeEditorPanel.vue';
 import JogPanel from './JogPanel.vue';
+import MdiPanel from './MdiPanel.vue';
 
 export default defineComponent({
   name: 'PropertyGrid',
-  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel, StockSetupPanel, ProjectSettingsPanel, GCodeEditorPanel, InteractiveTerminal, JogPanel },
+  components: { SketchPalette, ConstructionCommandPanel, SketchCreatePanel, SketchElementCommandPanel, StockSetupPanel, ProjectSettingsPanel, GCodeEditorPanel, InteractiveTerminal, JogPanel, MdiPanel },
   setup() {
     const store = useCoreStore();
     const activeTab = computed({

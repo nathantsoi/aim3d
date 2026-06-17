@@ -36,8 +36,6 @@
 <script>
 import { ref, computed, watch } from 'vue';
 import { useCoreStore } from '../store';
-import { jogController, homeController } from '../services/controllerDaemon';
-import { getSimulator } from '../services/coreWasm';
 
 export default {
   name: 'JogPanel',
@@ -67,31 +65,12 @@ export default {
       const z = dz * step;
 
       // In real scenarios, speed could be passed if the API supported it
-      // For now, jogController just takes x, y, z steps.
-      if (store.machineControlMode === 'physical') {
-        try {
-          await jogController(x, y, z);
-          store.addMessage(`Jogged by X:${x} Y:${y} Z:${z}`, 'info');
-        } catch (e) {
-          store.addMessage(`Jog failed: ${e.message}`, 'error');
-        }
-      } else {
-        // Sim Mode: Update UI Simulator state directly
-        store.jogSimulation(x, y, z);
-      }
+      // Sim Mode: Update UI Simulator state directly
+      store.jogSimulation(x, y, z);
     };
 
     const homeAll = async () => {
-      if (store.machineControlMode === 'physical') {
-        try {
-          await homeController();
-          store.addMessage('Home sequence initiated', 'success');
-        } catch (e) {
-          store.addMessage(`Home failed: ${e.message}`, 'error');
-        }
-      } else {
-        store.addMessage('Simulation Home initiated', 'success');
-      }
+      store.addMessage('Simulation Home initiated', 'success');
     };
 
     return { jogDistance, jogSpeed, jog, homeAll, distanceUnit, speedUnit, store };

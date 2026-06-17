@@ -56,7 +56,7 @@ import { useCoreStore } from '../store';
 
 const store = useCoreStore();
 
-const isVisible = computed(() => store.activeMode === 'machine' && store.machineControlMode === 'simulation');
+const isVisible = computed(() => store.activeMode === 'machine');
 const isPlaying = computed(() => store.simulationPlaybackStatus === 'playing');
 
 const wasPlayingBeforeScrub = ref(false);
