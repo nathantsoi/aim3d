@@ -1,7 +1,10 @@
 <template>
   <div class="timeline-panel">
-    <div class="panel-header">
-      <h2>{{ store.activeMode === 'manufacture' ? 'Manufacture Browser' : store.activeMode === 'machine' ? 'Machine Browser' : 'Model Tree' }}</h2>
+    <!-- Machine DRO replaces the header entirely in machine mode -->
+    <MachineDRO v-if="store.activeMode === 'machine'" />
+
+    <div v-if="store.activeMode !== 'machine'" class="panel-header">
+      <h2>{{ store.activeMode === 'manufacture' ? 'Manufacture Browser' : 'Model Tree' }}</h2>
     </div>
 
     <section v-if="store.activeMode === 'design'" class="tree-container">
@@ -234,34 +237,22 @@
       </div>
     </section>
 
-    <section v-if="store.activeMode === 'machine'" class="tree-container">
-      <div class="tree-title">Machine Control</div>
-      <div v-if="hasBrowser" class="browser-tree" data-testid="machine-browser">
-        <!-- Origin folder -->
+    <!-- Machine mode visibility controls (origin, stock, G54) -->
+    <section v-if="store.activeMode === 'machine'" class="tree-container visibility-section">
+      <div class="tree-title">Viewport</div>
+      <div class="browser-tree">
         <div class="browser-folder">
           <div class="folder-header">
             <span class="folder-label">Origin</span>
             <button
               class="visibility-toggle"
               data-testid="origin-visibility-toggle"
-              :title="store.browser.origin?.visible ? 'Hide Origin' : 'Show Origin'"
-              :class="{ dimmed: !store.browser.origin?.visible }"
+              :title="store.browser?.origin?.visible ? 'Hide Origin' : 'Show Origin'"
+              :class="{ dimmed: !store.browser?.origin?.visible }"
               @click="store.toggleOriginVisibility()"
-            >
-              👁
-            </button>
-          </div>
-          <div v-if="store.browser.origin?.visible" class="folder-children">
-            <div
-              v-for="plane in store.browser.origin.planes"
-              :key="plane"
-              class="browser-leaf"
-              data-testid="origin-plane"
-            >{{ planeLabel(plane) }}</div>
+            >👁</button>
           </div>
         </div>
-
-        <!-- Stock folder -->
         <div class="browser-folder">
           <div class="folder-header">
             <span class="folder-label">Stock</span>
@@ -271,37 +262,19 @@
               :title="store.showStock ? 'Hide Stock' : 'Show Stock'"
               :class="{ dimmed: !store.showStock }"
               @click="store.toggleStockVisibility()"
-            >
-              👁
-            </button>
-          </div>
-          <div v-if="store.showStock" class="folder-children">
-            <div class="browser-leaf">
-              <span>Size: {{ store.stockSize.x }} x {{ store.stockSize.y }} x {{ store.stockSize.z }}</span>
-              <span class="leaf-kind">{{ store.stockSize.kind }}</span>
-            </div>
+            >👁</button>
           </div>
         </div>
-
-        <!-- G54 Frame folder -->
         <div class="browser-folder">
           <div class="folder-header">
-            <span class="folder-label">G54 Work Offset</span>
+            <span class="folder-label">G54 Frame</span>
             <button
               class="visibility-toggle"
               data-testid="g54-visibility-toggle"
               :title="store.showG54Frame ? 'Hide G54 Frame' : 'Show G54 Frame'"
               :class="{ dimmed: !store.showG54Frame }"
               @click="store.toggleG54FrameVisibility()"
-            >
-              👁
-            </button>
-          </div>
-          <div v-if="store.showG54Frame" class="folder-children">
-            <div class="browser-leaf">
-              <span>Origin: {{ store.workOffsets[54][0] }}, {{ store.workOffsets[54][1] }}, {{ store.workOffsets[54][2] }}</span>
-              <span class="leaf-kind">G54</span>
-            </div>
+            >👁</button>
           </div>
         </div>
       </div>
@@ -312,9 +285,11 @@
 <script>
 import { computed, defineComponent, ref } from 'vue';
 import { useCoreStore } from '../store';
+import MachineDRO from './MachineDRO.vue';
 
 export default defineComponent({
   name: 'Timeline',
+  components: { MachineDRO },
   setup() {
     const store = useCoreStore();
 
@@ -415,6 +390,12 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Viewport visibility section in machine mode — compact, no extra padding */
+.visibility-section {
+  padding: 10px 14px;
+  border-top: 1px solid hsla(220, 15%, 15%, 0.8);
 }
 
 .tree-title {

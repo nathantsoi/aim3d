@@ -77,6 +77,15 @@ export const useCoreStore = defineStore('core', {
     },
     toolOffsets: {}, // toolId -> zOffset
     _machineInitialized: false,
+
+    // G-code Modal State (persists between MDI calls, matches controller modal state)
+    coordMode: 'absolute',          // 'absolute' (G90) | 'relative' (G91)
+    activePlane: 'XY',              // 'XY' (G17) | 'XZ' (G18) | 'YZ' (G19)
+    activeWorkOffset: 54,           // 54..59 (G54..G59)
+    modalFeedRate: 0.0,             // mm/min from last F word
+    modalSpindleRpm: 0.0,           // RPM from last S word
+    modalActiveTool: 0,             // active tool number
+    modalCoolantMode: 'off',        // 'off' | 'mist' | 'flood'
     machineInitGcode: localStorage.getItem('aim3d_machineInitGcode') !== null
       ? localStorage.getItem('aim3d_machineInitGcode')
       : '(Machine Initialization)\nG17 (Select XY plane)\nG20 (Select imperial units)\nG40 (Cancel cutter radius compensation)\nG49 (Cancel tool length offset)\nG54 (Select Work Coordinate System 1)\nG80 (Cancel canned cycles)\nG90 (Set absolute distance mode)\nG94 (Set feed rate units per minute)\nM5 (Spindle stop)\nM9 (Coolant off)',
@@ -91,6 +100,15 @@ export const useCoreStore = defineStore('core', {
         groups[setup.id] = state.operations.filter((operation) => operation.setupId === setup.id);
         return groups;
       }, {});
+    },
+    // Builds the G-code modal prefix that should precede every submitted program/MDI command
+    modalPrefix: (state) => {
+      const planeMap = { 'XY': 'G17', 'XZ': 'G18', 'YZ': 'G19' };
+      const unitCode = state.units === 'inch' ? 'G20' : 'G21';
+      const distCode = state.coordMode === 'absolute' ? 'G90' : 'G91';
+      const planeCode = planeMap[state.activePlane] || 'G17';
+      const wcsCode = `G${state.activeWorkOffset}`;
+      return [unitCode, distCode, planeCode, wcsCode].join('\n');
     }
   },
 
@@ -229,7 +247,7 @@ export const useCoreStore = defineStore('core', {
           console.log('[MDI] Clearing pending segments before submit. Current queued:', controller.getQueuedSegments());
           controller.clearPendingSegments();
           
-          const prefix = this.units === 'inch' ? 'G20\n' : 'G21\n';
+          const prefix = this.modalPrefix + '\n';
           console.log('[MDI] Calling submitMdi with:', JSON.stringify(prefix + text));
           const success = controller.submitMdi(prefix + text);
           if (success) {
@@ -253,6 +271,39 @@ export const useCoreStore = defineStore('core', {
       }
     },
 
+    // --- G-code Modal State Setters ---
+    setCoordMode(mode) {
+      if (!['absolute', 'relative'].includes(mode)) return;
+      this.coordMode = mode;
+    },
+
+    setActivePlane(plane) {
+      if (!['XY', 'XZ', 'YZ'].includes(plane)) return;
+      this.activePlane = plane;
+    },
+
+    setActiveWorkOffset(code) {
+      const n = Number(code);
+      if (n < 54 || n > 59) return;
+      this.activeWorkOffset = n;
+    },
+
+    setModalFeedRate(rate) {
+      this.modalFeedRate = Number(rate);
+    },
+
+    setModalSpindleRpm(rpm) {
+      this.modalSpindleRpm = Number(rpm);
+    },
+
+    setModalActiveTool(tool) {
+      this.modalActiveTool = Number(tool);
+    },
+
+    setModalCoolantMode(mode) {
+      if (!['off', 'mist', 'flood'].includes(mode)) return;
+      this.modalCoolantMode = mode;
+    },
 
     beginStockSetup() {
       this.cancelSketchCreation();
