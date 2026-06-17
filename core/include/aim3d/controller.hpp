@@ -51,6 +51,7 @@ struct MachineProfile {
     bool hasLimitSwitches = true;
     bool hasEstop = true;
     UnitMode nativeUnits = UnitMode::Millimeters;
+    std::array<double, 3> homePositionMm = {0.0, 0.0, 50.8};
 
     static MachineProfile defaultThreeAxisMill();
     std::vector<ControllerDiagnostic> validate() const;
@@ -69,6 +70,7 @@ enum class ControllerRecordType {
     SpindleStop,
     SetCoolant,
     ChangeTool,
+    GoHome,
     ProgramEnd
 };
 
@@ -120,7 +122,7 @@ struct ControllerProgram {
 class LinuxCncCompatParser {
 public:
     ControllerProgram parse(const std::string& gcode) const;
-    ControllerProgram parseWithPosition(const std::string& gcode, double x, double y, double z) const;
+    ControllerProgram parseWithPosition(const std::string& gcode, double x, double y, double z, std::array<double, 3> homeMm = {0,0,0}) const;
 
 private:
     static bool isSupportedMCode(int code);
@@ -242,6 +244,7 @@ public:
     SpeState getState() const;
     
     std::size_t getQueuedSegments() const;
+    void clearPendingSegments();
 
     MaterialSimulator& materialSimulator();
     const MaterialSimulator& materialSimulator() const;

@@ -120,6 +120,7 @@ MachineProfile MachineProfile::defaultThreeAxisMill() {
         AxisProfile{"Y", -1.0, 300.0, 3000.0, 500.0, 80.0, true},
         AxisProfile{"Z", -100.0, 60.0, 1200.0, 350.0, 400.0, true},
     };
+    profile.homePositionMm = {0.0, 0.0, 50.8};
     return profile;
 }
 
@@ -182,7 +183,7 @@ ControllerProgram LinuxCncCompatParser::parse(const std::string& gcode) const {
     return parseWithPosition(gcode, 0.0, 0.0, 0.0);
 }
 
-ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gcode, double x, double y, double z) const {
+ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gcode, double x, double y, double z, std::array<double, 3> homeMm) const {
     ControllerProgram program;
     program.startPositionMm = {x, y, z};
     ControllerModalState modal;
@@ -217,6 +218,7 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
         bool spindleUpdated = false;
         bool toolSelected = false;
         bool motionChanged = false;
+        bool hasG28 = false;
         int lValue = 1;
         [[maybe_unused]] bool hasP = false;
         [[maybe_unused]] double pValue = 0.0;
@@ -252,6 +254,9 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
                         activeMotion = code;
                         hasMotionWord = true;
                         motionChanged = true;
+                        break;
+                    case 28:
+                        hasG28 = true;
                         break;
                     case 80:
                         if (hasMotionWord) {
@@ -403,6 +408,14 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
             } else {
                 addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.unsupported.word", "Unsupported word: " + word);
             }
+        }
+
+        if (hasG28) {
+            record.type = ControllerRecordType::GoHome;
+            record.modal = modal;
+            program.records.push_back(record);
+            modal.positionMm = homeMm;
+            continue;
         }
 
         if (hasCoord || hasArcOffset || motionChanged) {
@@ -646,7 +659,8 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
         if (record.type != ControllerRecordType::Rapid &&
             record.type != ControllerRecordType::LinearFeed &&
             record.type != ControllerRecordType::ArcCW &&
-            record.type != ControllerRecordType::ArcCCW) {
+            record.type != ControllerRecordType::ArcCCW &&
+            record.type != ControllerRecordType::GoHome) {
             continue;
         }
 
@@ -664,7 +678,10 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
 
         // For simplicity, we linearize arcs here into small segments (same as LightweightSimulator)
         std::vector<std::array<double, 3>> waypoints;
-        if (record.type == ControllerRecordType::ArcCW || record.type == ControllerRecordType::ArcCCW) {
+        if (record.type == ControllerRecordType::GoHome) {
+            waypoints.push_back(record.targetMm);
+            waypoints.push_back(m_profile.homePositionMm);
+        } else if (record.type == ControllerRecordType::ArcCW || record.type == ControllerRecordType::ArcCCW) {
             double startX = current[0];
             double startY = current[1];
             double endX = record.targetMm[0];
@@ -709,7 +726,7 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
             };
             const double distanceMm = std::sqrt(deltaMm[0] * deltaMm[0] + deltaMm[1] * deltaMm[1] + deltaMm[2] * deltaMm[2]);
             if (distanceMm > 1e-9) {
-                double maxVel = record.type == ControllerRecordType::Rapid ? m_profile.axes[0].maxVelocityMmPerMin : record.feedRateMmPerMin;
+                double maxVel = (record.type == ControllerRecordType::Rapid || record.type == ControllerRecordType::GoHome) ? m_profile.axes[0].maxVelocityMmPerMin : record.feedRateMmPerMin;
                 double maxAccel = m_profile.axes[0].maxAccelerationMmPerSec2;
 
                 for (std::size_t i = 0; i < 3; ++i) {
@@ -997,8 +1014,10 @@ MachineController::MachineController(MachineProfile profile)
     // Initial setup
     m_workOffsets[54] = {0.0, 0.0, 0.0};
     
-    double zHomeMm = (m_profile.nativeUnits == UnitMode::Inches) ? (2.0 * 25.4) : 2.0;
-    m_emulator.mutableStatus().positionSteps[2] = static_cast<int32_t>(zHomeMm * m_profile.axes[2].stepsPerMm);
+    for (std::size_t i = 0; i < 3; ++i) {
+        m_emulator.mutableStatus().positionSteps[i] = 
+            static_cast<int64_t>(m_profile.homePositionMm[i] * m_profile.axes[i].stepsPerMm);
+    }
 
     
     SpeCommandMailbox cmd;
@@ -1046,7 +1065,7 @@ void MachineController::jog(double dx, double dy, double dz) {
 
 bool MachineController::submitMdi(const std::string& gcode) {
     std::array<double, 3> pos = getToolPosition();
-    ControllerProgram prog = m_parser.parseWithPosition(gcode, pos[0], pos[1], pos[2]);
+    ControllerProgram prog = m_parser.parseWithPosition(gcode, pos[0], pos[1], pos[2], m_profile.homePositionMm);
     std::cout << "[Controller] Parsed program with " << prog.records.size() << " records. Start pos: "
               << pos[0] << ", " << pos[1] << ", " << pos[2] << std::endl;
 
@@ -1152,6 +1171,14 @@ SpeState MachineController::getState() const {
 
 std::size_t MachineController::getQueuedSegments() const {
     return m_plannedSegments.size() + m_emulator.status().queuedSegments;
+}
+
+void MachineController::clearPendingSegments() {
+    m_plannedSegments.clear();
+    SpeCommandMailbox cmd;
+    cmd.command = SpeCommand::Stop;
+    m_emulator.submitCommand(cmd);
+    std::cout << "[Controller] Cleared pending segments and stopped emulator." << std::endl;
 }
 
 } // namespace aim3d

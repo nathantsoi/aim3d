@@ -55,6 +55,7 @@ export const useCoreStore = defineStore('core', {
     machineMaxVelocity: 3000.0,
     machineMaxAccel: 500.0,
     machineSegmentDuration: 0.025,
+    machineHomePosition: [0, 0, 50.8],
     simulationResolution: 256,
     
     // Simulation Playback State
@@ -219,25 +220,39 @@ export const useCoreStore = defineStore('core', {
     async setGcodeText(text) {
       this.gcodeText = text;
       if (this.activeMode === 'machine' && this.machineTaskMode === 'mdi') {
+        console.log('[MDI] setGcodeText called | isSimulating:', this.isSimulating, '| status:', this.simulationPlaybackStatus);
         try {
           await initCoreWasm();
           const controller = getController();
+          
+          // Clear any pending segments so double-clicks don't stack motion
+          console.log('[MDI] Clearing pending segments before submit. Current queued:', controller.getQueuedSegments());
+          controller.clearPendingSegments();
+          
           const prefix = this.units === 'inch' ? 'G20\n' : 'G21\n';
+          console.log('[MDI] Calling submitMdi with:', JSON.stringify(prefix + text));
           const success = controller.submitMdi(prefix + text);
           if (success) {
-            console.log("[MDI] Successfully submitted. Queued segments:", controller.getQueuedSegments());
+            const queued = controller.getQueuedSegments();
+            console.log('[MDI] Successfully submitted. Queued segments:', queued, '| status:', this.simulationPlaybackStatus);
             this.isSimulating = true;
-            this.simulationTotalSteps = this.simulationCurrentStep + controller.getQueuedSegments();
-            this.startSimulationTick();
+            this.simulationTotalSteps = queued;
+            this.simulationCurrentStep = 0;
+            // Only start a new tick loop if one isn't already running
+            if (this.simulationPlaybackStatus !== 'playing') {
+              this.startSimulationTick();
+            }
+            console.log('[MDI] Tick running. Status:', this.simulationPlaybackStatus);
           } else {
-            console.error("[MDI] Failed to submit MDI command");
-            this.addMessage("Invalid MDI command", "error");
+            console.error('[MDI] Failed to submit MDI command');
+            this.addMessage('Invalid MDI command', 'error');
           }
         } catch (e) {
-          console.error("Failed to run MDI:", e);
+          console.error('Failed to run MDI:', e);
         }
       }
     },
+
 
     beginStockSetup() {
       this.cancelSketchCreation();
@@ -822,6 +837,7 @@ export const useCoreStore = defineStore('core', {
 
     updateMachineProfile(updates) {
       Object.assign(this, updates);
+      this.applyProfileToCore();
     },
 
     setSimulationResolution(resolution) {
@@ -844,6 +860,7 @@ export const useCoreStore = defineStore('core', {
         console.log("Submitting G-code to MachineController");
         
         this.syncWithController();
+        this.applyProfileToCore();
         
         // Sync GUI setup and settings to WASM core
         for (const [code, offset] of Object.entries(this.workOffsets)) {
@@ -926,6 +943,8 @@ export const useCoreStore = defineStore('core', {
       try {
         if (resetController) {
           const controller = resetController();
+          
+          this.applyProfileToCore();
 
           // Sync work offsets and tool offsets to the new controller instance
           for (const [code, offset] of Object.entries(this.workOffsets)) {
@@ -1125,6 +1144,28 @@ export const useCoreStore = defineStore('core', {
       // Convert core UnitMode (0 = Millimeters, 1 = Inches) to store config if needed
       // Currently core state uses 'mm' vs 'inch' 
       this.units = profile.nativeUnits?.value === 1 ? 'inch' : 'mm';
+    },
+
+    applyProfileToCore() {
+      try {
+        const controller = getController();
+        if (!controller) return;
+        const profile = controller.getProfile();
+        if (!profile) return;
+        
+        for (let i = 0; i < 3; i++) {
+          const axis = profile.getAxis(i);
+          axis.maxVelocityMmPerMin = this.machineMaxVelocity;
+          axis.maxAccelerationMmPerSec2 = this.machineMaxAccel;
+          profile.setAxis(i, axis);
+          
+          if (this.machineHomePosition && this.machineHomePosition.length === 3) {
+             profile.setHomePosition(i, Number(this.machineHomePosition[i]));
+          }
+        }
+      } catch(e) {
+        // Ignored if core not initialized
+      }
     },
 
     showG54Dialog() {

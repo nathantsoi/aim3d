@@ -62,6 +62,16 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
             if (index >= 0 && index < 3) return self.axes[index];
             return AxisProfile();
         }))
+        .function("setAxis", optional_override([](MachineProfile& self, int index, const AxisProfile& axis) {
+            if (index >= 0 && index < 3) self.axes[index] = axis;
+        }))
+        .function("getHomePosition", optional_override([](MachineProfile& self, int index) -> double {
+            if (index >= 0 && index < 3) return self.homePositionMm[index];
+            return 0.0;
+        }))
+        .function("setHomePosition", optional_override([](MachineProfile& self, int index, double value) {
+            if (index >= 0 && index < 3) self.homePositionMm[index] = value;
+        }))
         .class_function("defaultThreeAxisMill", &MachineProfile::defaultThreeAxisMill);
 
     class_<SpeSegment>("SpeSegment")
@@ -90,6 +100,7 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
         .function("setTaskMode", &MachineController::setTaskMode)
         .function("getState", &MachineController::getState)
         .function("getQueuedSegments", &MachineController::getQueuedSegments)
+        .function("clearPendingSegments", &MachineController::clearPendingSegments)
         .function("setWorkOffset", &MachineController::setWorkOffset)
         .function("getWorkOffset", optional_override([](MachineController& self, int code) {
             std::array<double, 3> offset = self.getWorkOffset(code);

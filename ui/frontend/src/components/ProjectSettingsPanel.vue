@@ -33,6 +33,24 @@
       </section>
 
       <section class="section-container">
+        <h3>Homing Parameters</h3>
+        <div class="property-card">
+          <label class="input-item">
+            <span>Home Position X (mm)</span>
+            <input type="number" v-model="machineHomeX" step="1" />
+          </label>
+          <label class="input-item">
+            <span>Home Position Y (mm)</span>
+            <input type="number" v-model="machineHomeY" step="1" />
+          </label>
+          <label class="input-item">
+            <span>Home Position Z (mm)</span>
+            <input type="number" v-model="machineHomeZ" step="1" />
+          </label>
+        </div>
+      </section>
+
+      <section class="section-container">
         <h3>Simulation Parameters</h3>
         <div class="property-card">
           <label class="input-item">
@@ -101,6 +119,21 @@ const machineMaxAccel = computed({
 const machineSegmentDuration = computed({
   get: () => store.machineSegmentDuration,
   set: (val) => store.updateMachineProfile({ machineSegmentDuration: Number(val) })
+});
+
+const machineHomeX = computed({
+  get: () => store.machineHomePosition?.[0] ?? 0,
+  set: (val) => store.updateMachineProfile({ machineHomePosition: [Number(val), store.machineHomePosition[1], store.machineHomePosition[2]] })
+});
+
+const machineHomeY = computed({
+  get: () => store.machineHomePosition?.[1] ?? 0,
+  set: (val) => store.updateMachineProfile({ machineHomePosition: [store.machineHomePosition[0], Number(val), store.machineHomePosition[2]] })
+});
+
+const machineHomeZ = computed({
+  get: () => store.machineHomePosition?.[2] ?? 50.8,
+  set: (val) => store.updateMachineProfile({ machineHomePosition: [store.machineHomePosition[0], store.machineHomePosition[1], Number(val)] })
 });
 
 const simulationResolution = computed({

@@ -37,14 +37,20 @@ import { useCoreStore } from '../store';
 const store = useCoreStore();
 const mdiCommand = ref('');
 const mdiInput = ref(null);
+const isPending = ref(false);
 
-function executeMdi() {
+function executeMdi(event) {
   if (!mdiCommand.value) return;
-  // Send just the current line to the store
-  store.setGcodeText(mdiCommand.value);
-  // Optional: clear the input after execution?
-  // mdiCommand.value = '';
-  // mdiInput.value?.focus();
+  if (isPending.value) {
+    console.log('[MDI] executeMdi skipped - already pending');
+    return;
+  }
+  console.log('[MDI] executeMdi triggered, source:', event?.type, '| command:', mdiCommand.value);
+  isPending.value = true;
+  store.setGcodeText(mdiCommand.value).finally(() => {
+    console.log('[MDI] executeMdi completed');
+    isPending.value = false;
+  });
 }
 </script>
 
