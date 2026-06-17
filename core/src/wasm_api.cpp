@@ -13,6 +13,21 @@ std::vector<SpeSegment> planTrajectory(const TrajectoryPlanner& planner, const C
 }
 
 EMSCRIPTEN_BINDINGS(aim3d_core) {
+    enum_<ControllerDiagnosticSeverity>("ControllerDiagnosticSeverity")
+        .value("Info",    ControllerDiagnosticSeverity::Info)
+        .value("Warning", ControllerDiagnosticSeverity::Warning)
+        .value("Error",   ControllerDiagnosticSeverity::Error)
+        .value("Fatal",   ControllerDiagnosticSeverity::Fatal);
+
+    class_<ControllerDiagnostic>("ControllerDiagnostic")
+        .constructor<>()
+        .property("severity", &ControllerDiagnostic::severity)
+        .property("line",     &ControllerDiagnostic::line)
+        .property("code",     &ControllerDiagnostic::code)
+        .property("message",  &ControllerDiagnostic::message);
+
+    register_vector<ControllerDiagnostic>("VectorControllerDiagnostic");
+
     enum_<SpeTaskMode>("SpeTaskMode")
         .value("Manual", SpeTaskMode::Manual)
         .value("Mdi", SpeTaskMode::Mdi)
@@ -110,6 +125,27 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
         .function("getToolOffset", &MachineController::getToolOffset)
         .function("getProfile", optional_override([](MachineController& self) -> MachineProfile {
             return self.getProfile();
+        }))
+        .function("getLastDiagnostics", optional_override([](MachineController& self) {
+            const auto& diags = self.getLastDiagnostics();
+            auto arr = val::array();
+            for (std::size_t i = 0; i < diags.size(); ++i) {
+                const auto& d = diags[i];
+                auto obj = val::object();
+                std::string sev;
+                switch (d.severity) {
+                    case ControllerDiagnosticSeverity::Info:    sev = "info";    break;
+                    case ControllerDiagnosticSeverity::Warning: sev = "warning"; break;
+                    case ControllerDiagnosticSeverity::Error:   sev = "error";   break;
+                    case ControllerDiagnosticSeverity::Fatal:   sev = "fatal";   break;
+                }
+                obj.set("severity", sev);
+                obj.set("line",     (unsigned int)d.line);
+                obj.set("code",     d.code);
+                obj.set("message",  d.message);
+                arr.set(i, obj);
+            }
+            return arr;
         }))
         .function("materialSimulator", optional_override([](MachineController& self) -> MaterialSimulator& {
             return self.materialSimulator();

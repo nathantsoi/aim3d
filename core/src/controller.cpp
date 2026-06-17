@@ -1181,4 +1181,8 @@ void MachineController::clearPendingSegments() {
     std::cout << "[Controller] Cleared pending segments and stopped emulator." << std::endl;
 }
 
+const std::vector<ControllerDiagnostic>& MachineController::getLastDiagnostics() const {
+    return m_lastDiagnostics;
+}
+
 } // namespace aim3d

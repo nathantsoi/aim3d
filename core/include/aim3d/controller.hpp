@@ -246,6 +246,8 @@ public:
     std::size_t getQueuedSegments() const;
     void clearPendingSegments();
 
+    const std::vector<ControllerDiagnostic>& getLastDiagnostics() const;
+
     MaterialSimulator& materialSimulator();
     const MaterialSimulator& materialSimulator() const;
 

@@ -37,6 +37,51 @@ import {
 
 // Module-level variables for WASM instances to avoid Vue reactivity proxying
 
+/**
+ * Pre-process G-code before sending to the WASM controller.
+ * The controller parser only handles a subset of G/M codes.  Real-world CAM
+ * output often includes codes that are effectively no-ops in simulation context
+ * (e.g. G43/G49 tool-length offset, M10/M11 pallet lock, G53 machine coords,
+ * O-words and % markers).  We strip those lines rather than letting the parser
+ * emit an error that aborts the whole program.
+ *
+ * Codes kept as-is: G0,G1,G2,G3 (motion), G17-19 (plane), G20/21 (units),
+ *   G54-59 (WCS), G80 (cancel canned), G81/84 (canned), G90/91, G94,
+ *   M2/M3/M4/M5/M6/M7/M8/M9/M30 and F/S/T/N words.
+ */
+function sanitizeGcodeForController(gcode) {
+  if (!gcode) return '';
+  return gcode
+    .split('\n')
+    .map(rawLine => {
+      // Strip inline comments first
+      let line = rawLine.replace(/\(.*?\)/g, '').replace(/;.*$/, '').trim().toUpperCase();
+
+      // Drop program-number lines (O words), percent markers
+      if (/^%$/.test(line) || /^O\d+/.test(line)) return '';
+
+      // Drop N-only lines (sequence numbers with nothing else)
+      const withoutN = line.replace(/^N\d+\s*/, '').trim();
+      if (!withoutN) return '';
+
+      // Replace unsupported G codes with comments (they become empty lines after stripping)
+      // G43 (tool length offset enable), G49 (cancel tool length offset),
+      // G53 (machine coordinates - one-shot), G98/G99 handled by controller
+      line = line
+        .replace(/\bG43\b(\s+H\d+(\.\d+)?)?/g, '')  // G43 [H#]
+        .replace(/\bG49\b/g, '')                      // G49
+        .replace(/\bG53\b/g, '')                      // G53 (machine coords prefix)
+        .replace(/\bG28\b/g, '')                      // G28 (return to home) – controller handles but can cause issues
+        .replace(/\bM1[01]\b/g, '')                   // M10, M11 (pallet lock/unlock)
+        .replace(/\bH\d+(\.\d+)?\b/g, '')             // H words (tool length offset register)
+        .trim();
+
+      return line;
+    })
+    .filter(line => line.length > 0)
+    .join('\n');
+}
+
 export const useCoreStore = defineStore('core', {
   state: () => ({
     ...createInitialCoreState(),
@@ -64,6 +109,9 @@ export const useCoreStore = defineStore('core', {
     simulationTotalSteps: 0,
     simulationToolPosition: [0, 0, 2],
     playbackSpeedMultiplier: 1.0,
+
+    // Planning diagnostics (populated after submitMdi / startSimulation)
+    lastPlanningDiagnostics: [], // [{severity, line, code, message}]
 
     // Machine Control State
     machineTaskMode: 'manual', // 'manual', 'mdi', 'auto'
@@ -237,7 +285,9 @@ export const useCoreStore = defineStore('core', {
 
     async setGcodeText(text) {
       this.gcodeText = text;
-      if (this.activeMode === 'machine' && this.machineTaskMode === 'mdi') {
+      if (this.activeMode !== 'machine') return;
+
+      if (this.machineTaskMode === 'mdi') {
         console.log('[MDI] setGcodeText called | isSimulating:', this.isSimulating, '| status:', this.simulationPlaybackStatus);
         try {
           await initCoreWasm();
@@ -268,6 +318,10 @@ export const useCoreStore = defineStore('core', {
         } catch (e) {
           console.error('Failed to run MDI:', e);
         }
+      } else if (this.machineTaskMode === 'auto') {
+        // In Auto mode the GCodeEditorPanel calls startSimulation after setting text.
+        // setGcodeText is called directly from the panel — nothing more to do here.
+        console.log('[Auto] gcodeText updated, ready for startSimulation()');
       }
     },
 
@@ -904,11 +958,12 @@ export const useCoreStore = defineStore('core', {
       this.isSimulating = true;
       this.simulationPlaybackStatus = 'paused';
       this.lastTickTime = null;
+      this.lastPlanningDiagnostics = [];
       try {
         await initCoreWasm();
         const controller = getController();
         
-        console.log("Submitting G-code to MachineController");
+        console.log('[Controller] startSimulation: Submitting G-code to MachineController');
         
         this.syncWithController();
         this.applyProfileToCore();
@@ -920,6 +975,10 @@ export const useCoreStore = defineStore('core', {
         for (const [toolId, zOffset] of Object.entries(this.toolOffsets)) {
           controller.setToolOffset(Number(toolId), zOffset);
         }
+
+        // Clear stale segments before submitting new program
+        controller.clearPendingSegments();
+        console.log('[Controller] Cleared pending segments.');
 
         // Initialize Material Simulator
         const matSim = controller.materialSimulator();
@@ -937,21 +996,49 @@ export const useCoreStore = defineStore('core', {
 
         if (this.machineTaskMode === 'auto') {
           const prefix = this.units === 'inch' ? 'G20\n' : 'G21\n';
-          const success = controller.submitMdi(prefix + this.gcodeText);
+          // Strip unsupported codes that are no-ops in real controllers
+          const sanitized = sanitizeGcodeForController(this.gcodeText);
+          console.log('[Controller] Submitting sanitized program (' + sanitized.split('\n').length + ' lines)…');
+          const success = controller.submitMdi(prefix + sanitized);
+          console.log('[Controller] submitMdi result:', success, '| queued:', controller.getQueuedSegments());
+
+          // Capture real diagnostics from the WASM controller
+          let rawDiags = [];
+          try {
+            const wasmDiags = controller.getLastDiagnostics();
+            if (wasmDiags && wasmDiags.length > 0) {
+              for (let i = 0; i < wasmDiags.length; i++) {
+                rawDiags.push(wasmDiags[i]);
+              }
+            }
+          } catch (_) { /* getLastDiagnostics may not be available in older builds */ }
+          console.log('[Controller] Diagnostics:', rawDiags);
+
           if (!success) {
-            throw new Error("Invalid G-code program or trajectory planning failed.");
+            this.lastPlanningDiagnostics = rawDiags.length > 0
+              ? rawDiags.map(d => ({ severity: d.severity, line: d.line, code: d.code, message: d.message }))
+              : [{ severity: 'fatal', line: 0, code: 'plan.failed', message: 'G-code program could not be planned. Check browser console for details.' }];
+            throw new Error('Invalid G-code program or trajectory planning failed.');
+          }
+          const queued = controller.getQueuedSegments();
+          this.lastPlanningDiagnostics = rawDiags
+            .map(d => ({ severity: d.severity, line: d.line, code: d.code, message: d.message }));
+          if (queued === 0 && this.lastPlanningDiagnostics.filter(d => d.severity === 'error' || d.severity === 'fatal').length === 0) {
+            this.lastPlanningDiagnostics.push({ severity: 'warning', line: 0, code: 'plan.empty', message: 'Program parsed but produced no motion segments. Verify the G-code contains actual moves.' });
           }
         }
+
         
         this.simulationTotalSteps = controller.getQueuedSegments();
         this.simulationCurrentStep = 0;
         
-        this.addMessage('Simulation ready', 'info');
+        console.log('[Controller] simulationTotalSteps:', this.simulationTotalSteps);
+        this.addMessage(`Program planned: ${this.simulationTotalSteps} segments`, 'info');
         
         // Auto-start tick loop so the execution actually runs
         this.startSimulationTick();
       } catch (err) {
-        console.error('Failed to start WASM simulation:', err);
+        console.error('[Controller] Failed to start WASM simulation:', err);
         this.addMessage('Simulation failed: ' + err.message, 'error');
         this.simulationPlaybackStatus = 'stopped';
         this.isSimulating = false;
