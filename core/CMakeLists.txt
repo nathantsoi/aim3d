@@ -9,6 +9,10 @@ file(GLOB CORE_SOURCES
 )
 
 if(EMSCRIPTEN)
+    # Enable exception catching for Emscripten
+    add_compile_options(-sDISABLE_EXCEPTION_CATCHING=0)
+    add_link_options(-sDISABLE_EXCEPTION_CATCHING=0)
+
     # Define toolchain path modes to allow finding local OCCT
     set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
     set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
@@ -79,5 +83,19 @@ if(BUILD_TESTING)
     if(AIM3D_ENABLE_OCCT)
         target_link_libraries(aim3d_core_tests PRIVATE ${OpenCASCADE_LIBRARIES})
     endif()
-    add_test(NAME aim3d_core_tests COMMAND aim3d_core_tests)
+    # Provide path to the nc/ fixture directory so tests can load real CAM programs
+    target_compile_definitions(aim3d_core_tests PRIVATE
+        AIM3D_NC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/nc"
+    )
+    if(EMSCRIPTEN)
+        target_link_options(aim3d_core_tests PRIVATE "-sNODERAWFS=1" "-sALLOW_MEMORY_GROWTH=1")
+    endif()
+    # Copy nc/ files next to the test binary so ctest finds them via relative path
+    file(GLOB NC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/nc/*.nc")
+    foreach(NC_FILE ${NC_FILES})
+        get_filename_component(NC_FILENAME "${NC_FILE}" NAME)
+        configure_file("${NC_FILE}" "${CMAKE_CURRENT_BINARY_DIR}/nc/${NC_FILENAME}" COPYONLY)
+    endforeach()
+    add_test(NAME aim3d_core_tests COMMAND aim3d_core_tests
+             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

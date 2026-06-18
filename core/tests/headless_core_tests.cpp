@@ -932,52 +932,410 @@ void test_spe_protocol_emulator_fail_closed() {
     assert(spe.status().state == aim3d::SpeState::Fault);
 }
 
+// ── NC-file parsing helpers ──────────────────────────────────────────────────
+
+std::string readNcFile(const std::string& relPath) {
+    // nc/ files are installed alongside the test binary; fall back to source tree.
+    const std::filesystem::path candidates[] = {
+        std::filesystem::path("nc") / relPath,
+        std::filesystem::path(AIM3D_NC_DIR) / relPath,
+    };
+    for (const auto& p : candidates) {
+        std::ifstream f(p);
+        if (f.is_open()) {
+            return {std::istreambuf_iterator<char>(f), {}};
+        }
+    }
+    return {};
 }
 
+// ── Parser tolerance tests ────────────────────────────────────────────────────
+
+void test_parser_silently_ignores_rotary_axis_words() {
+    aim3d::LinuxCncCompatParser parser;
+    // A, B, C words on a 3-axis machine should be silently consumed.
+    const auto program = parser.parse(
+        "G21 G90 G54\n"
+        "G0 A0.\n"       // A-axis home position — common CAM output
+        "G0 X10 Y5 Z2\n"
+        "G1 Z-1 F600 A90.\n"  // A-axis rotation mid-move
+        "M30\n");
+    assert(program.valid()); // must not reject as error
+    // Should produce at least two motion records (Z safe + linear)
+    std::size_t motionCount = 0;
+    for (const auto& r : program.records) {
+        if (r.type == aim3d::ControllerRecordType::Rapid ||
+            r.type == aim3d::ControllerRecordType::LinearFeed) {
+            motionCount++;
+        }
+    }
+    assert(motionCount >= 2);
+}
+
+void test_parser_silently_ignores_tool_offset_words() {
+    aim3d::LinuxCncCompatParser parser;
+    // G43 H1, G49, H word, D word — all are simulation-irrelevant
+    const auto program = parser.parse(
+        "G20 G90 G54\n"
+        "T1 M6\n"
+        "G43 H1\n"      // tool length compensation enable — no-op in sim
+        "G0 X0 Y0 Z0.6\n"
+        "G1 Z-0.015 F13.0\n"
+        "G49\n"         // cancel TLC — no-op
+        "M30\n");
+    assert(program.valid());
+}
+
+void test_parser_silently_ignores_program_markers() {
+    aim3d::LinuxCncCompatParser parser;
+    // % markers and O-words (program numbers, subroutine labels)
+    const auto program = parser.parse(
+        "%\n"
+        "O00001\n"
+        "G21 G90\n"
+        "G0 X0 Y0 Z5\n"
+        "G1 X10 F600\n"
+        "M30\n"
+        "%\n");
+    assert(program.valid());
+    bool sawMotion = false;
+    for (const auto& r : program.records) {
+        if (r.type == aim3d::ControllerRecordType::Rapid ||
+            r.type == aim3d::ControllerRecordType::LinearFeed) {
+            sawMotion = true;
+        }
+    }
+    assert(sawMotion);
+}
+
+void test_parser_accepts_pallet_clamp_codes() {
+    aim3d::LinuxCncCompatParser parser;
+    // M10/M11 appear in real CAM output but are no-ops in simulation
+    const auto program = parser.parse(
+        "G20 G90 G54\n"
+        "M11\n"     // pallet unclamp
+        "G0 A0.\n"  // A-axis home
+        "M10\n"     // pallet clamp
+        "G0 X0 Y0 Z0.6\n"
+        "G1 X0.7 Y-0.5 F650\n"
+        "M30\n");
+    assert(program.valid());
+}
+
+void test_parser_accepts_g53_machine_coords() {
+    aim3d::LinuxCncCompatParser parser;
+    // G53 (machine coordinates) is common at start/end of programs
+    const auto program = parser.parse(
+        "G20 G90\n"
+        "G53 G0 Z0.\n"  // machine-coord rapid to Z home
+        "G53 G0 X0. Y0.\n"
+        "G54\n"
+        "G0 X0 Y0 Z0.5\n"
+        "G1 X10 F600\n"
+        "M30\n");
+    assert(program.valid());
+}
+
+// ── NC file integration tests ─────────────────────────────────────────────────
+
+void test_nc_face_program_parses_and_plans() {
+    const std::string gcode = readNcFile("face.nc");
+    if (gcode.empty()) {
+        std::cout << "[SKIP] face.nc not found" << std::endl;
+        return;
+    }
+    aim3d::LinuxCncCompatParser parser;
+    const auto program = parser.parse(gcode);
+
+    // Dump any non-warning diagnostics for debugging
+    for (const auto& d : program.diagnostics) {
+        if (d.severity == aim3d::ControllerDiagnosticSeverity::Error ||
+            d.severity == aim3d::ControllerDiagnosticSeverity::Fatal) {
+            std::cerr << "[face.nc] " << d.message << " (line " << d.line << ")" << std::endl;
+        }
+    }
+    assert(program.valid());
+    // face.nc has a series of G1/G2/G3 moves — must produce motion records
+    std::size_t motionCount = 0;
+    for (const auto& r : program.records) {
+        if (r.type == aim3d::ControllerRecordType::Rapid     ||
+            r.type == aim3d::ControllerRecordType::LinearFeed ||
+            r.type == aim3d::ControllerRecordType::ArcCW     ||
+            r.type == aim3d::ControllerRecordType::ArcCCW) {
+            motionCount++;
+        }
+    }
+    assert(motionCount >= 10); // conservative lower bound
+
+    // Planner must produce segments without errors
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    aim3d::TrajectoryPlanner planner(profile);
+    std::vector<aim3d::ControllerDiagnostic> planDiags;
+    std::unordered_map<int, std::array<double, 3>> workOffsets = {
+        {54, {150.0, 150.0, 0.0}}
+    };
+    const auto segments = planner.plan(program, planDiags, workOffsets);
+    for (const auto& d : planDiags) {
+        if (d.severity == aim3d::ControllerDiagnosticSeverity::Error ||
+            d.severity == aim3d::ControllerDiagnosticSeverity::Fatal) {
+            std::cerr << "[face.nc planner] " << d.message << std::endl;
+        }
+    }
+    assert(!segments.empty());
+    std::cout << "[face.nc] records=" << program.records.size()
+              << " segments=" << segments.size() << std::endl;
+}
+
+void test_nc_contour_program_parses_and_plans() {
+    const std::string gcode = readNcFile("contour.nc");
+    if (gcode.empty()) {
+        std::cout << "[SKIP] contour.nc not found" << std::endl;
+        return;
+    }
+    aim3d::LinuxCncCompatParser parser;
+    const auto program = parser.parse(gcode);
+    for (const auto& d : program.diagnostics) {
+        if (d.severity == aim3d::ControllerDiagnosticSeverity::Error ||
+            d.severity == aim3d::ControllerDiagnosticSeverity::Fatal) {
+            std::cerr << "[contour.nc] " << d.message << " (line " << d.line << ")" << std::endl;
+        }
+    }
+    assert(program.valid());
+
+    std::size_t arcCount = 0;
+    for (const auto& r : program.records) {
+        if (r.type == aim3d::ControllerRecordType::ArcCW ||
+            r.type == aim3d::ControllerRecordType::ArcCCW) {
+            arcCount++;
+        }
+    }
+    assert(arcCount >= 2); // contour.nc has G2/G3 arcs
+
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    aim3d::TrajectoryPlanner planner(profile);
+    std::vector<aim3d::ControllerDiagnostic> planDiags;
+    std::unordered_map<int, std::array<double, 3>> workOffsets = {
+        {54, {150.0, 150.0, 0.0}}
+    };
+    const auto segments = planner.plan(program, planDiags, workOffsets);
+    for (const auto& d : planDiags) {
+        if (d.severity == aim3d::ControllerDiagnosticSeverity::Error ||
+            d.severity == aim3d::ControllerDiagnosticSeverity::Fatal) {
+            std::cerr << "[contour.nc planner] " << d.message << std::endl;
+        }
+    }
+    assert(!segments.empty());
+    std::cout << "[contour.nc] records=" << program.records.size()
+              << " segments=" << segments.size() << std::endl;
+}
+
+void test_controller_submit_face_nc_produces_segments() {
+    const std::string gcode = readNcFile("face.nc");
+    if (gcode.empty()) {
+        std::cout << "[SKIP] face.nc not found" << std::endl;
+        return;
+    }
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    aim3d::MachineController controller(profile);
+    controller.setWorkOffset(54, 150.0, 150.0, 0.0);
+    const bool ok = controller.submitMdi(gcode);
+    if (!ok) {
+        for (const auto& d : controller.getLastDiagnostics()) {
+            std::cerr << "[face.nc controller] " << d.message
+                      << " (line " << d.line << ")" << std::endl;
+        }
+    }
+    assert(ok);
+    assert(controller.getQueuedSegments() > 0);
+    std::cout << "[face.nc controller] queued=" << controller.getQueuedSegments() << std::endl;
+}
+
+void test_controller_submit_contour_nc_produces_segments() {
+    const std::string gcode = readNcFile("contour.nc");
+    if (gcode.empty()) {
+        std::cout << "[SKIP] contour.nc not found" << std::endl;
+        return;
+    }
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    aim3d::MachineController controller(profile);
+    controller.setWorkOffset(54, 150.0, 150.0, 0.0);
+    const bool ok = controller.submitMdi(gcode);
+    if (!ok) {
+        for (const auto& d : controller.getLastDiagnostics()) {
+            std::cerr << "[contour.nc controller] " << d.message
+                      << " (line " << d.line << ")" << std::endl;
+        }
+    }
+    assert(ok);
+    assert(controller.getQueuedSegments() > 0);
+    std::cout << "[contour.nc controller] queued=" << controller.getQueuedSegments() << std::endl;
+}
+
+void test_planner_arc_planes_xz_and_yz() {
+    // G18 (XZ plane) and G19 (YZ plane) arcs appear in face.nc and contour.nc
+    aim3d::LinuxCncCompatParser parser;
+    std::vector<aim3d::ControllerDiagnostic> planDiags;
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    aim3d::TrajectoryPlanner planner(profile);
+
+    // XZ-plane arc (G18)
+    auto prog = parser.parse(
+        "G21 G90 G54\n"
+        "G18\n"           // select XZ plane
+        "G0 X0.7 Z0.\n"
+        "G1 Z-0.015 F40\n"
+        "G3 X0.68 Z-0.04 I-0.025 K0.\n"  // CCW in XZ = helix-ish lead-in
+        "M30\n");
+    for (const auto& d : prog.diagnostics) {
+        if (d.severity == aim3d::ControllerDiagnosticSeverity::Error ||
+            d.severity == aim3d::ControllerDiagnosticSeverity::Fatal) {
+            std::cerr << "[XZ arc] parse error: " << d.message << std::endl;
+        }
+    }
+    assert(prog.valid());
+    planDiags.clear();
+    const auto segs = planner.plan(prog, planDiags);
+    for (const auto& d : planDiags) {
+        if (d.severity == aim3d::ControllerDiagnosticSeverity::Error ||
+            d.severity == aim3d::ControllerDiagnosticSeverity::Fatal) {
+            std::cerr << "[XZ arc] plan error: " << d.message << std::endl;
+        }
+    }
+    assert(!segs.empty());
+}
+
+void test_controller_clear_and_resubmit() {
+    // Verify clearPendingSegments + re-submit works without accumulating stale motion
+    auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    aim3d::MachineController controller(profile);
+
+    const std::string prog1 = "G21 G90\nG0 X0 Y0 Z5\nG1 X10 F600\nM30\n";
+    assert(controller.submitMdi(prog1));
+    const std::size_t first = controller.getQueuedSegments();
+    assert(first > 0);
+
+    controller.clearPendingSegments();
+    assert(controller.getQueuedSegments() == 0);
+
+    assert(controller.submitMdi(prog1));
+    const std::size_t second = controller.getQueuedSegments();
+    // After re-submit we should get the same segment count, not double
+    assert(second > 0);
+    assert(second <= first + 5); // tolerance for ring drain vs planned
+}
+
+} // anonymous namespace
+
 int main() {
+    std::cout << "[TEST] Starting test suite..." << std::endl;
+
+    std::cout << "[TEST] test_document_lifecycle..." << std::endl;
     test_document_lifecycle();
 #if AIM3D_HAS_OCCT
+    std::cout << "[TEST] test_body_import_and_inspection..." << std::endl;
     test_body_import_and_inspection();
+    std::cout << "[TEST] test_geometry_export_round_trips..." << std::endl;
     test_geometry_export_round_trips();
+    std::cout << "[TEST] test_save_by_extension..." << std::endl;
     test_save_by_extension();
+    std::cout << "[TEST] test_async_geometry_tasks..." << std::endl;
     test_async_geometry_tasks();
+    std::cout << "[TEST] test_open_document_imports_exchange_geometry..." << std::endl;
     test_open_document_imports_exchange_geometry();
+    std::cout << "[TEST] test_import_registers_topology_records..." << std::endl;
     test_import_registers_topology_records();
+    std::cout << "[TEST] test_topology_snapshot_serialization_is_deterministic..." << std::endl;
     test_topology_snapshot_serialization_is_deterministic();
+    std::cout << "[TEST] test_equivalent_body_replacement_preserves_tokens..." << std::endl;
     test_equivalent_body_replacement_preserves_tokens();
+    std::cout << "[TEST] test_split_edit_preserves_unique_face_token..." << std::endl;
     test_split_edit_preserves_unique_face_token();
+    std::cout << "[TEST] test_offset_edit_preserves_unique_face_token..." << std::endl;
     test_offset_edit_preserves_unique_face_token();
+    std::cout << "[TEST] test_history_recompute_applies_topology_edit_features..." << std::endl;
     test_history_recompute_applies_topology_edit_features();
+    std::cout << "[TEST] test_dimension_edit_preserves_unique_face_tokens..." << std::endl;
     test_dimension_edit_preserves_unique_face_tokens();
+    std::cout << "[TEST] test_documents_have_independent_topology_databases..." << std::endl;
     test_documents_have_independent_topology_databases();
 #else
+    std::cout << "[TEST] test_occt_required_for_geometry_exchange..." << std::endl;
     test_occt_required_for_geometry_exchange();
 #endif
+    std::cout << "[TEST] test_unsupported_geometry_extension_fails..." << std::endl;
     test_unsupported_geometry_extension_fails();
+    std::cout << "[TEST] test_topology_rebind_reports_structured_stale_and_ambiguous_states..." << std::endl;
     test_topology_rebind_reports_structured_stale_and_ambiguous_states();
+    std::cout << "[TEST] test_history_tree_tracks_selections_and_downstream_dirty_state..." << std::endl;
     test_history_tree_tracks_selections_and_downstream_dirty_state();
+    std::cout << "[TEST] test_sketch_solver_coincident_points..." << std::endl;
     test_sketch_solver_coincident_points();
+    std::cout << "[TEST] test_sketch_solver_distance_constraint..." << std::endl;
     test_sketch_solver_distance_constraint();
+    std::cout << "[TEST] test_sketch_solver_line_circle_tangent..." << std::endl;
     test_sketch_solver_line_circle_tangent();
+    std::cout << "[TEST] test_sketch_solver_circle_circle_tangent..." << std::endl;
     test_sketch_solver_circle_circle_tangent();
+    std::cout << "[TEST] test_sketch_solver_fixed_and_underconstrained_dof..." << std::endl;
     test_sketch_solver_fixed_and_underconstrained_dof();
+    std::cout << "[TEST] test_sketch_solver_inconsistent_constraints..." << std::endl;
     test_sketch_solver_inconsistent_constraints();
+    std::cout << "[TEST] test_sketch_solver_c_abi_smoke..." << std::endl;
     test_sketch_solver_c_abi_smoke();
+    std::cout << "[TEST] test_parametric_sketch_rectangle_extrude_snapshot..." << std::endl;
     test_parametric_sketch_rectangle_extrude_snapshot();
+    std::cout << "[TEST] test_general_feature_model_snapshot_v2..." << std::endl;
     test_general_feature_model_snapshot_v2();
+    std::cout << "[TEST] test_construction_plane_axis_point_geometry..." << std::endl;
     test_construction_plane_axis_point_geometry();
+    std::cout << "[TEST] test_viewport_scene_has_renderable_buffers..." << std::endl;
     test_viewport_scene_has_renderable_buffers();
+    std::cout << "[TEST] test_c_api_document_buffers_and_tasks..." << std::endl;
     test_c_api_document_buffers_and_tasks();
+    std::cout << "[TEST] test_c_api_cam_toolpath_buffers..." << std::endl;
     test_c_api_cam_toolpath_buffers();
+    std::cout << "[TEST] test_controller_machine_profile_validation..." << std::endl;
     test_controller_machine_profile_validation();
+    std::cout << "[TEST] test_controller_parser_modal_subset..." << std::endl;
     test_controller_parser_modal_subset();
+    std::cout << "[TEST] test_controller_parser_rejects_unsupported_codes..." << std::endl;
     test_controller_parser_rejects_unsupported_codes();
+    std::cout << "[TEST] test_controller_parser_supports_canned_cycles..." << std::endl;
     test_controller_parser_supports_canned_cycles();
+    std::cout << "[TEST] test_controller_planner_soft_limits_and_segments..." << std::endl;
     test_controller_planner_soft_limits_and_segments();
+    std::cout << "[TEST] test_spe_protocol_emulator_fail_closed..." << std::endl;
     test_spe_protocol_emulator_fail_closed();
-    
+
+    // ── Parser tolerance tests ──────────────────────────────────────────────
+    std::cout << "[TEST] test_parser_silently_ignores_rotary_axis_words..." << std::endl;
+    test_parser_silently_ignores_rotary_axis_words();
+    std::cout << "[TEST] test_parser_silently_ignores_tool_offset_words..." << std::endl;
+    test_parser_silently_ignores_tool_offset_words();
+    std::cout << "[TEST] test_parser_silently_ignores_program_markers..." << std::endl;
+    test_parser_silently_ignores_program_markers();
+    std::cout << "[TEST] test_parser_accepts_pallet_clamp_codes..." << std::endl;
+    test_parser_accepts_pallet_clamp_codes();
+    std::cout << "[TEST] test_parser_accepts_g53_machine_coords..." << std::endl;
+    test_parser_accepts_g53_machine_coords();
+
+    // ── NC file integration tests (real CAM output) ────────────────────────
+    std::cout << "[TEST] test_nc_face_program_parses_and_plans..." << std::endl;
+    test_nc_face_program_parses_and_plans();
+    std::cout << "[TEST] test_nc_contour_program_parses_and_plans..." << std::endl;
+    test_nc_contour_program_parses_and_plans();
+    std::cout << "[TEST] test_controller_submit_face_nc_produces_segments..." << std::endl;
+    test_controller_submit_face_nc_produces_segments();
+    std::cout << "[TEST] test_controller_submit_contour_nc_produces_segments..." << std::endl;
+    test_controller_submit_contour_nc_produces_segments();
+    std::cout << "[TEST] test_planner_arc_planes_xz_and_yz..." << std::endl;
+    test_planner_arc_planes_xz_and_yz();
+    std::cout << "[TEST] test_controller_clear_and_resubmit..." << std::endl;
+    test_controller_clear_and_resubmit();
+
     // Run MaterialSimulator & C-API tests
     {
+        std::cout << "[TEST] aim3d_simulator_run (C-API)..." << std::endl;
         Aim3dSimulatorHandle* handle = aim3d_simulator_create();
         assert(handle != nullptr);
 
@@ -1004,5 +1362,6 @@ int main() {
         aim3d_simulator_release(handle);
     }
 
+    std::cout << "[TEST] All tests completed successfully!" << std::endl;
     return 0;
 }

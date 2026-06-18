@@ -121,6 +121,7 @@ MachineProfile MachineProfile::defaultThreeAxisMill() {
         AxisProfile{"Z", -100.0, 60.0, 1200.0, 350.0, 400.0, true},
     };
     profile.homePositionMm = {0.0, 0.0, 50.8};
+    profile.softLimitsEnabled = false; // Disabled by default for simulation
     return profile;
 }
 
@@ -164,6 +165,7 @@ bool ControllerProgram::valid() const {
 
 bool LinuxCncCompatParser::isSupportedMCode(int code) {
     switch (code) {
+        // Supported with side-effects
         case 2:
         case 3:
         case 4:
@@ -173,6 +175,12 @@ bool LinuxCncCompatParser::isSupportedMCode(int code) {
         case 8:
         case 9:
         case 30:
+            return true;
+        // Silently accepted no-ops (common in real CAM output)
+        case 0:  // M0  - program pause
+        case 1:  // M1  - optional stop
+        case 10: // M10 - pallet clamp
+        case 11: // M11 - pallet unclamp
             return true;
         default:
             return false;
@@ -204,6 +212,12 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
         if (line.empty()) {
             continue;
         }
+        // Skip program markers (%) and O-word lines (program numbers / sub definitions)
+        // These are treated as no-ops in 3-axis simulation context, matching
+        // LinuxCNC's handling on machines without those axis/sub capabilities.
+        if (line[0] == '%' || line[0] == 'O') {
+            continue;
+        }
         if (programEnded) {
             addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.after.end", "Commands after M30 are not executed");
             continue;
@@ -219,6 +233,7 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
         bool toolSelected = false;
         bool motionChanged = false;
         bool hasG28 = false;
+        bool hasG53 = false;
         int lValue = 1;
         [[maybe_unused]] bool hasP = false;
         [[maybe_unused]] double pValue = 0.0;
@@ -315,6 +330,13 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
                     case 99:
                         modal.retractToOldZ = false;
                         break;
+                    case 40: // G40 - cutter compensation cancel (no-op in simulation)
+                    case 43: // G43 - tool length offset enable (no-op in simulation)
+                    case 49: // G49 - cancel tool length offset (no-op in simulation)
+                        break;
+                    case 53: // G53 - machine coordinate move prefix: positions are machine-coord, no work offset
+                        hasG53 = true;
+                        break;
                     default:
                         addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.unsupported.g", "Unsupported G-code G" + std::to_string(code));
                         break;
@@ -368,6 +390,7 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
                 const std::size_t index = letter == 'X' ? 0 : (letter == 'Y' ? 1 : 2);
                 const double mmValue = toMm(value, modal.units);
                 record.targetMm[index] = modal.absoluteDistance ? mmValue : modal.positionMm[index] + mmValue;
+                record.axisSpecified[index] = true;
                 hasCoord = true;
                 if (letter == 'Z') {
                     zValRaw = value;
@@ -404,9 +427,20 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
                 toolSelected = true;
                 hasRecord = true;
             } else if (letter == 'N') {
+                continue; // sequence numbers
+            } else if (letter == 'A' || letter == 'B' || letter == 'C') {
+                // Rotary axis words — parsed and consumed, silently ignored on 3-axis machines.
+                // LinuxCNC read_a/read_b/read_c store the value in the block but only
+                // pass it to the canon layer if the machine has those axes configured.
+                continue;
+            } else if (letter == 'D') {
+                // D word — cutter radius compensation register, no-op in simulation.
+                continue;
+            } else if (letter == 'H') {
+                // H word — tool length offset register (companion to G43), no-op here.
                 continue;
             } else {
-                addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Error, lineNumber, "gcode.unsupported.word", "Unsupported word: " + word);
+                addDiagnostic(program.diagnostics, ControllerDiagnosticSeverity::Warning, lineNumber, "gcode.unsupported.word", "Unrecognised word '" + word + "' ignored");
             }
         }
 
@@ -609,6 +643,7 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
                 record.feedRateMmPerMin = modal.feedRateMmPerMin;
                 record.spindleRpm = modal.spindleRpm;
                 record.tool = modal.activeTool;
+                record.isMachineCoord = hasG53;
                 modal.positionMm = record.targetMm;
                 hasRecord = true;
             }
@@ -631,13 +666,18 @@ ControllerProgram LinuxCncCompatParser::parseWithPosition(const std::string& gco
 TrajectoryPlanner::TrajectoryPlanner(MachineProfile profile)
     : m_profile(std::move(profile)) {}
 
-std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program, std::vector<ControllerDiagnostic>& diagnostics) const {
+std::vector<SpeSegment> TrajectoryPlanner::plan(
+    const ControllerProgram& program, 
+    std::vector<ControllerDiagnostic>& diagnostics,
+    const std::unordered_map<int, std::array<double, 3>>& workOffsets
+) const {
     std::vector<SpeSegment> segments;
     const auto profileDiagnostics = m_profile.validate();
     diagnostics.insert(diagnostics.end(), profileDiagnostics.begin(), profileDiagnostics.end());
     if (!program.valid() || std::any_of(profileDiagnostics.begin(), profileDiagnostics.end(), isError)) {
         return segments;
     }
+    if (program.records.empty()) return segments;
 
     struct PathBlock {
         std::array<double, 3> startMm;
@@ -652,9 +692,23 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
     };
 
     std::vector<PathBlock> blocks;
+    
+    // Initialize current in Machine Coordinates
     std::array<double, 3> current = program.startPositionMm;
+    std::array<double, 3> initialOffset = {0.0, 0.0, 0.0};
+    int startWorkOffset = 54;
+    if (!program.records.empty()) {
+        startWorkOffset = program.records.front().modal.workOffset;
+    }
+    auto itStart = workOffsets.find(startWorkOffset);
+    if (itStart != workOffsets.end()) {
+        initialOffset = itStart->second;
+    }
+    for (std::size_t i = 0; i < 3; ++i) {
+        current[i] += initialOffset[i];
+    }
 
-    // 1. Generate path blocks
+    // 1. Generate path blocks in Machine Coordinates
     for (const auto& record : program.records) {
         if (record.type != ControllerRecordType::Rapid &&
             record.type != ControllerRecordType::LinearFeed &&
@@ -665,11 +719,35 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
         }
 
         bool insideEnvelope = true;
+        std::array<double, 3> offset = {0.0, 0.0, 0.0};
+        if (!record.isMachineCoord) {
+            auto it = workOffsets.find(record.modal.workOffset);
+            if (it != workOffsets.end()) {
+                offset = it->second;
+            }
+        }
+
+        std::array<double, 3> wp_mach = {0.0, 0.0, 0.0};
+        for (std::size_t i = 0; i < 3; ++i) {
+            if (record.isMachineCoord) {
+                wp_mach[i] = record.axisSpecified[i] ? record.targetMm[i] : current[i];
+            } else {
+                wp_mach[i] = record.axisSpecified[i] ? record.targetMm[i] + offset[i] : current[i];
+            }
+        }
+
         for (std::size_t i = 0; i < 3; ++i) {
             const auto& axis = m_profile.axes[i];
-            if (record.targetMm[i] < axis.minPositionMm || record.targetMm[i] > axis.maxPositionMm) {
-                addDiagnostic(diagnostics, ControllerDiagnosticSeverity::Fatal, record.sourceLine, "planner.soft_limit", axis.name + " target exceeds soft limits");
-                insideEnvelope = false;
+            if (wp_mach[i] < axis.minPositionMm || wp_mach[i] > axis.maxPositionMm) {
+                std::ostringstream oss;
+                oss << axis.name << " target " << wp_mach[i] << "mm exceeds soft limits [" 
+                    << axis.minPositionMm << ", " << axis.maxPositionMm << "]";
+                if (m_profile.softLimitsEnabled) {
+                    addDiagnostic(diagnostics, ControllerDiagnosticSeverity::Fatal, record.sourceLine, "planner.soft_limit", oss.str());
+                    insideEnvelope = false;
+                } else {
+                    addDiagnostic(diagnostics, ControllerDiagnosticSeverity::Warning, record.sourceLine, "planner.soft_limit", oss.str());
+                }
             }
         }
         if (!insideEnvelope) {
@@ -679,13 +757,13 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
         // For simplicity, we linearize arcs here into small segments (same as LightweightSimulator)
         std::vector<std::array<double, 3>> waypoints;
         if (record.type == ControllerRecordType::GoHome) {
-            waypoints.push_back(record.targetMm);
+            waypoints.push_back({record.targetMm[0] + offset[0], record.targetMm[1] + offset[1], record.targetMm[2] + offset[2]});
             waypoints.push_back(m_profile.homePositionMm);
         } else if (record.type == ControllerRecordType::ArcCW || record.type == ControllerRecordType::ArcCCW) {
             double startX = current[0];
             double startY = current[1];
-            double endX = record.targetMm[0];
-            double endY = record.targetMm[1];
+            double endX = record.targetMm[0] + offset[0];
+            double endY = record.targetMm[1] + offset[1];
             double cx = startX + record.arcCenterOffsetMm[0];
             double cy = startY + record.arcCenterOffsetMm[1];
             double rStart = std::hypot(startX - cx, startY - cy);
@@ -708,14 +786,14 @@ std::vector<SpeSegment> TrajectoryPlanner::plan(const ControllerProgram& program
                 for (int step = 1; step <= numSegments; ++step) {
                     double ratio = (double)step / numSegments;
                     double angle = startAngle + ratio * sweep;
-                    double z = current[2] + ratio * (record.targetMm[2] - current[2]);
+                    double z = current[2] + ratio * ((record.targetMm[2] + offset[2]) - current[2]);
                     waypoints.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle), z});
                 }
             } else {
-                waypoints.push_back(record.targetMm);
+                waypoints.push_back(wp_mach);
             }
         } else {
-            waypoints.push_back(record.targetMm);
+            waypoints.push_back(wp_mach);
         }
 
         for (const auto& wp : waypoints) {
@@ -1001,6 +1079,7 @@ void SpeProtocolEmulator::tick(bool estopActive, bool limitActive) {
             for (std::size_t i = 0; i < 3; ++i) {
                 m_status.positionSteps[i] += segment.deltaSteps[i];
             }
+            m_status.activeSourceLine = segment.sourceLine;
         }
         if (m_ring.empty()) {
             m_status.state = SpeState::Armed;
@@ -1018,6 +1097,9 @@ MachineController::MachineController(MachineProfile profile)
         m_emulator.mutableStatus().positionSteps[i] = 
             static_cast<int64_t>(m_profile.homePositionMm[i] * m_profile.axes[i].stepsPerMm);
     }
+
+    m_emulator.mutableStatus().estopActive = false;
+    m_emulator.mutableStatus().heartbeatOk = true;
 
     
     SpeCommandMailbox cmd;
@@ -1076,7 +1158,7 @@ bool MachineController::submitMdi(const std::string& gcode) {
         }
         return false;
     }
-    std::vector<SpeSegment> segs = m_planner.plan(prog, m_lastDiagnostics);
+    std::vector<SpeSegment> segs = m_planner.plan(prog, m_lastDiagnostics, m_workOffsets);
     std::cout << "[Controller] Planner generated " << segs.size() << " segments." << std::endl;
     if (!segs.empty()) {
         std::cout << "[Controller] First segment distance: " 
@@ -1121,12 +1203,20 @@ void MachineController::tick(double dtSeconds) {
         std::array<double, 3> newPos = getToolPosition();
 
         if (oldPos[0] != newPos[0] || oldPos[1] != newPos[1] || oldPos[2] != newPos[2]) {
-            // Cut segment (assume a tool radius of 3.175mm / 1/8" for now)
-            m_materialSimulator.cutSegment(oldPos, newPos, 3.175);
+            // Defer the material-sim cut — OCCT booleans are too expensive to run per-tick.
+            // Caller should invoke flushMaterialSimulation() once the tick loop is complete.
+            m_deferredCuts.push_back({oldPos, newPos, 3.175});
         }
 
         m_timeAccumulator -= segmentDt;
     }
+}
+
+void MachineController::flushMaterialSimulation() {
+    for (const auto& cut : m_deferredCuts) {
+        m_materialSimulator.cutSegment(cut.start, cut.end, cut.radius);
+    }
+    m_deferredCuts.clear();
 }
 
 MaterialSimulator& MachineController::materialSimulator() {
@@ -1145,7 +1235,7 @@ std::array<double, 3> MachineController::getToolPosition() const {
         if (m_profile.axes[i].stepsPerMm != 0.0) {
             pos[i] = static_cast<double>(steps[i]) / m_profile.axes[i].stepsPerMm;
         }
-        pos[i] += activeOffset[i];
+        pos[i] -= activeOffset[i];
     }
     return pos;
 }
@@ -1178,7 +1268,12 @@ void MachineController::clearPendingSegments() {
     SpeCommandMailbox cmd;
     cmd.command = SpeCommand::Stop;
     m_emulator.submitCommand(cmd);
+    m_emulator.mutableStatus().activeSourceLine = 0;
     std::cout << "[Controller] Cleared pending segments and stopped emulator." << std::endl;
+}
+
+std::size_t MachineController::getActiveSourceLine() const {
+    return m_emulator.status().activeSourceLine;
 }
 
 const std::vector<ControllerDiagnostic>& MachineController::getLastDiagnostics() const {

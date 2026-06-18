@@ -73,6 +73,7 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
         .property("hasProbe", &MachineProfile::hasProbe)
         .property("hasLimitSwitches", &MachineProfile::hasLimitSwitches)
         .property("hasEstop", &MachineProfile::hasEstop)
+        .property("softLimitsEnabled", &MachineProfile::softLimitsEnabled)
         .function("getAxis", optional_override([](MachineProfile& self, int index) -> AxisProfile {
             if (index >= 0 && index < 3) return self.axes[index];
             return AxisProfile();
@@ -116,6 +117,7 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
         .function("getState", &MachineController::getState)
         .function("getQueuedSegments", &MachineController::getQueuedSegments)
         .function("clearPendingSegments", &MachineController::clearPendingSegments)
+        .function("getActiveSourceLine", &MachineController::getActiveSourceLine)
         .function("setWorkOffset", &MachineController::setWorkOffset)
         .function("getWorkOffset", optional_override([](MachineController& self, int code) {
             std::array<double, 3> offset = self.getWorkOffset(code);
@@ -149,13 +151,15 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
         }))
         .function("materialSimulator", optional_override([](MachineController& self) -> MaterialSimulator& {
             return self.materialSimulator();
-        }), allow_raw_pointers());
+        }), allow_raw_pointers())
+        .function("flushMaterialSimulation", &MachineController::flushMaterialSimulation);
 
     class_<MaterialSimulator>("MaterialSimulator")
         .constructor<>()
         .function("initialize", &MaterialSimulator::initialize)
         .function("setLocation", &MaterialSimulator::setLocation)
         .function("reset", &MaterialSimulator::reset)
+        .function("updateMesh", &MaterialSimulator::updateMesh)
         .function("getPositions", optional_override([](const MaterialSimulator& self) {
             if (self.getPositions().empty()) return val::array();
             return val(typed_memory_view(self.getPositions().size(), self.getPositions().data()));

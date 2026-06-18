@@ -115,7 +115,7 @@ test-core: build-core
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure
 
 test-core-verbose: build-core
-	bash -c "$(EMSDK_ENV) && cd $(BUILD_DIR) && node aim3d_core_tests.js"
+	bash -c "$(EMSDK_ENV) && cd $(BUILD_DIR)/bin && node aim3d_core_tests.js"
 
 run: deps run-tauri
 

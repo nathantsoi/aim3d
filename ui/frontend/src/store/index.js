@@ -7,7 +7,7 @@ import {
   syncViewportScene
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
-import { initCoreWasm, parseGcode, getController, resetController, getCoreModule, extractMaterialMesh } from '../services/coreWasm';
+import { initCoreWasm, parseGcode, getController, resetController, getCoreModule, extractMaterialMesh, flushMaterialSimulation } from '../services/coreWasm';
 import { RIBBON_MODES } from '../config/ribbon';
 import {
   buildConstructionParams,
@@ -39,43 +39,20 @@ import {
 
 /**
  * Pre-process G-code before sending to the WASM controller.
- * The controller parser only handles a subset of G/M codes.  Real-world CAM
- * output often includes codes that are effectively no-ops in simulation context
- * (e.g. G43/G49 tool-length offset, M10/M11 pallet lock, G53 machine coords,
- * O-words and % markers).  We strip those lines rather than letting the parser
- * emit an error that aborts the whole program.
- *
- * Codes kept as-is: G0,G1,G2,G3 (motion), G17-19 (plane), G20/21 (units),
- *   G54-59 (WCS), G80 (cancel canned), G81/84 (canned), G90/91, G94,
- *   M2/M3/M4/M5/M6/M7/M8/M9/M30 and F/S/T/N words.
+ * The C++ LinuxCncCompatParser now handles most common CAM-output codes
+ * (A/B/C rotary words, G43/G49, G53, M10/M11, %, O-words).
+ * This function provides an additional defense-in-depth pass for edge cases.
  */
 function sanitizeGcodeForController(gcode) {
   if (!gcode) return '';
   return gcode
     .split('\n')
     .map(rawLine => {
-      // Strip inline comments first
-      let line = rawLine.replace(/\(.*?\)/g, '').replace(/;.*$/, '').trim().toUpperCase();
-
-      // Drop program-number lines (O words), percent markers
-      if (/^%$/.test(line) || /^O\d+/.test(line)) return '';
-
-      // Drop N-only lines (sequence numbers with nothing else)
-      const withoutN = line.replace(/^N\d+\s*/, '').trim();
-      if (!withoutN) return '';
-
-      // Replace unsupported G codes with comments (they become empty lines after stripping)
-      // G43 (tool length offset enable), G49 (cancel tool length offset),
-      // G53 (machine coordinates - one-shot), G98/G99 handled by controller
-      line = line
-        .replace(/\bG43\b(\s+H\d+(\.\d+)?)?/g, '')  // G43 [H#]
-        .replace(/\bG49\b/g, '')                      // G49
-        .replace(/\bG53\b/g, '')                      // G53 (machine coords prefix)
-        .replace(/\bG28\b/g, '')                      // G28 (return to home) – controller handles but can cause issues
-        .replace(/\bM1[01]\b/g, '')                   // M10, M11 (pallet lock/unlock)
-        .replace(/\bH\d+(\.\d+)?\b/g, '')             // H words (tool length offset register)
-        .trim();
-
+      // Strip inline comments first, trim whitespace
+      let line = rawLine.replace(/\(.*?\)/g, '').replace(/;.*$/, '').trim();
+      // The C++ parser now handles % and O-words natively, but we still
+      // strip them in JS to give a cleaner log of what's being sent.
+      if (/^\s*%\s*$/.test(line) || /^\s*[Oo]\d+/.test(line)) return '';
       return line;
     })
     .filter(line => line.length > 0)
@@ -109,6 +86,7 @@ export const useCoreStore = defineStore('core', {
     simulationTotalSteps: 0,
     simulationToolPosition: [0, 0, 2],
     playbackSpeedMultiplier: 1.0,
+    activeGcodeLine: 0,
 
     // Planning diagnostics (populated after submitMdi / startSimulation)
     lastPlanningDiagnostics: [], // [{severity, line, code, message}]
@@ -1134,6 +1112,132 @@ export const useCoreStore = defineStore('core', {
       }
     },
 
+    stepSimulationForward() {
+      if (!this.isSimulating) return;
+      this.simulationPlaybackStatus = 'playing';
+      
+      const controller = getController();
+      const startLine = controller.getActiveSourceLine();
+      
+      // Perform ticks at 10ms intervals to show smooth tool motion per block
+      let tickCount = 0;
+      const maxTicks = 1000;
+      
+      const tickInterval = setInterval(() => {
+        controller.tick(0.01);
+        
+        const pos = Array.from(controller.getToolPosition());
+        const scaleToUi = this.units === 'inch' ? 1/25.4 : 1.0;
+        this.simulationToolPosition = [pos[0]*scaleToUi, pos[1]*scaleToUi, pos[2]*scaleToUi];
+        this.activeGcodeLine = controller.getActiveSourceLine();
+        this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - controller.getQueuedSegments());
+        
+        flushMaterialSimulation();
+        const mesh = extractMaterialMesh();
+        if (mesh) {
+          let posArray = Array.from(mesh.positions);
+          if (scaleToUi !== 1.0) {
+            posArray = posArray.map(v => v * scaleToUi);
+          }
+          this.simulatedStockMesh = {
+            positions: posArray,
+            normals: Array.from(mesh.normals),
+            indices: Array.from(mesh.indices)
+          };
+        }
+        
+        syncViewportScene(this.$state);
+        
+        const currentLine = controller.getActiveSourceLine();
+        const finished = controller.getQueuedSegments() === 0 && controller.getState() !== 2;
+        
+        if (currentLine !== startLine || finished || tickCount++ > maxTicks) {
+          clearInterval(tickInterval);
+          this.simulationPlaybackStatus = 'paused';
+          if (finished) {
+            this.simulationPlaybackStatus = 'stopped';
+            this.addMessage('Simulation finished', 'success');
+          }
+        }
+      }, 10);
+    },
+
+    stepSimulationBackward() {
+      if (!this.isSimulating) return;
+      
+      const controller = getController();
+      const currentLine = controller.getActiveSourceLine();
+      if (currentLine <= 1) {
+        this.resetSimulation();
+        return;
+      }
+      
+      const targetLine = currentLine - 1;
+      
+      // Stop and reset simulation back to beginning
+      this.simulationPlaybackStatus = 'stopped';
+      this.simulationCurrentStep = 0;
+      
+      try {
+        if (resetController) {
+          const newController = resetController();
+          this.applyProfileToCore();
+          for (const [code, offset] of Object.entries(this.workOffsets)) {
+            newController.setWorkOffset(Number(code), offset[0], offset[1], offset[2]);
+          }
+          for (const [toolId, zOffset] of Object.entries(this.toolOffsets)) {
+            newController.setToolOffset(Number(toolId), zOffset);
+          }
+          if (this.machineInitEnabled) {
+            const initGcode = this.getFormattedInitGcode();
+            if (initGcode) {
+              newController.submitMdi(initGcode);
+            }
+          }
+          newController.setTaskMode(2); // Auto/Mdi
+          
+          // Fast-forward parsing & planning of G-code program
+          const sanitized = this.sanitizeGcodeForController(this.gcodeText);
+          if (newController.submitMdi(sanitized)) {
+            let safetyCount = 0;
+            // Tick forward synchronously until target G-code line is hit
+            while (newController.getQueuedSegments() > 0 && safetyCount++ < 50000) {
+              newController.tick(0.01);
+              if (newController.getActiveSourceLine() >= targetLine) {
+                break;
+              }
+            }
+            
+            // Update UI position and stock mesh
+            const pos = Array.from(newController.getToolPosition());
+            const scaleToUi = this.units === 'inch' ? 1/25.4 : 1.0;
+            this.simulationToolPosition = [pos[0]*scaleToUi, pos[1]*scaleToUi, pos[2]*scaleToUi];
+            this.activeGcodeLine = newController.getActiveSourceLine();
+            this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - newController.getQueuedSegments());
+            
+            flushMaterialSimulation();
+            const mesh = extractMaterialMesh();
+            if (mesh) {
+              let posArray = Array.from(mesh.positions);
+              if (scaleToUi !== 1.0) {
+                posArray = posArray.map(v => v * scaleToUi);
+              }
+              this.simulatedStockMesh = {
+                positions: posArray,
+                normals: Array.from(mesh.normals),
+                indices: Array.from(mesh.indices)
+              };
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to step backward in controller", err);
+      }
+      
+      syncViewportScene(this.$state);
+      this.simulationPlaybackStatus = 'paused';
+    },
+
     simulationTick() {
       if (this.simulationPlaybackStatus !== 'playing') return;
       if (!this.isSimulating) return;
@@ -1150,6 +1254,7 @@ export const useCoreStore = defineStore('core', {
       controller.tick(simDtSec);
       
       this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - controller.getQueuedSegments());
+      this.activeGcodeLine = controller.getActiveSourceLine();
 
       const pos = Array.from(controller.getToolPosition());
       const scaleToUi = this.units === 'inch' ? 1/25.4 : 1.0;
@@ -1162,6 +1267,9 @@ export const useCoreStore = defineStore('core', {
         console.log(`[Core Debug] Tool Pos: ${newPos[0].toFixed(3)}, ${newPos[1].toFixed(3)}, ${newPos[2].toFixed(3)} | Queued: ${controller.getQueuedSegments()}`);
       }
       this.simulationToolPosition = newPos;
+
+      // Flush deferred OCCT cuts and rebuild mesh once per animation frame
+      flushMaterialSimulation();
 
       const mesh = extractMaterialMesh();
       if (mesh) {

@@ -78,3 +78,15 @@ export function extractMaterialMesh() {
     indices: new Uint32Array(indicesView)
   };
 }
+
+/**
+ * Flush deferred material-sim cuts accumulated during tick() calls, then rebuild the mesh.
+ * Call this once per animation frame (or after a batch of ticks) to apply OCCT booleans
+ * in bulk rather than per-tick.
+ */
+export function flushMaterialSimulation() {
+  if (!controllerInstance) return;
+  controllerInstance.flushMaterialSimulation();
+  const matSim = controllerInstance.materialSimulator();
+  if (matSim) matSim.updateMesh();
+}

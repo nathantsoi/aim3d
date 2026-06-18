@@ -15,6 +15,8 @@
 #include <gp_Vec.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #endif
 
 #include <iostream>
@@ -67,28 +69,63 @@ void MaterialSimulator::cutSegment(const std::array<double, 3>& start, const std
     gp_Vec delta(pA, pB);
     
     double dist = delta.Magnitude();
-    
-    // The tool is modeled as a vertical cylinder pointing upwards (+Z)
-    // Height of tool must be large enough to clear the stock
     double toolHeight = m_sizeZ * 2.0 + 10.0;
-    
-    gp_Ax2 axes(pA, gp_Dir(0, 0, 1));
-    TopoDS_Shape toolShape = BRepPrimAPI_MakeCylinder(axes, radius, toolHeight).Shape();
-    
-    TopoDS_Shape toolSweptVolume;
-    if (dist > 1e-6) {
-        // Sweep the tool along the segment vector
-        toolSweptVolume = BRepSweep_Prism(toolShape, delta).Shape();
-    } else {
-        toolSweptVolume = toolShape;
+
+    // 1. Create and cut start cylinder
+    gp_Ax2 axesA(pA, gp_Dir(0, 0, 1));
+    TopoDS_Shape toolShapeA = BRepPrimAPI_MakeCylinder(axesA, radius, toolHeight).Shape();
+
+    BRepAlgoAPI_Cut cutA(m_stockShape, toolShapeA);
+    cutA.Build();
+    if (cutA.IsDone() && !cutA.Shape().IsNull()) {
+        m_stockShape = cutA.Shape();
     }
-    
-    // Perform the cut
-    BRepAlgoAPI_Cut cut(m_stockShape, toolSweptVolume);
-    cut.Build();
-    
-    if (cut.IsDone() && !cut.Shape().IsNull()) {
-        m_stockShape = cut.Shape();
+
+    if (dist > 1e-6) {
+        // 2. Create swept rectangle connecting volume if there is an XY movement
+        double dx = end[0] - start[0];
+        double dy = end[1] - start[1];
+        double lenXY = std::hypot(dx, dy);
+        
+        double perpX = 0.0;
+        double perpY = 0.0;
+        if (lenXY > 1e-6) {
+            perpX = -dy / lenXY;
+            perpY = dx / lenXY;
+        }
+
+        if (lenXY > 1e-6) {
+            gp_Pnt p1(pA.X() - perpX * radius, pA.Y() - perpY * radius, pA.Z());
+            gp_Pnt p2(pA.X() + perpX * radius, pA.Y() + perpY * radius, pA.Z());
+            gp_Pnt p3(p2.X(), p2.Y(), p2.Z() + toolHeight);
+            gp_Pnt p4(p1.X(), p1.Y(), p1.Z() + toolHeight);
+
+            BRepBuilderAPI_MakePolygon poly;
+            poly.Add(p1);
+            poly.Add(p2);
+            poly.Add(p3);
+            poly.Add(p4);
+            poly.Close();
+
+            TopoDS_Face rectFace = BRepBuilderAPI_MakeFace(poly.Wire());
+            TopoDS_Shape sweptRect = BRepSweep_Prism(rectFace, delta).Shape();
+
+            BRepAlgoAPI_Cut cutRect(m_stockShape, sweptRect);
+            cutRect.Build();
+            if (cutRect.IsDone() && !cutRect.Shape().IsNull()) {
+                m_stockShape = cutRect.Shape();
+            }
+        }
+
+        // 3. Create and cut end cylinder
+        gp_Ax2 axesB(pB, gp_Dir(0, 0, 1));
+        TopoDS_Shape toolShapeB = BRepPrimAPI_MakeCylinder(axesB, radius, toolHeight).Shape();
+
+        BRepAlgoAPI_Cut cutB(m_stockShape, toolShapeB);
+        cutB.Build();
+        if (cutB.IsDone() && !cutB.Shape().IsNull()) {
+            m_stockShape = cutB.Shape();
+        }
     }
 #endif
 }

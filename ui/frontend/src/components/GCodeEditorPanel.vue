@@ -1,12 +1,19 @@
 <template>
   <div class="gcode-tab-container">
     <section class="section-container">
-      <textarea
-        v-model="gcode"
-        class="gcode-textarea"
-        spellcheck="false"
-        placeholder="Enter G-Code here..."
-      ></textarea>
+      <div class="editor-wrapper">
+        <div class="line-numbers" ref="lineNumbersRef">
+          <div v-for="n in totalLines" :key="n" class="line-number" :class="{ active: n === store.activeGcodeLine }">{{ n }}</div>
+        </div>
+        <textarea
+          v-model="gcode"
+          ref="textareaRef"
+          class="gcode-textarea"
+          spellcheck="false"
+          placeholder="Enter G-Code here..."
+          @scroll="syncScroll"
+        ></textarea>
+      </div>
     </section>
 
     <!-- Planning Status -->
@@ -28,6 +35,21 @@
 
     <section class="section-container button-section">
       <div class="button-group">
+        <input
+          type="file"
+          ref="fileInputRef"
+          style="display: none"
+          accept=".nc,.gcode,.txt"
+          @change="handleFileUpload"
+        />
+        <button
+          class="action-btn secondary-btn"
+          @click="triggerFileSelect"
+          :disabled="isLoading"
+          title="Load G-code File"
+        >
+          📂 Load File
+        </button>
         <button
           class="action-btn"
           @click="save"
@@ -50,6 +72,58 @@ const store = useCoreStore();
 const gcode = ref(store.gcodeText ?? '');
 const isLoading = ref(false);
 const planningStatus = ref(null);
+
+const textareaRef = ref(null);
+const lineNumbersRef = ref(null);
+const fileInputRef = ref(null);
+
+function triggerFileSelect() {
+  if (fileInputRef.value) {
+    fileInputRef.value.click();
+  }
+}
+
+function handleFileUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const content = e.target?.result;
+    if (typeof content === 'string') {
+      gcode.value = content;
+      store.gcodeText = content;
+      store.addMessage(`Loaded program from ${file.name}`, 'info');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// Auto-scroll G-code editor to active line during simulation/stepping
+watch(() => store.activeGcodeLine, (newLine) => {
+  if (newLine > 0 && textareaRef.value) {
+    const lineHeight = 16.8; // 12px * 1.4
+    const targetScrollTop = (newLine - 1) * lineHeight - textareaRef.value.clientHeight / 2 + lineHeight / 2;
+    textareaRef.value.scrollTop = Math.max(0, targetScrollTop);
+    syncScroll();
+  }
+});
+
+const totalLines = computed(() => {
+  const text = gcode.value || '';
+  return Math.max(1, text.split('\n').length);
+});
+
+function syncScroll() {
+  if (lineNumbersRef.value && textareaRef.value) {
+    lineNumbersRef.value.scrollTop = textareaRef.value.scrollTop;
+  }
+}
+
+watch(gcode, () => {
+  setTimeout(syncScroll, 0);
+});
 
 // Sync from store if it changes externally
 watch(() => store.gcodeText, (newVal) => {
@@ -139,23 +213,61 @@ async function save() {
   flex: 0 0 auto;
 }
 
-.gcode-textarea {
+.editor-wrapper {
+  display: flex;
+  position: relative;
   flex: 1;
   min-height: 300px;
-  resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 12px;
-  background: hsl(220, 20%, 9%);
-  color: hsl(220, 10%, 90%);
-  border: 1px solid hsla(220, 15%, 30%, 0.8);
   border-radius: 6px;
-  padding: 8px;
-  line-height: 1.4;
+  border: 1px solid hsla(220, 15%, 30%, 0.8);
+  background: hsl(220, 20%, 9%);
+  overflow: hidden;
 }
 
-.gcode-textarea:focus {
-  outline: none;
+.editor-wrapper:focus-within {
   border-color: hsl(200, 100%, 60%);
+}
+
+.line-numbers {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 8px 0;
+  width: 40px;
+  color: hsl(220, 10%, 40%);
+  background: hsl(220, 20%, 7%);
+  border-right: 1px solid hsla(220, 15%, 30%, 0.3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  user-select: none;
+  overflow: hidden;
+}
+
+.line-number {
+  padding-right: 8px;
+  height: 16.8px; /* 12px * 1.4 = 16.8px */
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.gcode-textarea {
+  flex: 1;
+  height: 100%;
+  resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  background: transparent;
+  color: hsl(220, 10%, 90%);
+  border: none;
+  padding: 8px;
+  line-height: 1.4;
+  outline: none;
+  margin: 0;
+  white-space: pre;
+  overflow: auto;
 }
 
 /* ── Planning Status ─────────────────────────────────── */
@@ -227,6 +339,25 @@ async function save() {
 .button-group {
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
+}
+
+.secondary-btn {
+  border: 1px solid hsla(220, 15%, 40%, 0.6);
+  color: hsl(220, 10%, 80%);
+  background: hsla(220, 15%, 20%, 0.3);
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: hsla(220, 20%, 30%, 0.4);
+  color: white;
+  border-color: hsla(220, 20%, 55%, 0.8);
+}
+
+.line-number.active {
+  color: hsl(200, 100%, 60%);
+  background: hsla(200, 100%, 50%, 0.15);
+  font-weight: 700;
 }
 
 .action-btn {

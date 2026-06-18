@@ -96,7 +96,7 @@ TaskId Application::importGeometryAsync(const std::shared_ptr<Document>& doc, co
     setTaskStatus(id, TaskStatus::Pending, "Import queued");
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
-        m_taskFutures[id] = std::async(std::launch::async, [this, id, doc, path]() {
+        m_taskFutures[id] = std::async(AIM3D_LAUNCH_POLICY, [this, id, doc, path]() {
             setTaskStatus(id, TaskStatus::Running, "Import running");
             dispatchEvent("GEOMETRY_TASK_STARTED", std::to_string(id));
             try {
@@ -120,7 +120,7 @@ TaskId Application::inspectBodiesAsync(const std::shared_ptr<Document>& doc) {
     setTaskStatus(id, TaskStatus::Pending, "Inspection queued");
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
-        m_taskFutures[id] = std::async(std::launch::async, [this, id, doc]() {
+        m_taskFutures[id] = std::async(AIM3D_LAUNCH_POLICY, [this, id, doc]() {
             setTaskStatus(id, TaskStatus::Running, "Inspection running");
             dispatchEvent("GEOMETRY_TASK_STARTED", std::to_string(id));
             try {

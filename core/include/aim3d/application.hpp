@@ -9,6 +9,12 @@
 #include <mutex>
 #include <atomic>
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#define AIM3D_LAUNCH_POLICY std::launch::deferred
+#else
+#define AIM3D_LAUNCH_POLICY std::launch::async
+#endif
+
 namespace aim3d {
 
 class Document;

@@ -52,6 +52,7 @@ struct MachineProfile {
     bool hasEstop = true;
     UnitMode nativeUnits = UnitMode::Millimeters;
     std::array<double, 3> homePositionMm = {0.0, 0.0, 50.8};
+    bool softLimitsEnabled = true; // When false, soft limit violations are warnings only
 
     static MachineProfile defaultThreeAxisMill();
     std::vector<ControllerDiagnostic> validate() const;
@@ -109,6 +110,8 @@ struct ControllerRecord {
     double spindleRpm = 0.0;
     int tool = 0;
     CoolantMode coolant = CoolantMode::Off;
+    bool isMachineCoord = false; // true for G53 moves — work offset NOT applied by planner
+    std::array<bool, 3> axisSpecified = {false, false, false};
 };
 
 struct ControllerProgram {
@@ -138,7 +141,11 @@ struct SpeSegment {
 class TrajectoryPlanner {
 public:
     explicit TrajectoryPlanner(MachineProfile profile);
-    std::vector<SpeSegment> plan(const ControllerProgram& program, std::vector<ControllerDiagnostic>& diagnostics) const;
+    std::vector<SpeSegment> plan(
+        const ControllerProgram& program, 
+        std::vector<ControllerDiagnostic>& diagnostics,
+        const std::unordered_map<int, std::array<double, 3>>& workOffsets = {}
+    ) const;
 
 private:
     MachineProfile m_profile;
@@ -186,6 +193,7 @@ struct SpeStatusMailbox {
     bool limitActive = false;
     bool watchdogFault = false;
     std::size_t queuedSegments = 0;
+    std::size_t activeSourceLine = 0;
 };
 
 class SpeSegmentRing {
@@ -236,6 +244,9 @@ public:
     bool submitMdi(const std::string& gcode);
     
     void tick(double dtSeconds);
+    /// Process all deferred material-simulator cuts accumulated during tick().
+    /// Call this once after the simulation loop has drained all segments.
+    void flushMaterialSimulation();
 
     std::array<double, 3> getToolPosition() const;
     const MachineProfile& getProfile() const;
@@ -245,6 +256,7 @@ public:
     
     std::size_t getQueuedSegments() const;
     void clearPendingSegments();
+    std::size_t getActiveSourceLine() const;
 
     const std::vector<ControllerDiagnostic>& getLastDiagnostics() const;
 
@@ -264,6 +276,13 @@ private:
     std::deque<SpeSegment> m_plannedSegments;
     double m_timeAccumulator = 0.0;
     std::vector<ControllerDiagnostic> m_lastDiagnostics;
+
+    struct DeferredCut {
+        std::array<double, 3> start;
+        std::array<double, 3> end;
+        double radius;
+    };
+    std::vector<DeferredCut> m_deferredCuts;
 };
 
 } // namespace aim3d

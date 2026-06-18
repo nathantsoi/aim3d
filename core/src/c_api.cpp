@@ -410,7 +410,7 @@ Aim3dTaskHandle* aim3d_document_import_geometry_task(Aim3dDocumentHandle* handle
     auto* task = new Aim3dTaskHandle();
     std::string pathString = path ? path : "";
     auto document = handle ? handle->document : nullptr;
-    task->future = std::async(std::launch::async, [task, document, pathString]() {
+    task->future = std::async(AIM3D_LAUNCH_POLICY, [task, document, pathString]() {
         task->state = AIM3D_TASK_RUNNING;
         try {
             if (!document) {
@@ -430,7 +430,7 @@ Aim3dTaskHandle* aim3d_document_import_geometry_task(Aim3dDocumentHandle* handle
 Aim3dTaskHandle* aim3d_document_inspect_bodies_task(Aim3dDocumentHandle* handle) {
     auto* task = new Aim3dTaskHandle();
     auto document = handle ? handle->document : nullptr;
-    task->future = std::async(std::launch::async, [task, document]() {
+    task->future = std::async(AIM3D_LAUNCH_POLICY, [task, document]() {
         task->state = AIM3D_TASK_RUNNING;
         try {
             if (!document) {
@@ -648,9 +648,26 @@ int aim3d_simulator_run(
         }
 
         handle->controller.setTaskMode(aim3d::SpeTaskMode::Mdi);
+        int safetyTicks = 0;
         while (handle->controller.getQueuedSegments() > 0 || handle->controller.getState() == aim3d::SpeState::Running) {
             handle->controller.tick(0.01);
+            if (handle->controller.getState() == aim3d::SpeState::Fault) {
+                std::cerr << "[api_simulator] Emulator entered FAULT state during run. Stopping." << std::endl;
+                return 0;
+            }
+            if (++safetyTicks > 100000) {
+                std::cerr << "[api_simulator] Safety tick limit (100,000) exceeded. Stopping to prevent hang." << std::endl;
+                return 0;
+            }
         }
+        std::cout << "[api_simulator] Tick loop done: " << safetyTicks << " ticks. Flushing material simulation..." << std::endl;
+
+        // Flush deferred OCCT cuts in one batch (avoids OCCT booleans in the hot tick loop).
+        handle->controller.flushMaterialSimulation();
+        std::cout << "[api_simulator] Material simulation flush complete." << std::endl;
+
+        // Compute final mesh
+        handle->controller.materialSimulator().updateMesh();
 
         handle->positions.clear();
         handle->normals.clear();
@@ -662,7 +679,11 @@ int aim3d_simulator_run(
         const auto& ind = handle->controller.materialSimulator().getIndices();
         handle->indices.assign(ind.begin(), ind.end());
         return 1;
+    } catch (const std::exception& ex) {
+        std::cerr << "[api_simulator] Exception: " << ex.what() << std::endl;
+        return 0;
     } catch (...) {
+        std::cerr << "[api_simulator] Unknown exception" << std::endl;
         return 0;
     }
 }
