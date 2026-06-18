@@ -1387,9 +1387,10 @@ export const useCoreStore = defineStore('core', {
       this.machineMaxVelocity = profile.axes ? profile.axes.maxVelocityMmPerMin : 3000.0;
       this.machineMaxAccel = profile.axes ? profile.axes.maxAccelerationMmPerSec2 : 500.0;
       this.machineSegmentDuration = profile.maxSegmentDurationSec;
-      // Convert core UnitMode (0 = Millimeters, 1 = Inches) to store config if needed
-      // Currently core state uses 'mm' vs 'inch' 
-      this.units = profile.nativeUnits?.value === 1 ? 'inch' : 'mm';
+      // NOTE: Do NOT override this.units here.  The user's display-unit preference
+      // (set via the UI toggle) must survive controller syncs.  The machine's
+      // nativeUnits describes the controller's internal coordinate system (always mm)
+      // and is unrelated to the GUI display preference.
     },
 
     applyProfileToCore() {
