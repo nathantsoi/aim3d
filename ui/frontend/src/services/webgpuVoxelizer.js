@@ -1,4 +1,4 @@
-export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 128], stockSize = [100, 100, 25], stockLocation = [0, 0, 0]) => {
+export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 128], stockSize = [100, 100, 25], stockLocation = [0, 0, 0], uiScale = 1.0) => {
   // Fetch Marching Cubes tables
   const text = await fetch('https://raw.githubusercontent.com/stemkoski/stemkoski.github.com/master/Three.js/js/MarchingCubesData.js').then(r => r.text());
   const edgeMatch = text.match(/edgeTable\s*=\s*new\s*Int32Array\(\s*\[([\s\S]*?)\]\s*\)/);
@@ -86,8 +86,8 @@ export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 12
     data[8] = gridOffset[0]; data[9] = gridOffset[1]; data[10] = gridOffset[2];
     data[11] = 0; // pad
     data[12] = stockSize[0]; data[13] = stockSize[1]; data[14] = stockSize[2];
-    data[15] = 0; // pad
     data[16] = stockLocation[0]; data[17] = stockLocation[1]; data[18] = stockLocation[2];
+    data[19] = uiScale;
     device.queue.writeBuffer(paramsBuffer, 0, data);
   };
   updateParams(0);
@@ -98,7 +98,7 @@ export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 12
       voxelSize: vec3<f32>, pad1: f32,
       gridOffset: vec3<f32>, pad2: f32,
       stockSize: vec3<f32>, pad3: f32,
-      stockLocation: vec3<f32>, pad4: f32,
+      stockLocation: vec3<f32>, uiScale: f32,
     };
     @group(0) @binding(0) var<storage, read_write> grid: array<f32>;
     @group(0) @binding(1) var<uniform> params: Params;
@@ -125,7 +125,7 @@ export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 12
       voxelSize: vec3<f32>, pad1: f32,
       gridOffset: vec3<f32>, pad2: f32,
       stockSize: vec3<f32>, pad3: f32,
-      stockLocation: vec3<f32>, pad4: f32,
+      stockLocation: vec3<f32>, uiScale: f32,
     };
     struct Cut {
       start: vec3<f32>, radius: f32,
@@ -167,7 +167,7 @@ export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 12
       voxelSize: vec3<f32>, pad1: f32,
       gridOffset: vec3<f32>, pad2: f32,
       stockSize: vec3<f32>, pad3: f32,
-      stockLocation: vec3<f32>, pad4: f32,
+      stockLocation: vec3<f32>, uiScale: f32,
     };
     struct Vertex {
       px: f32, py: f32, pz: f32,
@@ -245,9 +245,9 @@ export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 12
         let tIdx = atomicAdd(&counter, 3u);
         let n = normalize(cross(vertList[e1] - vertList[e0], vertList[e2] - vertList[e0]));
         
-        vertices[tIdx] = Vertex(vertList[e0].x, vertList[e0].y, vertList[e0].z, n.x, n.y, n.z, 0.5, 0.5, 0.5, 1.0);
-        vertices[tIdx+1u] = Vertex(vertList[e1].x, vertList[e1].y, vertList[e1].z, n.x, n.y, n.z, 0.5, 0.5, 0.5, 1.0);
-        vertices[tIdx+2u] = Vertex(vertList[e2].x, vertList[e2].y, vertList[e2].z, n.x, n.y, n.z, 0.5, 0.5, 0.5, 1.0);
+        vertices[tIdx] = Vertex(vertList[e0].x * params.uiScale, vertList[e0].y * params.uiScale, vertList[e0].z * params.uiScale, n.x, n.y, n.z, 0.5, 0.5, 0.5, 1.0);
+        vertices[tIdx+1u] = Vertex(vertList[e1].x * params.uiScale, vertList[e1].y * params.uiScale, vertList[e1].z * params.uiScale, n.x, n.y, n.z, 0.5, 0.5, 0.5, 1.0);
+        vertices[tIdx+2u] = Vertex(vertList[e2].x * params.uiScale, vertList[e2].y * params.uiScale, vertList[e2].z * params.uiScale, n.x, n.y, n.z, 0.5, 0.5, 0.5, 1.0);
         
         indices[tIdx] = tIdx;
         indices[tIdx+1u] = tIdx+1u;

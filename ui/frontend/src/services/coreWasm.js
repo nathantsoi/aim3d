@@ -86,9 +86,15 @@ export function extractMaterialMesh() {
  */
 export function flushMaterialSimulation() {
   if (!controllerInstance) return;
+  // Move deferred cuts (queued by controller.tick) into the MaterialSimulator's
+  // pending-cut queue, which the Viewport render loop drains via popPendingCuts()
+  // and feeds to the WebGPU voxelizer. We intentionally do NOT call
+  // matSim.updateMesh() here: cutSegment() no longer mutates m_stockShape (the
+  // OCCT boolean cut is disabled for performance), so re-meshing the unchanged
+  // box every animation frame only starves the render loop (FPS -> 0). The OCCT
+  // box mesh is built once at simulation start (initialize -> setLocation ->
+  // reset -> updateMesh) and the WebGPU voxelizer is the live cutting path.
   controllerInstance.flushMaterialSimulation();
-  const matSim = controllerInstance.materialSimulator();
-  if (matSim) matSim.updateMesh();
 }
 
 /**

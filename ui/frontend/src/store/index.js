@@ -1176,41 +1176,27 @@ export const useCoreStore = defineStore('core', {
         this.activeGcodeLine = controller.getActiveSourceLine();
         this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - controller.getQueuedSegments());
         
-        console.log('[MatSim] stepSimulationForward: flushing deferred cuts...');
         flushMaterialSimulation();
 
-        // Check for toolholder-stock collision during step
+        // Toolholder collision uses BRepAlgoAPI_Section (expensive OCCT op);
+        // throttle to ~4 Hz instead of every 10 ms tick to keep the main thread free.
         const scaleToMmStep = this.units === 'inch' ? 25.4 : 1.0;
-        const tlMm = (this.toolLength ?? 1) * scaleToMmStep;
-        const thRadiusMm = ((this.toolholderDiameter ?? 2) / 2) * scaleToMmStep;
-        const thLengthMm = (this.toolholderLength ?? 1) * scaleToMmStep;
-        console.log(`[MatSim] step checkToolholderCollision params: toolLengthMm=${tlMm}, holderRadiusMm=${thRadiusMm}, holderLengthMm=${thLengthMm}`);
-        const collision = checkToolholderCollision(tlMm, thRadiusMm, thLengthMm);
-        console.log(`[MatSim] Step collision check result: ${collision}`);
-        this.collisionDetected = collision;
-        if (collision) {
-          this.collisionCount++;
-          if (this.collisionCount === 1) {
-            this.addMessage('⚠️ Toolholder collision with stock detected!', 'warning');
+        const stepNowMs = performance.now();
+        if (!this._lastCollisionCheckMs || (stepNowMs - this._lastCollisionCheckMs) >= 250) {
+          this._lastCollisionCheckMs = stepNowMs;
+          const tlMm = (this.toolLength ?? 1) * scaleToMmStep;
+          const thRadiusMm = ((this.toolholderDiameter ?? 2) / 2) * scaleToMmStep;
+          const thLengthMm = (this.toolholderLength ?? 1) * scaleToMmStep;
+          const collision = checkToolholderCollision(tlMm, thRadiusMm, thLengthMm);
+          this.collisionDetected = collision;
+          if (collision) {
+            this.collisionCount++;
+            if (this.collisionCount === 1) {
+              this.addMessage('⚠️ Toolholder collision with stock detected!', 'warning');
+            }
           }
         }
 
-        const mesh = extractMaterialMesh();
-        if (mesh) {
-          console.log(`[MatSim] Step extracted mesh: ${mesh.positions.length / 3} vertices, ${mesh.indices.length / 3} triangles`);
-          let posArray = Array.from(mesh.positions);
-          if (scaleToUi !== 1.0) {
-            posArray = posArray.map(v => v * scaleToUi);
-          }
-          this.simulatedStockMesh = {
-            positions: posArray,
-            normals: Array.from(mesh.normals),
-            indices: Array.from(mesh.indices)
-          };
-        } else {
-          console.log('[MatSim] Step extractMaterialMesh returned null');
-        }
-        
         syncViewportScene(this.$state);
         
         const currentLine = controller.getActiveSourceLine();
@@ -1337,40 +1323,33 @@ export const useCoreStore = defineStore('core', {
       }
       this.simulationToolPosition = newPos;
 
-      // Flush deferred OCCT cuts and rebuild mesh once per animation frame
-      console.log('[MatSim] simulationTick: flushing deferred cuts...');
+      // Flush deferred cuts so the WebGPU voxelizer (Viewport renderLoop) can
+      // carve them via popPendingCuts() -> applyCuts(). We do NOT rebuild the
+      // OCCT mesh here: cutSegment() no longer mutates m_stockShape (the boolean
+      // cut is disabled for performance), so updateMesh() would just re-mesh the
+      // same uncut box every frame and starve the render loop (FPS -> 0). The
+      // voxelizer is the visual cutting path; the OCCT box mesh is built once at
+      // simulation start (initialize -> setLocation -> reset -> updateMesh).
       flushMaterialSimulation();
 
-      // Check for toolholder-stock collision
+      // Toolholder-stock collision uses BRepAlgoAPI_Section (expensive OCCT op).
+      // Throttle to ~4 Hz instead of every animation frame to keep the main
+      // thread free for the WebGPU render loop.
       const scaleToMmTick = this.units === 'inch' ? 25.4 : 1.0;
-      const tlMm = (this.toolLength ?? 1) * scaleToMmTick;
-      const thRadiusMm = ((this.toolholderDiameter ?? 2) / 2) * scaleToMmTick;
-      const thLengthMm = (this.toolholderLength ?? 1) * scaleToMmTick;
-      console.log(`[MatSim] checkToolholderCollision params: toolLengthMm=${tlMm}, holderRadiusMm=${thRadiusMm}, holderLengthMm=${thLengthMm}`);
-      const collision = checkToolholderCollision(tlMm, thRadiusMm, thLengthMm);
-      console.log(`[MatSim] Collision check result: ${collision}`);
-      this.collisionDetected = collision;
-      if (collision) {
-        this.collisionCount++;
-        if (this.collisionCount === 1) {
-          this.addMessage('⚠️ Toolholder collision with stock detected!', 'warning');
+      const nowMs = performance.now();
+      if (!this._lastCollisionCheckMs || (nowMs - this._lastCollisionCheckMs) >= 250) {
+        this._lastCollisionCheckMs = nowMs;
+        const tlMm = (this.toolLength ?? 1) * scaleToMmTick;
+        const thRadiusMm = ((this.toolholderDiameter ?? 2) / 2) * scaleToMmTick;
+        const thLengthMm = (this.toolholderLength ?? 1) * scaleToMmTick;
+        const collision = checkToolholderCollision(tlMm, thRadiusMm, thLengthMm);
+        this.collisionDetected = collision;
+        if (collision) {
+          this.collisionCount++;
+          if (this.collisionCount === 1) {
+            this.addMessage('⚠️ Toolholder collision with stock detected!', 'warning');
+          }
         }
-      }
-
-      const mesh = extractMaterialMesh();
-      if (mesh) {
-        console.log(`[MatSim] Extracted mesh: ${mesh.positions.length / 3} vertices, ${mesh.indices.length / 3} triangles`);
-        let posArray = Array.from(mesh.positions);
-        if (scaleToUi !== 1.0) {
-          posArray = posArray.map(v => v * scaleToUi);
-        }
-        this.simulatedStockMesh = {
-          positions: posArray,
-          normals: Array.from(mesh.normals),
-          indices: Array.from(mesh.indices)
-        };
-      } else {
-        console.log('[MatSim] extractMaterialMesh returned null');
       }
 
       syncViewportScene(this.$state);

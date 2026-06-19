@@ -475,7 +475,7 @@ export default defineComponent({
 
     onMounted(async () => {
       await nextTick();
-      const scaleToMm = store.units === 'in' ? 25.4 : 1.0;
+      const scaleToMm = store.units === 'inch' ? 25.4 : 1.0;
       const stockSize = [
         (store.stockSize?.x ?? 25) * scaleToMm,
         (store.stockSize?.y ?? 25) * scaleToMm,
@@ -487,7 +487,7 @@ export default defineComponent({
         (store.stockLocation?.z ?? 0) * scaleToMm
       ];
       const gridResolution = store.simulationResolution ?? 128;
-      renderer = await createWebGpuViewportRenderer(canvas3D.value, applyDiagnostics, { stockSize, stockLocation, gridResolution });
+      renderer = await createWebGpuViewportRenderer(canvas3D.value, applyDiagnostics, { stockSize, stockLocation, gridResolution, uiScale: 1.0 / scaleToMm });
       if (!renderer.available) {
         fallbackMessage.value = renderer.reason;
         applyDiagnostics({

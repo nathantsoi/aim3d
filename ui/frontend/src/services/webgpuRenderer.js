@@ -141,7 +141,7 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       Math.max(1, Math.round(baseRes * (stockSize[1] / maxDim))),
       Math.max(1, Math.round(baseRes * (stockSize[2] / maxDim)))
     ];
-    voxelizer = await createWebGpuVoxelizer(device, gridRes, stockSize, stockLocation);
+    voxelizer = await createWebGpuVoxelizer(device, gridRes, stockSize, stockLocation, options.uiScale || 1.0);
   } catch (e) {
     console.error("Failed to initialize voxelizer:", e);
   }

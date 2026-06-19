@@ -877,7 +877,11 @@ void test_controller_parser_supports_canned_cycles() {
 }
 
 void test_controller_planner_soft_limits_and_segments() {
+    // defaultThreeAxisMill() ships with softLimitsEnabled = false (disabled for
+    // simulation so out-of-envelope CAM toolpaths still plan). This test
+    // exercises the rejection path, so explicitly enable soft limits.
     auto profile = aim3d::MachineProfile::defaultThreeAxisMill();
+    profile.softLimitsEnabled = true;
     aim3d::LinuxCncCompatParser parser;
     auto program = parser.parse("G21 G90\nG0 X0 Y0 Z5\nG1 X10 Y0 Z0 F600\nM30\n");
     std::vector<aim3d::ControllerDiagnostic> diagnostics;

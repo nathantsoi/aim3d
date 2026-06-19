@@ -87,8 +87,6 @@ void MaterialSimulator::cutSegment(const std::array<double, 3>& start, const std
 
 bool MaterialSimulator::checkCollision(const std::array<double, 3>& cylinderBase, double radius, double height) const {
 #if AIM3D_HAS_OCCT
-    std::cout << "[C++ MatSim] checkCollision base=(" << cylinderBase[0] << ", " << cylinderBase[1] << ", " << cylinderBase[2]
-              << ") radius=" << radius << " height=" << height << std::endl;
     if (m_stockShape.IsNull()) {
         std::cout << "[C++ MatSim] checkCollision: m_stockShape is null!" << std::endl;
         return false;
@@ -143,8 +141,6 @@ void MaterialSimulator::updateMesh() {
         std::cout << "[C++ MatSim] updateMesh: m_stockShape is null!" << std::endl;
         return;
     }
-
-    std::cout << "[C++ MatSim] updateMesh starting incremental mesh calculation..." << std::endl;
 
     // Mesh the shape
     BRepMesh_IncrementalMesh mesher(m_stockShape, m_resolution, false, 0.5, true);
@@ -243,7 +239,6 @@ void MaterialSimulator::updateMesh() {
             }
         }
     }
-    std::cout << "[C++ MatSim] updateMesh complete: " << m_positions.size() / 3 << " vertices, " << m_indices.size() / 3 << " triangles." << std::endl;
 #endif
 }
 
