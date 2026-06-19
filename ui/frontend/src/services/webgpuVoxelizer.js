@@ -136,10 +136,21 @@ export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 12
     @group(0) @binding(2) var<uniform> params: Params;
     @group(0) @binding(3) var<storage, read_write> volumeCounter: atomic<u32>;
 
-    fn sdCapsule(p: vec3<f32>, a: vec3<f32>, b: vec3<f32>, r: f32) -> f32 {
-      let pa = p - a; let ba = b - a;
-      let h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.0001), 0.0, 1.0);
-      return length(pa - ba * h) - r;
+    fn sdSweptTool(p: vec3<f32>, a: vec3<f32>, b: vec3<f32>, r: f32) -> f32 {
+      let pa = p.xy - a.xy;
+      let ba = b.xy - a.xy;
+      let ba2 = dot(ba, ba);
+      var h: f32 = 0.0;
+      if (ba2 > 0.000001) {
+        h = clamp(dot(pa, ba) / ba2, 0.0, 1.0);
+      }
+      let d_xy = length(pa - ba * h) - r;
+      let z_tool = a.z + h * (b.z - a.z);
+      let d_z = z_tool - p.z;
+      
+      let d_out = length(vec2<f32>(max(d_xy, 0.0), max(d_z, 0.0)));
+      let d_in = min(max(d_xy, d_z), 0.0);
+      return d_out + d_in;
     }
 
     @compute @workgroup_size(8, 8, 4)
@@ -151,7 +162,7 @@ export const createWebGpuVoxelizer = async (device, userGridSize = [512, 512, 12
       let originalDensity = density;
       for (var i = 0u; i < params.numCuts; i = i + 1u) {
         let cut = cuts[i];
-        let d = sdCapsule(pos, cut.start, cut.end, cut.radius);
+        let d = sdSweptTool(pos, cut.start, cut.end, cut.radius);
         density = max(density, -d);
       }
       if (originalDensity < 0.0 && density >= 0.0) {
