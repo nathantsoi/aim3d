@@ -90,3 +90,56 @@ export function flushMaterialSimulation() {
   const matSim = controllerInstance.materialSimulator();
   if (matSim) matSim.updateMesh();
 }
+
+/**
+ * Retrieve pending cuts from the MaterialSimulator since the last poll.
+ */
+export function popPendingCuts() {
+  if (!controllerInstance) return [];
+  const matSim = controllerInstance.materialSimulator();
+  if (!matSim) return [];
+
+  const cutsVector = matSim.popPendingCuts();
+  const cuts = [];
+  for (let i = 0; i < cutsVector.size(); i++) {
+    const segment = cutsVector.get(i);
+    cuts.push({
+      startX: segment.getStartX(),
+      startY: segment.getStartY(),
+      startZ: segment.getStartZ(),
+      endX: segment.getEndX(),
+      endY: segment.getEndY(),
+      endZ: segment.getEndZ(),
+      radius: segment.radius
+    });
+  }
+  // Free the embind vector to prevent memory leaks
+  cutsVector.delete();
+  return cuts;
+}
+
+/**
+ * Set the tool radius used for material removal boolean operations (in mm).
+ */
+export function setSimulationToolRadius(radiusMm) {
+  if (!controllerInstance) return;
+  controllerInstance.setSimulationToolRadius(radiusMm);
+}
+
+/**
+ * Check if the toolholder collides with the current stock shape.
+ * @param {number} toolLengthMm - distance from tool tip to toolholder base (mm)
+ * @param {number} toolholderRadiusMm - toolholder cylinder radius (mm)
+ * @param {number} toolholderLengthMm - toolholder cylinder height (mm)
+ * @returns {boolean} true if collision detected
+ */
+export function checkToolholderCollision(toolLengthMm, toolholderRadiusMm, toolholderLengthMm) {
+  if (!controllerInstance) return false;
+  try {
+    return controllerInstance.checkToolholderCollision(toolLengthMm, toolholderRadiusMm, toolholderLengthMm);
+  } catch (e) {
+    console.warn('[CollisionCheck] Failed:', e);
+    return false;
+  }
+}
+

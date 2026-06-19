@@ -248,6 +248,15 @@ public:
     /// Call this once after the simulation loop has drained all segments.
     void flushMaterialSimulation();
 
+    /// Set the tool radius used for material removal boolean operations.
+    void setSimulationToolRadius(double radius);
+
+    /// Check if the toolholder (positioned above the current tool tip) collides
+    /// with the stock.  toolLength is the distance from tool tip to the
+    /// toolholder base; toolholderRadius and toolholderLength describe the
+    /// holder cylinder.
+    bool checkToolholderCollision(double toolLength, double toolholderRadius, double toolholderLength) const;
+
     std::array<double, 3> getToolPosition() const;
     const MachineProfile& getProfile() const;
     SpeTaskMode getTaskMode() const;
@@ -275,6 +284,7 @@ private:
 
     std::deque<SpeSegment> m_plannedSegments;
     double m_timeAccumulator = 0.0;
+    double m_simToolRadius = 3.175; // Default 1/4" endmill
     std::vector<ControllerDiagnostic> m_lastDiagnostics;
 
     struct DeferredCut {

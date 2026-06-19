@@ -1191,6 +1191,20 @@ void MachineController::tick(double dtSeconds) {
     double segmentDt = m_profile.maxSegmentDurationSec;
     if (segmentDt <= 0.0) return;
 
+    // Helper lambda: get tool position in MACHINE coordinates (no work-offset subtraction).
+    // The stock bounding box is always in machine coordinates (set via matSim.setLocation),
+    // so cuts must be expressed in the same frame.
+    auto getMachinePos = [this]() -> std::array<double, 3> {
+        const auto& steps = m_emulator.status().positionSteps;
+        std::array<double, 3> pos = {0.0, 0.0, 0.0};
+        for (std::size_t i = 0; i < 3; ++i) {
+            if (m_profile.axes[i].stepsPerMm != 0.0) {
+                pos[i] = static_cast<double>(steps[i]) / m_profile.axes[i].stepsPerMm;
+            }
+        }
+        return pos;
+    };
+
     while (m_timeAccumulator >= segmentDt) {
         while (!m_plannedSegments.empty() && m_emulator.ring().size() < m_emulator.ring().capacity()) {
             m_emulator.ring().push(m_plannedSegments.front());
@@ -1198,14 +1212,14 @@ void MachineController::tick(double dtSeconds) {
         }
         m_emulator.hostHeartbeat();
 
-        std::array<double, 3> oldPos = getToolPosition();
+        std::array<double, 3> oldMachinePos = getMachinePos();
         m_emulator.tick(false, false);
-        std::array<double, 3> newPos = getToolPosition();
+        std::array<double, 3> newMachinePos = getMachinePos();
 
-        if (oldPos[0] != newPos[0] || oldPos[1] != newPos[1] || oldPos[2] != newPos[2]) {
-            // Defer the material-sim cut — OCCT booleans are too expensive to run per-tick.
-            // Caller should invoke flushMaterialSimulation() once the tick loop is complete.
-            m_deferredCuts.push_back({oldPos, newPos, 3.175});
+        if (oldMachinePos[0] != newMachinePos[0] ||
+            oldMachinePos[1] != newMachinePos[1] ||
+            oldMachinePos[2] != newMachinePos[2]) {
+            m_deferredCuts.push_back({oldMachinePos, newMachinePos, m_simToolRadius});
         }
 
         m_timeAccumulator -= segmentDt;
@@ -1219,12 +1233,30 @@ void MachineController::flushMaterialSimulation() {
     m_deferredCuts.clear();
 }
 
-MaterialSimulator& MachineController::materialSimulator() {
-    return m_materialSimulator;
+void MachineController::setSimulationToolRadius(double radius) {
+    m_simToolRadius = radius;
+    m_materialSimulator.setToolRadius(radius);
 }
 
-const MaterialSimulator& MachineController::materialSimulator() const {
-    return m_materialSimulator;
+bool MachineController::checkToolholderCollision(double toolLength, double toolholderRadius, double toolholderLength) const {
+    // The toolholder sits above the tool tip along Z.
+    // Tool tip is at getToolPosition(), the toolholder base starts at tip.z + toolLength,
+    // and extends upward for toolholderLength.
+    std::array<double, 3> pos = getToolPosition();
+    // Convert back to machine coordinates (getToolPosition returns work-offset-subtracted coords)
+    // For collision checking, we need machine coords since the stock is in machine coords.
+    std::array<double, 3> activeOffset = getWorkOffset(54);
+    std::array<double, 3> machinePos = {
+        pos[0] + activeOffset[0],
+        pos[1] + activeOffset[1],
+        pos[2] + activeOffset[2]
+    };
+    std::array<double, 3> holderBase = {
+        machinePos[0],
+        machinePos[1],
+        machinePos[2] + toolLength
+    };
+    return m_materialSimulator.checkCollision(holderBase, toolholderRadius, toolholderLength);
 }
 
 std::array<double, 3> MachineController::getToolPosition() const {
@@ -1280,4 +1312,13 @@ const std::vector<ControllerDiagnostic>& MachineController::getLastDiagnostics()
     return m_lastDiagnostics;
 }
 
+MaterialSimulator& MachineController::materialSimulator() {
+    return m_materialSimulator;
+}
+
+const MaterialSimulator& MachineController::materialSimulator() const {
+    return m_materialSimulator;
+}
+
 } // namespace aim3d
+

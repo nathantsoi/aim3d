@@ -119,6 +119,7 @@ import { computed, defineComponent, nextTick, onMounted, onUnmounted, reactive, 
 import { useCoreStore } from '../store';
 import SimulationPlaybackPanel from './SimulationPlaybackPanel.vue';
 import { createWebGpuViewportRenderer } from '../services/webgpuRenderer';
+import { popPendingCuts } from '../services/coreWasm';
 import { createCameraRay, pickViewportEntity } from '../services/viewportPicking';
 import { overviewCamera } from '../services/viewportDebugGizmos';
 import {
@@ -265,9 +266,34 @@ export default defineComponent({
       debugRenderer = null;
     };
 
+    let voxelizerUpdating = false;
+    let lastVoxelizerUpdate = 0;
+
     const renderLoop = () => {
       if (disposed || !renderer?.available) return;
-      renderer.updateScene(store.viewportScene, store.selectedEntityId, hoverTargetId.value);
+
+      if (renderer.voxelizer) {
+        const cuts = popPendingCuts();
+        if (cuts.length > 0) {
+          renderer.voxelizer.applyCuts(cuts);
+          renderer.voxelizer.isDirty = true;
+        }
+        
+        const isPaused = store.simulationPlaybackStatus !== 'playing';
+        const now = performance.now();
+        // If we applied cuts or we are paused (meaning we want a high fidelity mesh)
+        if ((renderer.voxelizer.isDirty || isPaused) && !voxelizerUpdating && (isPaused || now - lastVoxelizerUpdate > 33)) {
+          voxelizerUpdating = true;
+          renderer.voxelizer.isDirty = false;
+          renderer.voxelizer.extractMesh().finally(() => {
+            voxelizerUpdating = false;
+            lastVoxelizerUpdate = performance.now();
+          });
+        }
+      }
+
+      const hideStock = (store.isSimulating || store.activeMode === 'machine') && renderer?.voxelizer?.vertexCount > 0;
+      renderer.updateScene(store.viewportScene, store.selectedEntityId, hoverTargetId.value, { hideStock });
       renderer.render(store.viewportScene);
       if (debugModeEnabled.value && debugRenderer?.available) {
         const overviewScene = buildOverviewScene();
@@ -300,7 +326,8 @@ export default defineComponent({
         hoverTargetId: hoverId,
         snapCandidateId: snapId
       });
-      renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverId);
+      const hideStock = (store.isSimulating || store.activeMode === 'machine') && renderer?.voxelizer?.vertexCount > 0;
+      renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverId, { hideStock });
     };
 
     const handleSelectionClick = async (event) => {
@@ -448,7 +475,19 @@ export default defineComponent({
 
     onMounted(async () => {
       await nextTick();
-      renderer = await createWebGpuViewportRenderer(canvas3D.value, applyDiagnostics);
+      const scaleToMm = store.units === 'in' ? 25.4 : 1.0;
+      const stockSize = [
+        (store.stockSize?.x ?? 25) * scaleToMm,
+        (store.stockSize?.y ?? 25) * scaleToMm,
+        (store.stockSize?.z ?? 25) * scaleToMm
+      ];
+      const stockLocation = [
+        (store.stockLocation?.x ?? 0) * scaleToMm,
+        (store.stockLocation?.y ?? 0) * scaleToMm,
+        (store.stockLocation?.z ?? 0) * scaleToMm
+      ];
+      const gridResolution = store.simulationResolution ?? 128;
+      renderer = await createWebGpuViewportRenderer(canvas3D.value, applyDiagnostics, { stockSize, stockLocation, gridResolution });
       if (!renderer.available) {
         fallbackMessage.value = renderer.reason;
         applyDiagnostics({
@@ -481,7 +520,8 @@ export default defineComponent({
     watch(
       () => [store.viewportScene, store.selectedEntityId],
       () => {
-        renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverTargetId.value);
+        const hideStock = (store.isSimulating || store.activeMode === 'machine') && renderer?.voxelizer?.vertexCount > 0;
+        renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverTargetId.value, { hideStock });
       }
     );
 

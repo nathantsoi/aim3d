@@ -32,6 +32,16 @@
       </section>
 
       <section class="section-container">
+        <h3>Simulation Quality</h3>
+        <div class="property-card">
+          <label class="input-item">
+            <span>Resolution (mm)</span>
+            <input type="number" v-model.number="simulationResolution" step="0.1" min="0.1" />
+          </label>
+        </div>
+      </section>
+
+      <section class="section-container">
         <h3>Location</h3>
         <div class="property-card">
           <label class="input-item">
@@ -144,6 +154,10 @@ const toolholderDiameter = computed({
 const toolholderLength = computed({
   get: () => store.toolholderLength,
   set: (val) => store.updateToolSetup({ toolholderLength: val })
+});
+const simulationResolution = computed({
+  get: () => store.stockSimulationResolution ?? 1.0,
+  set: (val) => store.updateStockSimulationResolution(val)
 });
 
 function cancel() {

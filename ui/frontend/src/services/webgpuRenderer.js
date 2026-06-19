@@ -1,5 +1,6 @@
 import { adaptViewportScene, createSceneBufferKey } from './viewportSceneAdapter';
 import { createViewProjectionMatrix } from './viewportProjection';
+import { createWebGpuVoxelizer } from './webgpuVoxelizer';
 
 const GPU_BUFFER_USAGE = globalThis.GPUBufferUsage ?? {
   VERTEX: 1,
@@ -79,7 +80,7 @@ const createBuffer = (device, data, usage) => {
   return buffer;
 };
 
-export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () => {}) => {
+export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () => {}, options = {}) => {
   if (!globalThis.navigator?.gpu) {
     return {
       available: false,
@@ -103,7 +104,21 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     };
   }
 
-  const device = await adapter.requestDevice();
+  const requiredLimits = {};
+  const neededLimits = [
+    'maxBufferSize',
+    'maxStorageBufferBindingSize',
+    'maxComputeInvocationsPerWorkgroup',
+    'maxComputeWorkgroupStorageSize',
+    'maxComputeWorkgroupsPerDimension'
+  ];
+  for (const limit of neededLimits) {
+    if (limit in adapter.limits) {
+      requiredLimits[limit] = adapter.limits[limit];
+    }
+  }
+
+  const device = await adapter.requestDevice({ requiredLimits });
   const context = canvas.getContext('webgpu');
   const format = globalThis.navigator.gpu.getPreferredCanvasFormat();
   const shader = device.createShaderModule({ code: VERTEX_SHADER });
@@ -114,6 +129,22 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
   let buffers = {};
   let lastKey = null;
   let frameStarted = performance.now();
+  
+  let voxelizer = null;
+  try {
+    const stockSize = options.stockSize || [100, 100, 25];
+    const stockLocation = options.stockLocation || [0, 0, 0];
+    const baseRes = options.gridResolution || 128;
+    const maxDim = Math.max(stockSize[0], stockSize[1], stockSize[2]);
+    const gridRes = [
+      Math.max(1, Math.round(baseRes * (stockSize[0] / maxDim))),
+      Math.max(1, Math.round(baseRes * (stockSize[1] / maxDim))),
+      Math.max(1, Math.round(baseRes * (stockSize[2] / maxDim)))
+    ];
+    voxelizer = await createWebGpuVoxelizer(device, gridRes, stockSize, stockLocation);
+  } catch (e) {
+    console.error("Failed to initialize voxelizer:", e);
+  }
 
   const uniformBuffer = device.createBuffer({
     size: 64,
@@ -242,11 +273,12 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     });
   };
 
-  const updateScene = (scene, selectedEntityId, hoverEntityId = null) => {
-    const nextKey = createSceneBufferKey(scene, selectedEntityId, hoverEntityId);
+  const updateScene = (scene, selectedEntityId, hoverEntityId = null, options = {}) => {
+    const hideStock = Boolean(options.hideStock);
+    const nextKey = createSceneBufferKey(scene, selectedEntityId, hoverEntityId) + (hideStock ? '_ns' : '');
     if (nextKey === lastKey) return;
     
-    const nextAdapted = adaptViewportScene(scene, selectedEntityId, hoverEntityId);
+    const nextAdapted = adaptViewportScene(scene, selectedEntityId, hoverEntityId, hideStock);
     buffers.solidVertex?.destroy?.();
     buffers.solidIndex?.destroy?.();
     buffers.constructionVertex?.destroy?.();
@@ -278,6 +310,8 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
   };
 
   const render = (scene, options = {}) => {
+    if (!scene?.camera) return;
+    options.voxelizer = options.voxelizer || voxelizer;
     resize();
     const viewCamera = options.camera ?? scene?.camera;
     device.queue.writeBuffer(uniformBuffer, 0, createViewProjectionMatrix(viewCamera, width, height));
@@ -303,6 +337,12 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       pass.setVertexBuffer(0, buffers.solidVertex);
       pass.setIndexBuffer(buffers.solidIndex, 'uint32');
       pass.drawIndexed(adapted.solidIndices.length);
+    }
+    if (options.voxelizer && options.voxelizer.vertexCount > 0) {
+      pass.setPipeline(solidPipeline);
+      pass.setVertexBuffer(0, options.voxelizer.vertexBuffer);
+      pass.setIndexBuffer(options.voxelizer.indexBuffer, 'uint32');
+      pass.drawIndexed(options.voxelizer.vertexCount);
     }
     if (buffers.constructionVertex && buffers.constructionIndex && adapted.constructionIndices.length) {
       pass.setPipeline(constructionPlanePipeline);
@@ -339,6 +379,8 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
   resize();
   return {
     available: true,
+    reason: '',
+    voxelizer,
     updateScene,
     resize,
     render,

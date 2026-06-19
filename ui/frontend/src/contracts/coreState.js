@@ -96,7 +96,7 @@ export const createDefaultViewportScene = () => ({
           0, 0, 1,
           0, 0, 1
         ],
-        indices: [0, 1, 2, 0, 2, 3]
+        indices: [0, 2, 1, 0, 3, 2]
       },
       {
         id: 'origin_XZ',
@@ -113,7 +113,7 @@ export const createDefaultViewportScene = () => ({
           0, 1, 0,
           0, 1, 0
         ],
-        indices: [0, 1, 2, 0, 2, 3]
+        indices: [0, 2, 1, 0, 3, 2]
       },
       {
         id: 'origin_YZ',
@@ -130,7 +130,7 @@ export const createDefaultViewportScene = () => ({
           1, 0, 0,
           1, 0, 0
         ],
-        indices: [0, 1, 2, 0, 2, 3]
+        indices: [0, 2, 1, 0, 3, 2]
       }
     ],
     grid: false,
@@ -213,7 +213,9 @@ export const createInitialCoreState = () => ({
   machineInitEnabled: true,
   stockSize: { x: 1, y: 1, z: 1, kind: 'cuboid' },
   stockLocation: { x: 0, y: 0, z: 0 },
-  simulationResolution: 256,
+  simulationResolution: 1.0,
+  stockSimulationResolution: 1.0,
+  pendingStockSetup: null,
   toolDiameter: 0.25,
   toolLength: 1,
   toolRadius: 0,
@@ -497,12 +499,12 @@ export const syncViewportScene = (state) => {
           0,0,1,  0,0,1,  0,0,1,  0,0,1
       ];
       stockIndices = [
-          0, 2, 1, 0, 3, 2,
+          0, 3, 2, 0, 2, 1,
           4, 5, 6, 4, 6, 7,
           0, 1, 5, 0, 5, 4,
           1, 2, 6, 1, 6, 5,
-          2, 3, 7, 2, 7, 6,
-          3, 0, 4, 3, 4, 7
+          3, 7, 6, 3, 6, 2,
+          0, 4, 7, 0, 7, 3
       ];
       stockColors = Array(8 * 4).fill(0).map((_, i) => i % 4 === 3 ? 0.7 : 0.8);
     }
@@ -624,8 +626,13 @@ export const syncViewportScene = (state) => {
 
     // Tool body (red)
     generateCylinder(td/2, tZ, tZ + tl, 0.9, 0.2, 0.2, 0.9);
-    // Tool holder (dark gray)
-    generateCylinder(hd/2, tZ + tl, tZ + tl + hl, 0.3, 0.3, 0.3, 1.0);
+    // Tool holder — flash red on collision, otherwise dark gray
+    const holderCollision = state.collisionDetected === true;
+    const hR = holderCollision ? 0.95 : 0.3;
+    const hG = holderCollision ? 0.15 : 0.3;
+    const hB = holderCollision ? 0.15 : 0.3;
+    const hA = holderCollision ? 0.95 : 1.0;
+    generateCylinder(hd/2, tZ + tl, tZ + tl + hl, hR, hG, hB, hA);
 
     const toolSolid = {
       id: 'solid_toolhead',

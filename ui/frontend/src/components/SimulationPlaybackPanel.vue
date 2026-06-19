@@ -48,6 +48,11 @@
         disabled
       />
     </div>
+
+    <div v-if="store.collisionCount > 0" class="collision-indicator">
+      <span class="collision-icon">⚠️</span>
+      <span class="collision-text">{{ store.collisionCount }} toolholder collision{{ store.collisionCount !== 1 ? 's' : '' }} detected</span>
+    </div>
   </div>
 </template>
 
@@ -226,5 +231,26 @@ input[type=range]::-webkit-slider-runnable-track {
   cursor: pointer;
   background: hsla(220, 15%, 35%, 0.8);
   border-radius: 2px;
+}
+
+.collision-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background-color: hsla(0, 70%, 25%, 0.5);
+  border: 1px solid hsla(0, 70%, 45%, 0.6);
+  border-radius: 6px;
+}
+
+.collision-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.collision-text {
+  font-size: 0.8rem;
+  color: hsl(0, 80%, 75%);
+  font-weight: 500;
 }
 </style>

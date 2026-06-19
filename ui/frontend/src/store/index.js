@@ -7,7 +7,7 @@ import {
   syncViewportScene
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
-import { initCoreWasm, parseGcode, getController, resetController, getCoreModule, extractMaterialMesh, flushMaterialSimulation } from '../services/coreWasm';
+import { initCoreWasm, parseGcode, getController, resetController, getCoreModule, extractMaterialMesh, flushMaterialSimulation, setSimulationToolRadius, checkToolholderCollision } from '../services/coreWasm';
 import { RIBBON_MODES } from '../config/ribbon';
 import {
   buildConstructionParams,
@@ -78,7 +78,8 @@ export const useCoreStore = defineStore('core', {
     machineMaxAccel: 500.0,
     machineSegmentDuration: 0.025,
     machineHomePosition: [0, 0, 50.8],
-    simulationResolution: 256,
+    simulationResolution: 128,
+    stockSimulationResolution: 1.0,
     
     // Simulation Playback State
     simulationPlaybackStatus: 'stopped', // 'stopped', 'playing', 'paused'
@@ -98,6 +99,8 @@ export const useCoreStore = defineStore('core', {
     showG54Modal: false,
     showToolTableModal: false,
     rightPanelTab: 'properties', // 'properties', 'gcode', 'settings', 'debug'
+    collisionDetected: false,
+    collisionCount: 0,
     workOffsets: {
       54: [0, 0, 0] // G54 offset x, y, z
     },
@@ -153,6 +156,36 @@ export const useCoreStore = defineStore('core', {
       if (this.messages.length > 1000) {
         this.messages.shift();
       }
+    },
+
+    initializeSimulator(controller) {
+      if (!controller) return;
+      const matSim = controller.materialSimulator();
+      if (!matSim) return;
+
+      const scaleToMm = this.units === 'inch' ? 25.4 : 1.0;
+      const sizeX = (this.stockSize?.x ?? 1) * scaleToMm;
+      const sizeY = (this.stockSize?.y ?? 1) * scaleToMm;
+      const sizeZ = (this.stockSize?.z ?? 1) * scaleToMm;
+
+      const locX = (this.stockLocation?.x ?? 0) * scaleToMm;
+      const locY = (this.stockLocation?.y ?? 0) * scaleToMm;
+      const locZ = (this.stockLocation?.z ?? 0) * scaleToMm;
+
+      console.log('[MatSim] Initializing Material Simulator:');
+      console.log(`  - stockSize: x=${this.stockSize?.x}, y=${this.stockSize?.y}, z=${this.stockSize?.z} (scaled: x=${sizeX}mm, y=${sizeY}mm, z=${sizeZ}mm)`);
+      console.log(`  - stockLocation: x=${this.stockLocation?.x}, y=${this.stockLocation?.y}, z=${this.stockLocation?.z} (scaled: x=${locX}mm, y=${locY}mm, z=${locZ}mm)`);
+
+      matSim.initialize(sizeX, sizeY, sizeZ);
+      matSim.setLocation(locX, locY, locZ);
+      if (matSim.setResolution) {
+        matSim.setResolution(this.stockSimulationResolution ?? 1.0);
+      }
+
+      // Set the actual tool radius for material removal boolean operations
+      const toolRadiusMm = (this.toolDiameter / 2) * scaleToMm;
+      console.log(`  - toolDiameter: ${this.toolDiameter} (scaled radius: ${toolRadiusMm}mm)`);
+      controller.setSimulationToolRadius(toolRadiusMm);
     },
 
     snapshotCoreState() {
@@ -270,6 +303,14 @@ export const useCoreStore = defineStore('core', {
         try {
           await initCoreWasm();
           const controller = getController();
+
+          // Ensure Material Simulator is initialized
+          const matSim = controller.materialSimulator();
+          const positions = matSim.getPositions();
+          if (!positions || positions.length === 0) {
+            console.log('[MDI] Material Simulator not initialized, initializing now...');
+            this.initializeSimulator(controller);
+          }
           
           // Clear any pending segments so double-clicks don't stack motion
           console.log('[MDI] Clearing pending segments before submit. Current queued:', controller.getQueuedSegments());
@@ -351,6 +392,10 @@ export const useCoreStore = defineStore('core', {
         locZ: this.stockLocation?.z || 0
       };
       this.rightPanelTab = 'setup';
+    },
+
+    updateStockSimulationResolution(res) {
+      this.stockSimulationResolution = res;
     },
 
     updateStockSetup(patch) {
@@ -959,18 +1004,11 @@ export const useCoreStore = defineStore('core', {
         console.log('[Controller] Cleared pending segments.');
 
         // Initialize Material Simulator
-        const matSim = controller.materialSimulator();
-        const scaleToMm = this.units === 'inch' ? 25.4 : 1.0;
-        matSim.initialize(
-          (this.stockSize?.x ?? 1) * scaleToMm,
-          (this.stockSize?.y ?? 1) * scaleToMm,
-          (this.stockSize?.z ?? 1) * scaleToMm
-        );
-        matSim.setLocation(
-          (this.stockLocation?.x ?? 0) * scaleToMm,
-          (this.stockLocation?.y ?? 0) * scaleToMm,
-          (this.stockLocation?.z ?? 0) * scaleToMm
-        );
+        this.initializeSimulator(controller);
+
+        // Reset collision state
+        this.collisionDetected = false;
+        this.collisionCount = 0;
 
         if (this.machineTaskMode === 'auto') {
           const prefix = this.units === 'inch' ? 'G20\n' : 'G21\n';
@@ -1070,6 +1108,9 @@ export const useCoreStore = defineStore('core', {
             controller.setToolOffset(Number(toolId), zOffset);
           }
 
+          // Initialize Material Simulator
+          this.initializeSimulator(controller);
+
           // Execute initialization G-code if enabled
           if (this.machineInitEnabled) {
             const initGcode = this.getFormattedInitGcode();
@@ -1097,6 +1138,9 @@ export const useCoreStore = defineStore('core', {
         } else {
           this.simulationToolPosition = this.units === 'inch' ? [0, 0, 2] : [0, 0, 50.8];
         }
+        // Reset collision state on reset
+        this.collisionDetected = false;
+        this.collisionCount = 0;
       } catch (err) {
         console.warn("Failed to reset controller", err);
         this.simulationToolPosition = this.units === 'inch' ? [0, 0, 2] : [0, 0, 50.8];
@@ -1132,9 +1176,28 @@ export const useCoreStore = defineStore('core', {
         this.activeGcodeLine = controller.getActiveSourceLine();
         this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - controller.getQueuedSegments());
         
+        console.log('[MatSim] stepSimulationForward: flushing deferred cuts...');
         flushMaterialSimulation();
+
+        // Check for toolholder-stock collision during step
+        const scaleToMmStep = this.units === 'inch' ? 25.4 : 1.0;
+        const tlMm = (this.toolLength ?? 1) * scaleToMmStep;
+        const thRadiusMm = ((this.toolholderDiameter ?? 2) / 2) * scaleToMmStep;
+        const thLengthMm = (this.toolholderLength ?? 1) * scaleToMmStep;
+        console.log(`[MatSim] step checkToolholderCollision params: toolLengthMm=${tlMm}, holderRadiusMm=${thRadiusMm}, holderLengthMm=${thLengthMm}`);
+        const collision = checkToolholderCollision(tlMm, thRadiusMm, thLengthMm);
+        console.log(`[MatSim] Step collision check result: ${collision}`);
+        this.collisionDetected = collision;
+        if (collision) {
+          this.collisionCount++;
+          if (this.collisionCount === 1) {
+            this.addMessage('⚠️ Toolholder collision with stock detected!', 'warning');
+          }
+        }
+
         const mesh = extractMaterialMesh();
         if (mesh) {
+          console.log(`[MatSim] Step extracted mesh: ${mesh.positions.length / 3} vertices, ${mesh.indices.length / 3} triangles`);
           let posArray = Array.from(mesh.positions);
           if (scaleToUi !== 1.0) {
             posArray = posArray.map(v => v * scaleToUi);
@@ -1144,6 +1207,8 @@ export const useCoreStore = defineStore('core', {
             normals: Array.from(mesh.normals),
             indices: Array.from(mesh.indices)
           };
+        } else {
+          console.log('[MatSim] Step extractMaterialMesh returned null');
         }
         
         syncViewportScene(this.$state);
@@ -1188,6 +1253,10 @@ export const useCoreStore = defineStore('core', {
           for (const [toolId, zOffset] of Object.entries(this.toolOffsets)) {
             newController.setToolOffset(Number(toolId), zOffset);
           }
+
+          // Initialize Material Simulator
+          this.initializeSimulator(newController);
+
           if (this.machineInitEnabled) {
             const initGcode = this.getFormattedInitGcode();
             if (initGcode) {
@@ -1197,7 +1266,7 @@ export const useCoreStore = defineStore('core', {
           newController.setTaskMode(2); // Auto/Mdi
           
           // Fast-forward parsing & planning of G-code program
-          const sanitized = this.sanitizeGcodeForController(this.gcodeText);
+          const sanitized = sanitizeGcodeForController(this.gcodeText);
           if (newController.submitMdi(sanitized)) {
             let safetyCount = 0;
             // Tick forward synchronously until target G-code line is hit
@@ -1269,10 +1338,28 @@ export const useCoreStore = defineStore('core', {
       this.simulationToolPosition = newPos;
 
       // Flush deferred OCCT cuts and rebuild mesh once per animation frame
+      console.log('[MatSim] simulationTick: flushing deferred cuts...');
       flushMaterialSimulation();
+
+      // Check for toolholder-stock collision
+      const scaleToMmTick = this.units === 'inch' ? 25.4 : 1.0;
+      const tlMm = (this.toolLength ?? 1) * scaleToMmTick;
+      const thRadiusMm = ((this.toolholderDiameter ?? 2) / 2) * scaleToMmTick;
+      const thLengthMm = (this.toolholderLength ?? 1) * scaleToMmTick;
+      console.log(`[MatSim] checkToolholderCollision params: toolLengthMm=${tlMm}, holderRadiusMm=${thRadiusMm}, holderLengthMm=${thLengthMm}`);
+      const collision = checkToolholderCollision(tlMm, thRadiusMm, thLengthMm);
+      console.log(`[MatSim] Collision check result: ${collision}`);
+      this.collisionDetected = collision;
+      if (collision) {
+        this.collisionCount++;
+        if (this.collisionCount === 1) {
+          this.addMessage('⚠️ Toolholder collision with stock detected!', 'warning');
+        }
+      }
 
       const mesh = extractMaterialMesh();
       if (mesh) {
+        console.log(`[MatSim] Extracted mesh: ${mesh.positions.length / 3} vertices, ${mesh.indices.length / 3} triangles`);
         let posArray = Array.from(mesh.positions);
         if (scaleToUi !== 1.0) {
           posArray = posArray.map(v => v * scaleToUi);
@@ -1282,6 +1369,8 @@ export const useCoreStore = defineStore('core', {
           normals: Array.from(mesh.normals),
           indices: Array.from(mesh.indices)
         };
+      } else {
+        console.log('[MatSim] extractMaterialMesh returned null');
       }
 
       syncViewportScene(this.$state);

@@ -149,16 +149,34 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
             }
             return arr;
         }))
-        .function("materialSimulator", optional_override([](MachineController& self) -> MaterialSimulator& {
-            return self.materialSimulator();
+        .function("materialSimulator", optional_override([](MachineController& self) -> MaterialSimulator* {
+            return &self.materialSimulator();
         }), allow_raw_pointers())
-        .function("flushMaterialSimulation", &MachineController::flushMaterialSimulation);
+        .function("flushMaterialSimulation", &MachineController::flushMaterialSimulation)
+        .function("setSimulationToolRadius", &MachineController::setSimulationToolRadius)
+        .function("checkToolholderCollision", &MachineController::checkToolholderCollision);
+
+    class_<MaterialCutSegment>("MaterialCutSegment")
+        .constructor<>()
+        .function("getStartX", optional_override([](const MaterialCutSegment& s) { return s.start[0]; }))
+        .function("getStartY", optional_override([](const MaterialCutSegment& s) { return s.start[1]; }))
+        .function("getStartZ", optional_override([](const MaterialCutSegment& s) { return s.start[2]; }))
+        .function("getEndX", optional_override([](const MaterialCutSegment& s) { return s.end[0]; }))
+        .function("getEndY", optional_override([](const MaterialCutSegment& s) { return s.end[1]; }))
+        .function("getEndZ", optional_override([](const MaterialCutSegment& s) { return s.end[2]; }))
+        .property("radius", &MaterialCutSegment::radius);
+
+    register_vector<MaterialCutSegment>("VectorMaterialCutSegment");
 
     class_<MaterialSimulator>("MaterialSimulator")
         .constructor<>()
         .function("initialize", &MaterialSimulator::initialize)
+        .function("setResolution", &MaterialSimulator::setResolution)
         .function("setLocation", &MaterialSimulator::setLocation)
+        .function("setToolRadius", &MaterialSimulator::setToolRadius)
         .function("reset", &MaterialSimulator::reset)
+        .function("popPendingCuts", &MaterialSimulator::popPendingCuts)
+        .function("checkCollision", &MaterialSimulator::checkCollision)
         .function("updateMesh", &MaterialSimulator::updateMesh)
         .function("getPositions", optional_override([](const MaterialSimulator& self) {
             if (self.getPositions().empty()) return val::array();

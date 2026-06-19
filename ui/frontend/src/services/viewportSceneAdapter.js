@@ -141,7 +141,7 @@ const pickableForSolid = (solid, solidIndex, vertexOffset) => {
   };
 };
 
-export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId = null) => {
+export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId = null, hideStock = false) => {
   const solids = scene?.solids ?? [];
   const toolpaths = scene?.toolpaths ?? [];
   const construction = [
@@ -153,6 +153,7 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
   let totalSolidVertices = 0;
   let totalSolidIndices = 0;
   solids.forEach(solid => {
+    if (hideStock && solid.id === 'solid_stock') return;
     totalSolidVertices += ((solid.positions?.length ?? 0) / 3) * 10;
     totalSolidIndices += solid.indices?.length ?? 0;
   });
@@ -170,6 +171,7 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
   let constructionVertexOffset = 0;
 
   solids.forEach((solid, solidIndex) => {
+    if (hideStock && solid.id === 'solid_stock') return;
     const positions = solid.positions ?? [];
     const normals = solid.normals ?? [];
     const colors = solid.colors ?? [];

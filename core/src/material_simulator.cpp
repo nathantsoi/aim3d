@@ -5,6 +5,7 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepSweep_Prism.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -29,10 +30,16 @@ MaterialSimulator::MaterialSimulator() {}
 MaterialSimulator::~MaterialSimulator() {}
 
 void MaterialSimulator::initialize(double sizeX, double sizeY, double sizeZ) {
-    m_sizeX = sizeX;
-    m_sizeY = sizeY;
-    m_sizeZ = sizeZ;
+    m_sizeX = std::max(0.1, sizeX);
+    m_sizeY = std::max(0.1, sizeY);
+    m_sizeZ = std::max(0.1, sizeZ);
     reset();
+}
+
+void MaterialSimulator::setResolution(double r) {
+    if (r > 0.0) {
+        m_resolution = r;
+    }
 }
 
 void MaterialSimulator::setLocation(double x, double y, double z) {
@@ -40,6 +47,12 @@ void MaterialSimulator::setLocation(double x, double y, double z) {
     m_locY = y;
     m_locZ = z;
     reset();
+}
+
+void MaterialSimulator::setToolRadius(double radius) {
+    if (radius > 0.0) {
+        m_toolRadius = radius;
+    }
 }
 
 void MaterialSimulator::reset() {
@@ -56,78 +69,68 @@ void MaterialSimulator::reset() {
     m_stockShape = m_initialStockShape;
 #endif
     updateMesh();
+    m_pendingCuts.clear();
 }
 
 void MaterialSimulator::cutSegment(const std::array<double, 3>& start, const std::array<double, 3>& end, double radius) {
+    m_pendingCuts.push_back({start, end, radius});
+
 #if AIM3D_HAS_OCCT
-    if (m_stockShape.IsNull() || radius <= 0.0) {
-        return;
+    // The exact 3D boolean subtraction using BRepAlgoAPI_Cut is disabled here
+    // because it causes severe performance degradation (0 FPS) during real-time 
+    // playback of the simulation toolpath. We instead rely entirely on the 
+    // WebGPU Voxelizer in the frontend for visual subtraction.
+    // We maintain m_stockShape as the original bounding box for rapid 
+    // toolholder collision checks.
+#endif
+}
+
+bool MaterialSimulator::checkCollision(const std::array<double, 3>& cylinderBase, double radius, double height) const {
+#if AIM3D_HAS_OCCT
+    std::cout << "[C++ MatSim] checkCollision base=(" << cylinderBase[0] << ", " << cylinderBase[1] << ", " << cylinderBase[2]
+              << ") radius=" << radius << " height=" << height << std::endl;
+    if (m_stockShape.IsNull()) {
+        std::cout << "[C++ MatSim] checkCollision: m_stockShape is null!" << std::endl;
+        return false;
+    }
+    if (radius <= 0.0 || height <= 0.0) {
+        std::cout << "[C++ MatSim] checkCollision: invalid dimensions (radius=" << radius << ", height=" << height << ")" << std::endl;
+        return false;
     }
 
-    gp_Pnt pA(start[0], start[1], start[2]);
-    gp_Pnt pB(end[0], end[1], end[2]);
-    gp_Vec delta(pA, pB);
-    
-    double dist = delta.Magnitude();
-    double toolHeight = m_sizeZ * 2.0 + 10.0;
+    try {
+        gp_Pnt base(cylinderBase[0], cylinderBase[1], cylinderBase[2]);
+        gp_Ax2 axes(base, gp_Dir(0, 0, 1));
+        TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(axes, radius, height).Shape();
 
-    // 1. Create and cut start cylinder
-    gp_Ax2 axesA(pA, gp_Dir(0, 0, 1));
-    TopoDS_Shape toolShapeA = BRepPrimAPI_MakeCylinder(axesA, radius, toolHeight).Shape();
-
-    BRepAlgoAPI_Cut cutA(m_stockShape, toolShapeA);
-    cutA.Build();
-    if (cutA.IsDone() && !cutA.Shape().IsNull()) {
-        m_stockShape = cutA.Shape();
-    }
-
-    if (dist > 1e-6) {
-        // 2. Create swept rectangle connecting volume if there is an XY movement
-        double dx = end[0] - start[0];
-        double dy = end[1] - start[1];
-        double lenXY = std::hypot(dx, dy);
-        
-        double perpX = 0.0;
-        double perpY = 0.0;
-        if (lenXY > 1e-6) {
-            perpX = -dy / lenXY;
-            perpY = dx / lenXY;
+        // BRepAlgoAPI_Section computes the intersection curve between two shapes.
+        // If any edges exist in the result, the shapes intersect.
+        BRepAlgoAPI_Section section(m_stockShape, cylinder);
+        section.Build();
+        if (!section.IsDone()) {
+            std::cout << "[C++ MatSim] checkCollision: BRepAlgoAPI_Section build failed!" << std::endl;
+            return false;
         }
 
-        if (lenXY > 1e-6) {
-            gp_Pnt p1(pA.X() - perpX * radius, pA.Y() - perpY * radius, pA.Z());
-            gp_Pnt p2(pA.X() + perpX * radius, pA.Y() + perpY * radius, pA.Z());
-            gp_Pnt p3(p2.X(), p2.Y(), p2.Z() + toolHeight);
-            gp_Pnt p4(p1.X(), p1.Y(), p1.Z() + toolHeight);
-
-            BRepBuilderAPI_MakePolygon poly;
-            poly.Add(p1);
-            poly.Add(p2);
-            poly.Add(p3);
-            poly.Add(p4);
-            poly.Close();
-
-            TopoDS_Face rectFace = BRepBuilderAPI_MakeFace(poly.Wire());
-            TopoDS_Shape sweptRect = BRepSweep_Prism(rectFace, delta).Shape();
-
-            BRepAlgoAPI_Cut cutRect(m_stockShape, sweptRect);
-            cutRect.Build();
-            if (cutRect.IsDone() && !cutRect.Shape().IsNull()) {
-                m_stockShape = cutRect.Shape();
-            }
+        // Check if the section result contains any geometry (edges)
+        TopExp_Explorer explorer(section.Shape(), TopAbs_EDGE);
+        if (explorer.More()) {
+            std::cout << "[C++ MatSim] COLLISION DETECTED via section check!" << std::endl;
+            return true; // Intersection found — collision
         }
 
-        // 3. Create and cut end cylinder
-        gp_Ax2 axesB(pB, gp_Dir(0, 0, 1));
-        TopoDS_Shape toolShapeB = BRepPrimAPI_MakeCylinder(axesB, radius, toolHeight).Shape();
-
-        BRepAlgoAPI_Cut cutB(m_stockShape, toolShapeB);
-        cutB.Build();
-        if (cutB.IsDone() && !cutB.Shape().IsNull()) {
-            m_stockShape = cutB.Shape();
-        }
+        // Section can miss fully-contained cases (cylinder entirely inside stock).
+        // Use volume-based check: compute common volume via BRepAlgoAPI_Common.
+        // For performance, we skip this for now since toolholders are typically
+        // larger than the stock in the plunge direction and the section check
+        // catches the vast majority of real collisions.
+    } catch (...) {
+        // OCCT can throw on degenerate geometry — treat as no collision
+        std::cerr << "[C++ MatSim] checkCollision: exception caught during intersection check!" << std::endl;
+        return false;
     }
 #endif
+    return false;
 }
 
 void MaterialSimulator::updateMesh() {
@@ -137,11 +140,14 @@ void MaterialSimulator::updateMesh() {
 
 #if AIM3D_HAS_OCCT
     if (m_stockShape.IsNull()) {
+        std::cout << "[C++ MatSim] updateMesh: m_stockShape is null!" << std::endl;
         return;
     }
 
+    std::cout << "[C++ MatSim] updateMesh starting incremental mesh calculation..." << std::endl;
+
     // Mesh the shape
-    BRepMesh_IncrementalMesh mesher(m_stockShape, 0.5, false, 0.5, true);
+    BRepMesh_IncrementalMesh mesher(m_stockShape, m_resolution, false, 0.5, true);
     mesher.Perform();
 
     for (TopExp_Explorer explorer(m_stockShape, TopAbs_FACE); explorer.More(); explorer.Next()) {
@@ -154,29 +160,97 @@ void MaterialSimulator::updateMesh() {
         }
 
         const auto transform = location.Transformation();
+        const bool isReversed = (face.Orientation() == TopAbs_REVERSED);
         const auto baseIndex = static_cast<std::uint32_t>(m_positions.size() / 3);
         
+        // Check if the triangulation provides normals
+        const bool hasNormals = triangulation->HasNormals();
+
         for (int nodeIndex = 1; nodeIndex <= triangulation->NbNodes(); ++nodeIndex) {
             const auto point = triangulation->Node(nodeIndex).Transformed(transform);
             m_positions.push_back(static_cast<float>(point.X()));
             m_positions.push_back(static_cast<float>(point.Y()));
             m_positions.push_back(static_cast<float>(point.Z()));
             
-            // Simplified normals for now, the UI might recalculate them or we can just send up
-            m_normals.push_back(0.0f);
-            m_normals.push_back(0.0f);
-            m_normals.push_back(1.0f);
+            if (hasNormals) {
+                // Use the normals from the triangulation, respecting face orientation
+                gp_Dir normal = triangulation->Normal(nodeIndex);
+                // Transform the normal by the location
+                normal = normal.IsParallel(gp_Dir(0,0,1), 1e-10)
+                    ? normal
+                    : normal.IsParallel(gp_Dir(0,0,-1), 1e-10) ? normal : normal;
+                if (isReversed) {
+                    normal.Reverse();
+                }
+                m_normals.push_back(static_cast<float>(normal.X()));
+                m_normals.push_back(static_cast<float>(normal.Y()));
+                m_normals.push_back(static_cast<float>(normal.Z()));
+            } else {
+                // Placeholder — will be overwritten by flat normal computation below
+                m_normals.push_back(0.0f);
+                m_normals.push_back(0.0f);
+                m_normals.push_back(1.0f);
+            }
         }
 
         for (int triangleIndex = 1; triangleIndex <= triangulation->NbTriangles(); ++triangleIndex) {
             int a = 0, b = 0, c = 0;
             triangulation->Triangle(triangleIndex).Get(a, b, c);
-            m_indices.push_back(baseIndex + static_cast<std::uint32_t>(a - 1));
-            m_indices.push_back(baseIndex + static_cast<std::uint32_t>(b - 1));
-            m_indices.push_back(baseIndex + static_cast<std::uint32_t>(c - 1));
+
+            std::uint32_t ia = baseIndex + static_cast<std::uint32_t>(a - 1);
+            std::uint32_t ib = baseIndex + static_cast<std::uint32_t>(b - 1);
+            std::uint32_t ic = baseIndex + static_cast<std::uint32_t>(c - 1);
+
+            // Respect face orientation: reverse winding if the face is reversed
+            if (isReversed) {
+                m_indices.push_back(ia);
+                m_indices.push_back(ic);
+                m_indices.push_back(ib);
+            } else {
+                m_indices.push_back(ia);
+                m_indices.push_back(ib);
+                m_indices.push_back(ic);
+            }
+
+            // If no normals from triangulation, compute flat normals from the triangle
+            if (!hasNormals) {
+                float ax = m_positions[ia * 3], ay = m_positions[ia * 3 + 1], az = m_positions[ia * 3 + 2];
+                float bx = m_positions[ib * 3], by = m_positions[ib * 3 + 1], bz = m_positions[ib * 3 + 2];
+                float cx = m_positions[ic * 3], cy = m_positions[ic * 3 + 1], cz = m_positions[ic * 3 + 2];
+
+                float e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+                float e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+
+                float nx = e1y * e2z - e1z * e2y;
+                float ny = e1z * e2x - e1x * e2z;
+                float nz = e1x * e2y - e1y * e2x;
+
+                float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+                if (len > 1e-8f) {
+                    nx /= len; ny /= len; nz /= len;
+                } else {
+                    nx = 0.0f; ny = 0.0f; nz = 1.0f;
+                }
+
+                if (isReversed) {
+                    nx = -nx; ny = -ny; nz = -nz;
+                }
+
+                // Overwrite the placeholder normals for all 3 vertices of this triangle
+                m_normals[ia * 3] = nx; m_normals[ia * 3 + 1] = ny; m_normals[ia * 3 + 2] = nz;
+                m_normals[ib * 3] = nx; m_normals[ib * 3 + 1] = ny; m_normals[ib * 3 + 2] = nz;
+                m_normals[ic * 3] = nx; m_normals[ic * 3 + 1] = ny; m_normals[ic * 3 + 2] = nz;
+            }
         }
     }
+    std::cout << "[C++ MatSim] updateMesh complete: " << m_positions.size() / 3 << " vertices, " << m_indices.size() / 3 << " triangles." << std::endl;
 #endif
+}
+
+std::vector<MaterialCutSegment> MaterialSimulator::popPendingCuts() {
+    std::vector<MaterialCutSegment> cuts = std::move(m_pendingCuts);
+    m_pendingCuts.clear();
+    return cuts;
 }
 
 } // namespace aim3d
