@@ -60,6 +60,7 @@ workspace-dir/
 ```
 
 1. **Clone the project and the wiki as siblings**:
+
    ```bash
    git clone git@github.com:nathantsoi/aim3d.git
    git clone git@github.com:nathantsoi/aim3d-wiki.git wiki
@@ -73,6 +74,7 @@ workspace-dir/
    ```
 
 ### Prerequisites
+
 - C++17 compiler (GCC, Clang, AppleClang, or MSVC)
 - CMake 3.18+
 - Python 3.9+
@@ -81,6 +83,7 @@ workspace-dir/
 - OpenCASCADE/OCCT for native B-rep import/export work. The wiki selects OCCT as the initial kernel and the monorepo includes source at `../opensource/OCCT`; pass `-DAIM3D_ENABLE_OCCT=ON -DAIM3D_OCCT_DIR=/path/to/occt/package` after OCCT has been configured and built.
 
 ### Standard Commands
+
 ```bash
 cd aim3d
 make build
@@ -110,11 +113,70 @@ make build AIM3D_ENABLE_OCCT=1 AIM3D_OCCT_DIR=/path/to/occt/cmake/package
 
 The Python package currently exposes the Tier 1/2 scaffold: modern `aim3d.*` modules and Fusion-compatible `adsk.*` facade modules.
 
+## Testing
+
+The project has four test suites. The Makefile is the single source of truth — run any subset with `make <target>`:
+
+| Target                 | Suite                              | What it covers                                                                                                      | Needs                            | Time    |
+| ---------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------- |
+| `make test`            | **C++ core** (Emscripten + ctest)  | gcode parsing, motion planning, canned cycles (G81/G84), soft limits, the material-simulator C-API                  | OCCT build (Emscripten)          | minutes |
+| `make test-voxelizer`  | **WebGPU voxelizer (GPU-free)**    | the cutting-model SDF math (`sdBox`/`sdSweptTool`) vs analytic ground truth (IoU), and a WGSL↔JS parity drift guard | Node only                        | ~1s     |
+| `make test-webgpu`     | **WebGPU voxelizer (real shader)** | runs the actual WGSL compute shaders in headless Chromium and compares the GPU density grid to the JS reference     | Node + Playwright Chromium       | ~1s     |
+| `make test-frontend`   | **Frontend (vitest, full)**        | Vue components, services, and the Pinia store (jsdom)                                                               | Node                             | seconds |
+| `make test-python`     | **Python integration**             | `aim3d`/`adsk` facades, websocket/daemon, FFI bindings                                                              | native `libaim3d_core` + `.venv` | seconds |
+| `make test-simulation` | **G-code/simulation**              | LinuxCNC interpreter, canned cycles, subtractive heightmap meshing                                                  | native `libaim3d_core` + `.venv` | seconds |
+
+Verbose variants: `make test-verbose` (C++), `make test-core-verbose` (raw `node aim3d_core_tests.js` output).
+
+### The voxelizer tests (cutting model)
+
+The material-removal cutting model lives in `ui/frontend/src/services/webgpuVoxelizer.js` (WGSL compute shaders). Three layers cover it:
+
+1. **`make test-voxelizer`** (no GPU) — `voxelSdf.iou.test.js` tests the pure-JS reference against analytic ground truth; `webgpuVoxelizer.parity.test.js` is a text-level drift guard ensuring the WGSL matches the JS reference and marching-cubes tables are vendored (no runtime `fetch`).
+2. **`make test-webgpu`** (headless Chromium) — `webgpuVoxelizer.webgpu.test.js` runs the **real** compute shaders, reads the GPU density grid back via `readGrid()`, and asserts IoU ≥ 0.999 (empty stock) and ≥ 0.97 (after cuts) against `computeDensityGrid()`. Skips cleanly (does not fail) when WebGPU is unavailable.
+
+See [`docs/testing.md`](docs/testing.md) for the full architecture and mesh-recording details.
+
+### Continuous integration (runs on every push)
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs two jobs on every push and pull request:
+
+- **`frontend-tests`** (fast, ~1 min, no GPU) — `npm ci` → `make test-voxelizer` → `make test-webgpu` (skips if no WebGPU backend). Aggressively caches npm and Playwright browsers.
+- **`core-tests`** (slower, first run builds OpenCASCADE via Emscripten) — `make test-core` (the full C++ gtest suite). Caches the emsdk, the OCCT build, and the core build so subsequent runs only recompile changed sources. Checks out the `third_party/OCCT` submodule.
+
+Both jobs must pass for a PR to be mergeable. Cancel-in-progress is enabled, so pushing a new commit cancels the previous run for the same ref.
+
+### Pre-push git hook (run tests before pushing)
+
+A pre-push hook runs the fast, GPU-free voxelizer tests (`make test-voxelizer`) before every push. Install it once:
+
+```bash
+make install-hooks
+```
+
+This sets `core.hooksPath` to `.githooks/`. The hook completes in well under a second and only blocks the push if the SDF/parity tests fail. Bypass it for a single push with `git push --no-verify`, or skip via env var:
+
+```bash
+AIM3D_SKIP_TESTS=1 git push
+```
+
+The heavier C++ core tests and the real-shader WebGPU test run in GitHub Actions on push (see above) — they are intentionally not in the hook so pushes stay fast.
+
+### Python test prerequisites
+
+Python tests (`make test-python` / `make test-simulation`) need a native `libaim3d_core` shared library for the ctypes FFI and a repo-local `.venv`. `make test-python` builds both automatically via `make build-native` (a native, OCCT-disabled build of the core library). To set up the venv manually:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e python
+```
+
 ### Microcontroller (MCU) Firmware Setup (STM32)
 
 `aim3d` includes a bare-metal microcontroller controller firmware subproject under [mcu/stm32](mcu/stm32/) designed to run on STM32F103 boards (e.g., Blue Pill). It decodes G-code step segments sent over USART serial using a Klipper-style protocol and drives motor stepper outputs.
 
 To build the firmware:
+
 1. Ensure `arm-none-eabi-gcc` toolchain is installed and on your PATH.
 2. Run compile commands:
    ```bash

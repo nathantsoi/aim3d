@@ -28,3 +28,6 @@ ui/frontend/public/aim3d_core.wasm
 
 # Tauri 2
 ui/src-tauri/gen/
+
+# agents
+.pi-lens

@@ -25,8 +25,9 @@ else
 CMAKE_ARGS += -DAIM3D_OCCT_DIR=$(abspath $(OCCT_INSTALL_DIR)/lib/cmake/opencascade)
 endif
 
-.PHONY: help build build-fast clean run deps test test-verbose verbose-test verbose configure build-occt build-core build-core-fast build-frontend build-tauri \
-	test-core test-core-verbose run-frontend run-tauri emsdk
+.PHONY: help build build-fast clean run deps test test-all test-verbose verbose-test verbose configure build-occt build-core build-core-fast build-native build-frontend build-tauri \
+	test-core test-core-verbose test-frontend test-voxelizer test-webgpu test-python test-simulation \
+	run-frontend run-tauri emsdk install-hooks
 
 help:
 	@echo "aim3d build commands"
@@ -35,8 +36,18 @@ help:
 	@echo "  make run            Run the frontend dev server and Tauri shell"
 	@echo "  make clean          Remove local build artifacts and caches"
 	@echo "  make deps           Install Emscripten and Node dependencies"
-	@echo "  make test           Run C++ tests"
-	@echo "  make test-verbose   Run tests with full output for failures"
+	@echo "Testing:"
+	@echo "  make test-all       Run all test suites (C++ core, frontend, and Python)"
+	@echo "  make test           Run the C++ core tests (Emscripten + ctest)"
+	@echo "  make test-verbose   Run C++ tests with full output for failures"
+	@echo "  make test-frontend  Run the full frontend vitest suite (jsdom/node)"
+	@echo "  make test-voxelizer Run the JS SDF/IoU + WGSL parity tests (no GPU, fast)"
+	@echo "  make test-webgpu    Run the real-shader WebGPU voxelizer test (headless Chrome)"
+	@echo "  make test-python    Run the Python integration tests (needs a native core build)"
+	@echo "  make test-simulation Run the G-code/simulation Python tests (needs a native core build)"
+	@echo ""
+	@echo "Hooks & CI:"
+	@echo "  make install-hooks  Install the pre-push git hook (runs test-voxelizer before push)"
 	@echo ""
 	@echo "Optional:"
 	@echo "  make build-occt     Build vendored OpenCASCADE into build/occt-install"
@@ -105,6 +116,8 @@ build-tauri:
 
 test: deps test-core
 
+test-all: test-core test-frontend test-python
+
 test-verbose: deps test-core-verbose
 
 verbose-test: test-verbose
@@ -116,6 +129,61 @@ test-core: build-core
 
 test-core-verbose: build-core
 	bash -c "$(EMSDK_ENV) && cd $(BUILD_DIR)/bin && node aim3d_core_tests.js"
+
+test-voxelizer:
+	cd ui/frontend && $(NPM) run test:voxelizer
+
+test-webgpu:
+	cd ui/frontend && $(NPM) run test:webgpu
+
+test-frontend:
+	cd ui/frontend && $(NPM) run test
+
+# Build the native (non-Emscripten) core library for Python ctypes FFI.
+# Uses the host compiler with OCCT disabled so it builds without the OCCT
+# dependency. Only the library target is built (the native test binary needs
+# extra headers; the Emscripten build covers C++ tests). The shared library is
+# symlinked into build/lib so python/aim3d/_native.py can find it.
+NATIVE_BUILD_DIR ?= build-noocct
+
+build-native:
+	@if [ ! -f $(NATIVE_BUILD_DIR)/CMakeCache.txt ]; then \
+		echo "Configuring native build (OCCT disabled) in $(NATIVE_BUILD_DIR)…"; \
+		$(CMAKE) -S . -B $(NATIVE_BUILD_DIR) -DBUILD_TESTING=ON -DAIM3D_ENABLE_OCCT=OFF; \
+	fi
+	@echo "Building native libaim3d_core…"
+	$(CMAKE) --build $(NATIVE_BUILD_DIR) --target aim3d_core
+	@mkdir -p $(BUILD_DIR)/lib
+	@# Symlink the native shared library into build/lib so python/aim3d/_native.py finds it.
+	@lib="$$(ls $(NATIVE_BUILD_DIR)/lib/libaim3d_core.dylib $(NATIVE_BUILD_DIR)/lib/libaim3d_core.so 2>/dev/null | head -1)"; \
+	if [ -n "$$lib" ]; then \
+		ln -sf "../../$(NATIVE_BUILD_DIR)/lib/$$(basename $$lib)" $(BUILD_DIR)/lib/$$(basename $$lib); \
+		echo "Symlinked $$(basename $$lib) into $(BUILD_DIR)/lib for Python ctypes FFI"; \
+	else \
+		echo "Warning: native libaim3d_core not found in $(NATIVE_BUILD_DIR)/lib"; \
+	fi
+
+# Python integration tests require the native core library (ctypes FFI) and the
+# repo-local .venv. build-native is a prerequisite.
+PYTEST ?= .venv/bin/pytest
+
+test-python: build-native
+	@if [ ! -x "$(PYTEST)" ]; then echo "Error: $(PYTEST) not found. Run: make deps  (or: python3 -m venv .venv && .venv/bin/pip install -e python)"; exit 1; fi
+	cd python && ../$(PYTEST) tests
+
+test-simulation: build-native
+	@if [ ! -x "$(PYTEST)" ]; then echo "Error: $(PYTEST) not found. Run: make deps  (or: python3 -m venv .venv && .venv/bin/pip install -e python)"; exit 1; fi
+	cd python && ../$(PYTEST) tests/test_linuxcnc_interp.py tests/test_controller_visual_ir.py
+
+# Install the project's git hooks (see .githooks/pre-push). Sets core.hooksPath
+# so git uses .githooks/ instead of .git/hooks/. Bypass a push with --no-verify
+# or AIM3D_SKIP_TESTS=1.
+install-hooks:
+	@git config core.hooksPath .githooks
+	@chmod +x .githooks/pre-push 2>/dev/null || true
+	@echo "Git hooks installed (core.hooksPath = .githooks)."
+	@echo "  pre-push: runs 'make test-voxelizer' (fast, GPU-free) before every push."
+	@echo "  Bypass with: git push --no-verify  or  AIM3D_SKIP_TESTS=1 git push"
 
 run: deps run-tauri
 

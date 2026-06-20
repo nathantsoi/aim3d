@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#
+# pre-push hook: runs the fast, GPU-free voxelizer test suite before allowing a
+# push. These tests validate the WebGPU cutting-model SDF math (sdBox / sdSweptTool
+# IoU vs analytic ground truth) and the WGSL <-> JS reference parity drift guard.
+#
+# They run in plain Node/vitest with no browser and no GPU, so they complete in
+# well under a second and are safe to run on every push.
+#
+# Bypass:
+#   git push --no-verify            # git's built-in bypass for this push only
+#   AIM3D_SKIP_TESTS=1 git push     # skip via env var
+#
+# Install (one time):
+#   make install-hooks              # sets core.hooksPath to .githooks
+#   # or: git config core.hooksPath .githooks
+#
+# The heavier C++ core tests (`make test-core`) and the real-shader WebGPU test
+# (`make test-webgpu`) are run by GitHub Actions on push — see
+# .github/workflows/ci.yml. They are intentionally NOT in this hook so pushes stay
+# fast (the OCCT/Emscripten build takes minutes).
+
+set -euo pipefail
+
+# Bypass via env var.
+if [ "${AIM3D_SKIP_TESTS:-0}" = "1" ]; then
+  echo "[pre-push] AIM3D_SKIP_TESTS=1 — skipping voxelizer tests."
+  exit 0
+fi
+
+# Locate the repo root (the hook runs with CWD at the repo root, but be robust).
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+# Consume the refs that git pipes to stdin (we run the tests once, not per-ref).
+cat >/dev/null
+
+# If the frontend deps aren't installed, warn and allow the push rather than
+# forcing a developer to run `npm install` just to push.
+if [ ! -d "ui/frontend/node_modules" ]; then
+  echo "[pre-push] ui/frontend/node_modules not found — skipping voxelizer tests."
+  echo "[pre-push]   (run 'cd ui/frontend && npm install' to enable the hook, or"
+  echo "[pre-push]    'make install-hooks' to configure the hook path)"
+  exit 0
+fi
+
+if [ ! -f "ui/frontend/node_modules/.bin/vitest" ]; then
+  echo "[pre-push] vitest not found in ui/frontend/node_modules — skipping voxelizer tests."
+  echo "[pre-push]   (run 'cd ui/frontend && npm install' to enable)"
+  exit 0
+fi
+
+echo "[pre-push] Running GPU-free voxelizer tests (make test-voxelizer)…"
+echo "[pre-push]   (bypass with: git push --no-verify  or  AIM3D_SKIP_TESTS=1 git push)"
+
+# Run the GPU-free voxelizer suite (sdSweptTool IoU + WGSL parity). This is the
+# fast subset — no browser, no GPU, no network. The Makefile target cds into
+# ui/frontend and runs vitest on the two parity/IoU test files.
+if make test-voxelizer; then
+  echo "[pre-push] ✓ voxelizer tests passed."
+  exit 0
+else
+  echo "[pre-push] ✗ voxelizer tests FAILED." >&2
+  echo "[pre-push]   Push aborted. Fix the failures above, or bypass with:" >&2
+  echo "[pre-push]     git push --no-verify" >&2
+  echo "[pre-push]   (not recommended — CI will run the same tests on push)" >&2
+  exit 1
+fi
