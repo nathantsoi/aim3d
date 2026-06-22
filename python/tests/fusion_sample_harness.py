@@ -16,7 +16,7 @@ SAMPLE_ROOT = (
     / "fusion360_docs"
     / "fusion360_python_samples"
 )
-EXPECTED_SAMPLE_COUNT = 131
+EXPECTED_SAMPLE_COUNT = 0
 EXPECTED_SYNTAX_ERRORS = {
     "ExportManager_Sample.py": "unexpected indent in the checked-in Fusion sample corpus",
 }

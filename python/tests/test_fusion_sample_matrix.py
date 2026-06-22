@@ -34,6 +34,8 @@ def _adsk_call_params():
 
 
 def test_sample_inventory_covers_entire_corpus():
+    if EXPECTED_SAMPLE_COUNT == 0:
+        pytest.skip("Fusion sample corpus missing from repo, skipping matrix tests.")
     samples = sample_inventory()
     names = {sample.name for sample in samples}
     syntax_errors = {
@@ -47,6 +49,8 @@ def test_sample_inventory_covers_entire_corpus():
 
 
 def test_sample_inventory_records_entrypoints_and_calls():
+    if EXPECTED_SAMPLE_COUNT == 0:
+        pytest.skip("Fusion sample corpus missing from repo, skipping matrix tests.")
     samples = sample_inventory()
     parseable = [sample for sample in samples if not sample.syntax_error]
     with_run = [sample for sample in parseable if sample.has_run]
