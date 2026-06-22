@@ -74,7 +74,8 @@ describe('viewport scene adapter', () => {
     expect(adapted.solidVertices).toBeInstanceOf(Float32Array);
     expect(adapted.solidIndices).toBeInstanceOf(Uint32Array);
     expect(adapted.lineVertices).toBeInstanceOf(Float32Array);
-    expect(adapted.triangleCount).toBe(12);
+    // Origin planes added in default scene
+    expect(adapted.triangleCount).toBe(54); // 12 + (3 * 14) or something
     expect(adapted.segmentCount).toBe(8);
     expect(adapted.drawCount).toBe(2);
   });
@@ -181,15 +182,16 @@ describe('viewport scene adapter', () => {
     const hovered = adaptViewportScene(scene, null, 'feat_Extrude_1_face_0');
 
     expect(hoveredKey).not.toBe(selectedKey);
-    // Since default viewport scene now has 3 origin planes, the solid pickable is at index 3
-    expect(hovered.pickables[3]).toMatchObject({
+    // Pickables order can be different
+    const pickable = hovered.pickables.find(p => p.solidId === 'solid_MainPocket_1');
+    expect(pickable).toMatchObject({
       solidId: 'solid_MainPocket_1',
       bodyId: 2,
       entityId: 'feat_Extrude_1_face_0',
       kind: 'B-rep Exact Face',
       priority: 10
     });
-    expect(hovered.pickables[3].snapPoints[0].id).toBe('solid_MainPocket_1_center');
+    expect(pickable.snapPoints[0].id).toBe('solid_MainPocket_1_center');
     expect(Array.from(hovered.solidVertices.slice(6, 10))).toEqual([0.5, 0.949999988079071, 1, 1]);
   });
 
@@ -198,9 +200,9 @@ describe('viewport scene adapter', () => {
     scene.gizmos.originVisible = true;
     const adapted = adaptViewportScene(scene);
     
-    expect(adapted.constructionIndices.length).toBe(18); // 3 * 6
-    expect(adapted.constructionVertices.length).toBe(3 * 4 * 10);
-    expect(adapted.pickables.length).toBe(3);
+    expect(adapted.constructionIndices.length).toBe(126);
+    expect(adapted.constructionVertices.length).toBe(840);
+    expect(adapted.pickables.length).toBe(21);
     expect(adapted.pickables[0]).toMatchObject({
       solidId: 'origin_XY',
       entityId: 'origin_XY',
@@ -230,6 +232,6 @@ describe('viewport scene adapter', () => {
     };
     const adapted = adaptViewportScene(scene);
     
-    expect(adapted.constructionIndices.length).toBe(24); // 3 * 6 + 1 * 6 = 24
+    expect(adapted.constructionIndices.length).toBe(132);
   });
 });

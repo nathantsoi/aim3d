@@ -6,6 +6,8 @@
 #include <memory>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
+#include <algorithm>
 #include <atomic>
 #include <queue>
 #include "aim3d/controller.hpp"
