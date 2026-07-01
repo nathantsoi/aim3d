@@ -1,4 +1,20 @@
 import { defineStore } from 'pinia';
+
+// Safe accessors for persistent UI preferences. The store is constructed at
+// import time; in environments without a DOM storage backend (jsdom test runs,
+// SSR, sandboxed workers) the global `localStorage` is undefined, so we guard
+// against that rather than crashing during store setup.
+const safeStorage = (() => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+})();
+const readStored = (key) => (safeStorage ? safeStorage.getItem(key) : null);
+const writeStored = (key, value) => {
+  if (safeStorage) safeStorage.setItem(key, value);
+};
 import {
   ACTION_TYPES,
   applyCoreSnapshot,
@@ -7,7 +23,7 @@ import {
   syncViewportScene
 } from '../contracts/coreState';
 import { dispatchCoreAction } from '../services/coreGateway';
-import { initCoreWasm, parseGcode, getController, resetController, getCoreModule, extractMaterialMesh, flushMaterialSimulation, setSimulationToolRadius, checkToolholderCollision } from '../services/coreWasm';
+import { initCoreWasm, parseGcode, getController, resetController, getCoreModule, flushMaterialSimulation, setSimulationToolRadius, checkToolholderCollision } from '../services/coreWasm';
 import { RIBBON_MODES } from '../config/ribbon';
 import {
   buildConstructionParams,
@@ -115,10 +131,10 @@ export const useCoreStore = defineStore('core', {
     modalSpindleRpm: 0.0,           // RPM from last S word
     modalActiveTool: 0,             // active tool number
     modalCoolantMode: 'off',        // 'off' | 'mist' | 'flood'
-    machineInitGcode: localStorage.getItem('aim3d_machineInitGcode') !== null
-      ? localStorage.getItem('aim3d_machineInitGcode')
+    machineInitGcode: readStored('aim3d_machineInitGcode') !== null
+      ? readStored('aim3d_machineInitGcode')
       : '(Machine Initialization)\nG17 (Select XY plane)\nG20 (Select imperial units)\nG40 (Cancel cutter radius compensation)\nG49 (Cancel tool length offset)\nG54 (Select Work Coordinate System 1)\nG80 (Cancel canned cycles)\nG90 (Set absolute distance mode)\nG94 (Set feed rate units per minute)\nM5 (Spindle stop)\nM9 (Coolant off)',
-    machineInitEnabled: localStorage.getItem('aim3d_machineInitEnabled') !== 'false'
+    machineInitEnabled: readStored('aim3d_machineInitEnabled') !== 'false'
   }),
 
   getters: {
@@ -247,7 +263,7 @@ export const useCoreStore = defineStore('core', {
       this.activeMode = mode;
       this.activeWorkspaceTab = RIBBON_MODES[mode].tabs[0]?.id ?? null;
       
-      localStorage.setItem('aim3d_activeMode', mode);
+      writeStored('aim3d_activeMode', mode);
 
       if (mode !== 'machine') {
         this.showGcodeEditor = false;
@@ -304,14 +320,14 @@ export const useCoreStore = defineStore('core', {
           await initCoreWasm();
           const controller = getController();
 
-          // Ensure Material Simulator is initialized
-          const matSim = controller.materialSimulator();
-          const positions = matSim.getPositions();
-          if (!positions || positions.length === 0) {
+          // Ensure the Material Simulator's stock box is initialized (it owns
+          // only the stock bounding box + cut queue now; there is no C++ mesh).
+          if (!this._machineInitialized) {
             console.log('[MDI] Material Simulator not initialized, initializing now...');
             this.initializeSimulator(controller);
+            this._machineInitialized = true;
           }
-          
+
           // Clear any pending segments so double-clicks don't stack motion
           console.log('[MDI] Clearing pending segments before submit. Current queued:', controller.getQueuedSegments());
           controller.clearPendingSegments();
@@ -1263,26 +1279,16 @@ export const useCoreStore = defineStore('core', {
               }
             }
             
-            // Update UI position and stock mesh
+            // Update UI position. The WebGPU voxelizer is forward-only, so the
+            // cut preview is not reversed on a backward step; only the tool
+            // position and active line are rewound here.
             const pos = Array.from(newController.getToolPosition());
             const scaleToUi = this.units === 'inch' ? 1/25.4 : 1.0;
             this.simulationToolPosition = [pos[0]*scaleToUi, pos[1]*scaleToUi, pos[2]*scaleToUi];
             this.activeGcodeLine = newController.getActiveSourceLine();
             this.simulationCurrentStep = Math.max(0, this.simulationTotalSteps - newController.getQueuedSegments());
-            
+
             flushMaterialSimulation();
-            const mesh = extractMaterialMesh();
-            if (mesh) {
-              let posArray = Array.from(mesh.positions);
-              if (scaleToUi !== 1.0) {
-                posArray = posArray.map(v => v * scaleToUi);
-              }
-              this.simulatedStockMesh = {
-                positions: posArray,
-                normals: Array.from(mesh.normals),
-                indices: Array.from(mesh.indices)
-              };
-            }
           }
         }
       } catch (err) {
@@ -1324,12 +1330,8 @@ export const useCoreStore = defineStore('core', {
       this.simulationToolPosition = newPos;
 
       // Flush deferred cuts so the WebGPU voxelizer (Viewport renderLoop) can
-      // carve them via popPendingCuts() -> applyCuts(). We do NOT rebuild the
-      // OCCT mesh here: cutSegment() no longer mutates m_stockShape (the boolean
-      // cut is disabled for performance), so updateMesh() would just re-mesh the
-      // same uncut box every frame and starve the render loop (FPS -> 0). The
-      // voxelizer is the visual cutting path; the OCCT box mesh is built once at
-      // simulation start (initialize -> setLocation -> reset -> updateMesh).
+      // carve them via popPendingCuts() -> applyCuts(). The voxelizer is the
+      // single material-removal cutting path; there is no C++ cut mesh.
       flushMaterialSimulation();
 
       // Toolholder-stock collision uses BRepAlgoAPI_Section (expensive OCCT op).
@@ -1399,7 +1401,7 @@ export const useCoreStore = defineStore('core', {
         // Dynamically replace G21 with G20 and its comment in machineInitGcode
         if (this.machineInitGcode) {
           this.machineInitGcode = this.machineInitGcode.replace(/\bG21\s*(\(Select metric units\))?/gi, 'G20 (Select imperial units)');
-          localStorage.setItem('aim3d_machineInitGcode', this.machineInitGcode);
+          writeStored('aim3d_machineInitGcode', this.machineInitGcode);
         }
       } else {
         this.stockSize = { x: 25, y: 25, z: 25, kind: this.stockSize?.kind || 'cuboid' };
@@ -1412,7 +1414,7 @@ export const useCoreStore = defineStore('core', {
         // Dynamically replace G20 with G21 and its comment in machineInitGcode
         if (this.machineInitGcode) {
           this.machineInitGcode = this.machineInitGcode.replace(/\bG20\s*(\(Select imperial units\))?/gi, 'G21 (Select metric units)');
-          localStorage.setItem('aim3d_machineInitGcode', this.machineInitGcode);
+          writeStored('aim3d_machineInitGcode', this.machineInitGcode);
         }
       }
       this._machineInitialized = false;
@@ -1421,12 +1423,12 @@ export const useCoreStore = defineStore('core', {
 
     setMachineInitGcode(gcode) {
       this.machineInitGcode = gcode;
-      localStorage.setItem('aim3d_machineInitGcode', gcode);
+      writeStored('aim3d_machineInitGcode', gcode);
     },
 
     setMachineInitEnabled(enabled) {
       this.machineInitEnabled = enabled;
-      localStorage.setItem('aim3d_machineInitEnabled', enabled ? 'true' : 'false');
+      writeStored('aim3d_machineInitEnabled', enabled ? 'true' : 'false');
     },
 
     getFormattedInitGcode() {

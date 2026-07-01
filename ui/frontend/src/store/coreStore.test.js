@@ -21,7 +21,7 @@ describe('core store action gateway', () => {
       ],
       viewportScene: {
         ...store.viewportScene,
-        solids: [{ sourceToken: 'feat_Extrude_1_face_0', id: 'solid_MainPocket_1' }],
+        solids: [{ sourceToken: 'feat_Extrude_1_face_0', id: 'solid_MainPocket_1', indices: [0, 1, 2, 0, 2, 3] }],
         toolpaths: [{ operationId: 'op_Pocket_1', id: 'toolpath_op_Pocket_1' }],
         diagnostics: { ...store.viewportScene.diagnostics, triangleCount: 12, segmentCount: 8 }
       }

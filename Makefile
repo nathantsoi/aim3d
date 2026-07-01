@@ -26,7 +26,8 @@ CMAKE_ARGS += -DAIM3D_OCCT_DIR=$(abspath $(OCCT_INSTALL_DIR)/lib/cmake/opencasca
 endif
 
 .PHONY: help build build-fast clean run deps test test-all test-verbose verbose-test verbose configure build-occt build-core build-core-fast build-native build-frontend build-tauri \
-	test-core test-core-verbose test-frontend test-voxelizer test-webgpu test-python test-simulation \
+	test-core test-core-verbose test-frontend test-voxelizer test-webgpu test-python test-simulation test-e2e \
+	test-coverage test-coverage-frontend test-coverage-python test-coverage-core \
 	run-frontend run-tauri emsdk install-hooks
 
 help:
@@ -44,7 +45,12 @@ help:
 	@echo "  make test-voxelizer Run the JS SDF/IoU + WGSL parity tests (no GPU, fast)"
 	@echo "  make test-webgpu    Run the real-shader WebGPU voxelizer test (headless Chrome)"
 	@echo "  make test-python    Run the Python integration tests (needs a native core build)"
-	@echo "  make test-simulation Run the G-code/simulation Python tests (needs a native core build)"
+	@echo "  make test-e2e       Run the browser e2e pipeline test (gcode -> motion -> WebGPU cutting)"
+	@echo "Coverage:"
+	@echo "  make test-coverage  Collect coverage across frontend, Python, and C++ core"
+	@echo "  make test-coverage-frontend  Frontend vitest coverage (v8) -> ui/frontend/coverage"
+	@echo "  make test-coverage-python    Python coverage (coverage.py) -> python/htmlcov"
+	@echo "  make test-coverage-core      C++ core coverage (llvm-cov) -> build-coverage/coverage-core"
 	@echo ""
 	@echo "Hooks & CI:"
 	@echo "  make install-hooks  Install the pre-push git hook (runs test-voxelizer before push)"
@@ -171,9 +177,48 @@ test-python: build-native
 	@if [ ! -x "$(PYTEST)" ]; then echo "Error: $(PYTEST) not found. Run: make deps  (or: python3 -m venv .venv && .venv/bin/pip install -e python)"; exit 1; fi
 	cd python && ../$(PYTEST) tests
 
-test-simulation: build-native
-	@if [ ! -x "$(PYTEST)" ]; then echo "Error: $(PYTEST) not found. Run: make deps  (or: python3 -m venv .venv && .venv/bin/pip install -e python)"; exit 1; fi
-	cd python && ../$(PYTEST) tests/test_linuxcnc_interp.py tests/test_controller_visual_ir.py
+# --- Coverage ---------------------------------------------------------------
+# Collects line+branch coverage across the frontend (v8), Python (coverage.py),
+# and C++ core (llvm-cov). HTML reports land under ui/frontend/coverage,
+# python/htmlcov, and build/coverage-core respectively. Requires the matching
+# coverage tooling (@vitest/coverage-v8, pytest-cov, llvm/xcode tooling).
+test-coverage: test-coverage-frontend test-coverage-python test-coverage-core
+
+test-coverage-frontend:
+	cd ui/frontend && $(NPM) run test:coverage
+
+test-coverage-python: build-native
+	@if [ ! -x "$(PYTEST)" ]; then echo "Error: $(PYTEST) not found. Run: make deps"; exit 1; fi
+	cd python && ../$(PYTEST) tests --cov=aim3d --cov-branch --cov-report=term-missing --cov-report=html
+
+# Builds the C++ core with coverage instrumentation and runs the gtest binary
+# under llvm-cov. Only the sources under core/src are measured. Requires a
+# Clang/Xcode toolchain that ships llvm-cov and llvm-profdata.
+COVERAGE_BUILD_DIR ?= build-coverage
+test-coverage-core:
+	bash -c "$(EMSDK_ENV) && emcmake $(CMAKE) -S . -B $(COVERAGE_BUILD_DIR) \
+		$(CMAKE_ARGS) -DCMAKE_CXX_FLAGS='-fprofile-instr-generate -fcoverage-mapping -O0 -g' \
+		-DCMAKE_EXE_LINKER_FLAGS='-fprofile-instr-generate'"
+	bash -c "$(EMSDK_ENV) && emmake $(CMAKE) --build $(COVERAGE_BUILD_DIR)"
+	bash -c "$(EMSDK_ENV) && cd $(COVERAGE_BUILD_DIR)/bin && \
+		LLVM_PROFILE_FILE=aim3d_core.profraw node aim3d_core_tests.js && \
+		xcrun llvm-profdata merge -sparse aim3d_core.profraw -o aim3d_core.profdata && \
+		xcrun llvm-cov show -instr-profile=aim3d_core.profdata -format=html \
+			$(COVERAGE_BUILD_DIR)/bin/aim3d_core_tests.js $(COVERAGE_BUILD_DIR)/../core/src \
+			-o $(COVERAGE_BUILD_DIR)/coverage-core"
+	@echo "C++ core coverage report: $(COVERAGE_BUILD_DIR)/coverage-core/index.html"
+
+# The gcode -> motion -> cutting pipeline is now exercised end-to-end in a real
+# browser via Playwright (WebGPU voxelizer is the single cutting path). The old
+# headless native-mesh LinuxCNC interp test has been removed.
+test-simulation: test-e2e
+
+# End-to-end pipeline test: rebuilds the WASM core (so public/aim3d_core.js is
+# in sync with C++ changes), starts the Vite dev server, and runs the Playwright
+# suite which drives a G-code program through the store and asserts the WebGPU
+# voxelizer removed material. Requires `npx playwright install chromium`.
+test-e2e: build-core
+	@bash scripts/run-e2e.sh
 
 # Install the project's git hooks (see .githooks/pre-push). Sets core.hooksPath
 # so git uses .githooks/ instead of .git/hooks/. Bypass a push with --no-verify

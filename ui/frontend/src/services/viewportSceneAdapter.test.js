@@ -74,9 +74,14 @@ describe('viewport scene adapter', () => {
     expect(adapted.solidVertices).toBeInstanceOf(Float32Array);
     expect(adapted.solidIndices).toBeInstanceOf(Uint32Array);
     expect(adapted.lineVertices).toBeInstanceOf(Float32Array);
-    expect(adapted.triangleCount).toBe(12);
-    expect(adapted.segmentCount).toBe(8);
-    expect(adapted.drawCount).toBe(2);
+    // 12 solid triangles + construction triangles from the default scene's
+    // 3 origin planes and 3 axis gizmos.
+    expect(adapted.triangleCount).toBe(54);
+    // 5 polyline segments from the 6-point toolpath; axes are triangle meshes
+    // and contribute no line segments.
+    expect(adapted.segmentCount).toBe(5);
+    // solid triangles + construction triangles + toolpath lines.
+    expect(adapted.drawCount).toBe(3);
   });
 
   it('uses stable keys and changes buffers when selection highlight changes', () => {
@@ -181,15 +186,16 @@ describe('viewport scene adapter', () => {
     const hovered = adaptViewportScene(scene, null, 'feat_Extrude_1_face_0');
 
     expect(hoveredKey).not.toBe(selectedKey);
-    // Since default viewport scene now has 3 origin planes, the solid pickable is at index 3
-    expect(hovered.pickables[3]).toMatchObject({
+    // Solids are pushed before gizmos, so the solid pickable is at index 0.
+    expect(hovered.pickables[0]).toMatchObject({
       solidId: 'solid_MainPocket_1',
       bodyId: 2,
       entityId: 'feat_Extrude_1_face_0',
       kind: 'B-rep Exact Face',
       priority: 10
     });
-    expect(hovered.pickables[3].snapPoints[0].id).toBe('solid_MainPocket_1_center');
+    expect(hovered.pickables[0].indexCount).toBe(36);
+    expect(hovered.pickables[0].snapPoints[0].id).toBe('solid_MainPocket_1_center');
     expect(Array.from(hovered.solidVertices.slice(6, 10))).toEqual([0.5, 0.949999988079071, 1, 1]);
   });
 
@@ -197,10 +203,14 @@ describe('viewport scene adapter', () => {
     const scene = createDefaultViewportScene();
     scene.gizmos.originVisible = true;
     const adapted = adaptViewportScene(scene);
-    
-    expect(adapted.constructionIndices.length).toBe(18); // 3 * 6
-    expect(adapted.constructionVertices.length).toBe(3 * 4 * 10);
-    expect(adapted.pickables.length).toBe(3);
+
+    // 3 origin planes (2 triangles each) + 3 axis gizmos (tessellated cylinders).
+    expect(adapted.constructionIndices.length).toBe(126);
+    expect(adapted.constructionVertices.length).toBe(840);
+    const planePickables = adapted.pickables.filter((p) => p.kind === 'Origin Plane');
+    const axisPickables = adapted.pickables.filter((p) => p.kind === 'Axis');
+    expect(planePickables).toHaveLength(3);
+    expect(axisPickables).toHaveLength(3);
     expect(adapted.pickables[0]).toMatchObject({
       solidId: 'origin_XY',
       entityId: 'origin_XY',
@@ -229,7 +239,8 @@ describe('viewport scene adapter', () => {
       extent: 5
     };
     const adapted = adaptViewportScene(scene);
-    
-    expect(adapted.constructionIndices.length).toBe(24); // 3 * 6 + 1 * 6 = 24
+
+    // 3 origin planes + 3 axes (126) + the sketch-plane indicator quad (6).
+    expect(adapted.constructionIndices.length).toBe(132);
   });
 });

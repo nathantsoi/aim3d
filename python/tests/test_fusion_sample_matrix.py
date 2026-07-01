@@ -5,10 +5,20 @@ import pytest
 from fusion_sample_harness import (
     EXPECTED_SAMPLE_COUNT,
     EXPECTED_SYNTAX_ERRORS,
+    SAMPLE_ROOT,
     sample_inventory,
     resolve_adsk_symbol,
 )
 
+# These tests assert against the vendored Fusion 360 Python sample corpus
+# (docs/fusion360_docs/fusion360_python_samples), which is not checked into
+# this repository. Skip the whole module when the corpus is absent so the suite
+# stays green on machines without it, while still running in environments that
+# have the corpus (e.g. CI that fetches it).
+pytestmark = pytest.mark.skipif(
+    not SAMPLE_ROOT.exists(),
+    reason=f"Fusion sample corpus not present at {SAMPLE_ROOT}",
+)
 
 def _sample_names(samples):
     return ", ".join(sample.name for sample in samples[:5])

@@ -12,7 +12,20 @@ export default defineConfig({
   test: {
     api: false,
     environment: 'jsdom',
-    globals: true
+    globals: true,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'text-summary', 'html', 'lcov'],
+      reportsDirectory: 'coverage',
+      include: ['src/**/*.{js,vue}'],
+      exclude: [
+        'e2e/**',
+        'src/**/*.test.js',
+        'src/test/**',
+        'src/main.js',
+        'src/**/*.d.ts'
+      ]
+    }
   },
   build: {
     rollupOptions: {

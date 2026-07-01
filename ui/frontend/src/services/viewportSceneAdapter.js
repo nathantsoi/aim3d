@@ -179,7 +179,11 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     const selected = entityId === selectedEntityId || solid.id === selectedEntityId;
     const hovered = !selected && (entityId === hoverEntityId || solid.id === hoverEntityId);
     const pickable = pickableForSolid(solid, solidIndex, vertexOffset);
-    pickable.indexStart = solidIndices.length;
+    // indexStart must be the current write offset into solidIndices, not the
+    // pre-allocated array capacity (solidIndices.length is the total capacity),
+    // otherwise every solid's pickable range collapses to indexCount 0 and
+    // solids become un-pickable in the viewport.
+    pickable.indexStart = iIndex;
 
     for (let i = 0; i + 2 < positions.length; i += 3) {
       const colorIndex = Math.floor(i / 3) * 4;

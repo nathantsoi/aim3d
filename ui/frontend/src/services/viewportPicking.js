@@ -81,6 +81,15 @@ const nearestSnap = (snapPoints, hitPosition) => {
   return best;
 };
 
+// A candidate hit beats the current best when it has strictly higher pick
+// priority, or — at equal priority — when it is nearer to the camera. Priority
+// dominates distance so real geometry (solids) always wins over gizmos (origin
+// planes, axes) even when a gizmo is visually in front.
+const beats = (candidate, best) =>
+  !best ||
+  candidate.priority > best.priority ||
+  (candidate.priority === best.priority && candidate.distance < best.distance - 1e-6);
+
 export const pickViewportEntity = (scene, x, y, width, height) => {
   const startedAt = performance.now();
   const ray = createCameraRay(scene?.camera, x, y, width, height);
@@ -93,6 +102,7 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
     const entityId = pickable.entityId ?? solid.sourceToken ?? solid.id ?? null;
     if (!entityId || positions.length < 9 || indices.length < 3) return;
 
+    const priority = pickable.priority ?? 0;
     for (let i = 0; i + 2 < indices.length; i += 3) {
       const hit = intersectTriangle(
         ray,
@@ -102,12 +112,7 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
       );
       if (!hit) continue;
 
-      const priority = pickable.priority ?? 0;
-      if (
-        !best ||
-        hit.distance < best.distance - 1e-6 ||
-        (Math.abs(hit.distance - best.distance) <= 1e-6 && priority > best.priority)
-      ) {
+      if (beats({ priority, distance: hit.distance }, best)) {
         best = {
           entityId,
           solidId: solid.id ?? `solid_${solidIndex}`,
@@ -127,6 +132,7 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
       const positions = plane.positions ?? [];
       const indices = plane.indices ?? [];
       const entityId = plane.id;
+      // Gizmos sit below real geometry so solids/planes always win on overlap.
       const priority = -10;
 
       for (let i = 0; i + 2 < indices.length; i += 3) {
@@ -138,11 +144,7 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
         );
         if (!hit) continue;
 
-        if (
-          !best ||
-          hit.distance < best.distance - 1e-6 ||
-          (Math.abs(hit.distance - best.distance) <= 1e-6 && priority > best.priority)
-        ) {
+        if (beats({ priority, distance: hit.distance }, best)) {
           best = {
             entityId,
             solidId: plane.id,
@@ -164,7 +166,9 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
       const positions = axis.positions ?? [];
       const indices = axis.indices ?? [];
       const entityId = axis.id;
-      const priority = 10;
+      // Axes are viewport gizmos, not modeling geometry: keep them below solids
+      // so an axis passing in front of a body never steals the pick.
+      const priority = -10;
 
       if (!positions.length || !indices.length) return;
 
@@ -177,11 +181,7 @@ export const pickViewportEntity = (scene, x, y, width, height) => {
         );
         if (!hit) continue;
 
-        if (
-          !best ||
-          hit.distance < best.distance - 1e-6 ||
-          (Math.abs(hit.distance - best.distance) <= 1e-6 && priority > best.priority)
-        ) {
+        if (beats({ priority, distance: hit.distance }, best)) {
           best = {
             entityId,
             solidId: axis.id,

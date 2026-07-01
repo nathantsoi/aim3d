@@ -133,6 +133,48 @@
       </div>
     </section>
 
+    <section
+      v-for="setup in (store.activeMode === 'manufacture' ? store.setups : [])"
+      :key="setup.id"
+      class="section-container"
+    >
+      <h3>CAM Setup Sheet</h3>
+      <div class="property-card">
+        <label class="input-item">
+          <span>Name</span>
+          <input
+            data-testid="setup-name"
+            type="text"
+            :value="setup.name"
+            @change="onSetupField(setup.id, 'name', $event.target.value)"
+          />
+        </label>
+        <label class="input-item">
+          <span>Work Offset</span>
+          <select
+            data-testid="setup-work-offset"
+            :value="setup.workOffset"
+            @change="onSetupField(setup.id, 'workOffset', $event.target.value)"
+          >
+            <option>G54</option>
+            <option>G55</option>
+            <option>G56</option>
+          </select>
+        </label>
+        <label class="input-item">
+          <span>Stock Allowance</span>
+          <input
+            data-testid="setup-stock-allowance"
+            type="number"
+            min="0"
+            step="0.1"
+            :value="setup.stockAllowance"
+            @change="onSetupField(setup.id, 'stockAllowance', parseNumber($event.target.value))"
+          />
+        </label>
+      </div>
+    </section>
+
     </div>
 
     <div v-else-if="activeTab === 'setup'" class="tab-content">
@@ -204,48 +246,6 @@
               </tr>
             </tbody>
           </table>
-        </div>
-      </section>
-
-      <section
-        v-for="setup in store.setups"
-        :key="setup.id"
-        class="section-container"
-      >
-        <h3>CAM Setup Sheet</h3>
-        <div class="property-card">
-          <label class="input-item">
-            <span>Name</span>
-            <input
-              data-testid="setup-name"
-              type="text"
-              :value="setup.name"
-              @change="onSetupField(setup.id, 'name', $event.target.value)"
-            />
-          </label>
-          <label class="input-item">
-            <span>Work Offset</span>
-            <select
-              data-testid="setup-work-offset"
-              :value="setup.workOffset"
-              @change="onSetupField(setup.id, 'workOffset', $event.target.value)"
-            >
-              <option>G54</option>
-              <option>G55</option>
-              <option>G56</option>
-            </select>
-          </label>
-          <label class="input-item">
-            <span>Stock Allowance</span>
-            <input
-              data-testid="setup-stock-allowance"
-              type="number"
-              min="0"
-              step="0.1"
-              :value="setup.stockAllowance"
-              @change="onSetupField(setup.id, 'stockAllowance', parseNumber($event.target.value))"
-            />
-          </label>
         </div>
       </section>
 

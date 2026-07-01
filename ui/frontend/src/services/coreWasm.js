@@ -58,42 +58,16 @@ export function getCoreModule() {
 }
 
 /**
- * Extracts the triangulated mesh from the MaterialSimulator inside the MachineController.
- * Returns { positions, normals, indices } arrays for WebGL rendering.
- */
-export function extractMaterialMesh() {
-  if (!controllerInstance) return null;
-  const matSim = controllerInstance.materialSimulator();
-  if (!matSim) return null;
-
-  const positionsView = matSim.getPositions();
-  const normalsView = matSim.getNormals();
-  const indicesView = matSim.getIndices();
-
-  if (!positionsView || positionsView.length === 0) return null;
-
-  return {
-    positions: new Float32Array(positionsView),
-    normals: new Float32Array(normalsView),
-    indices: new Uint32Array(indicesView)
-  };
-}
-
-/**
- * Flush deferred material-sim cuts accumulated during tick() calls, then rebuild the mesh.
- * Call this once per animation frame (or after a batch of ticks) to apply OCCT booleans
- * in bulk rather than per-tick.
+ * Flush deferred material-sim cuts accumulated during tick() calls into the
+ * MaterialSimulator's pending-cut queue. The frontend render loop drains that
+ * queue via popPendingCuts() and feeds it to the WebGPU voxelizer — the single
+ * cutting path. There is no C++ mesh to rebuild here.
  */
 export function flushMaterialSimulation() {
   if (!controllerInstance) return;
   // Move deferred cuts (queued by controller.tick) into the MaterialSimulator's
   // pending-cut queue, which the Viewport render loop drains via popPendingCuts()
-  // and feeds to the WebGPU voxelizer. We intentionally do NOT call
-  // matSim.updateMesh() here: cutSegment() no longer mutates m_stockShape (the
-  // OCCT boolean cut is disabled for performance), so re-meshing the unchanged
-  // box every animation frame only starves the render loop (FPS -> 0). The OCCT
-  // box mesh is built once at simulation start (initialize -> setLocation ->
-  // reset -> updateMesh) and the WebGPU voxelizer is the live cutting path.
+  // and feeds to the WebGPU voxelizer — the single material-removal cutting path.
   controllerInstance.flushMaterialSimulation();
 }
 

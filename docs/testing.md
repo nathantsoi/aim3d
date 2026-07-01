@@ -56,10 +56,12 @@ All tests can be executed from the `aim3d` root directory using the main `Makefi
   make test-python
   ```
 
-- **Run Simulation Tests only** (G-code interpreter + subtractive heightmap):
+- **Run the G-code → motion → cutting e2e test only** (drives a real program
+  through the WASM core + WebGPU voxelizer in headless Chromium; needs
+  `npx playwright install chromium`):
 
   ```bash
-  make test-simulation
+  make test-e2e
   ```
 
 ### Verbose Mode

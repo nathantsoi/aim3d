@@ -1,6 +1,6 @@
 const field = (key, type, label, extra = {}) => ({ key, type, label, ...extra });
 
-export const SKETCH_COMMAND_DEFS = {
+const SKETCH_COMMAND_DEFS = {
   Line: {
     label: 'Line',
     kind: 'Line',
@@ -83,15 +83,6 @@ export const SKETCH_COMMAND_DEFS = {
     }
   }
 };
-
-const RIBBON_TO_KIND = {
-  line: 'Line',
-  'rectangle-2-point': 'Rectangle2Point',
-  'rectangle-center': 'RectangleCenter',
-  'circle-center-diameter': 'CircleCenterDiameter'
-};
-
-export const sketchKindFromRibbonId = (ribbonId) => RIBBON_TO_KIND[ribbonId] ?? null;
 
 export const getSketchCommandDef = (kind) => SKETCH_COMMAND_DEFS[kind] ?? null;
 

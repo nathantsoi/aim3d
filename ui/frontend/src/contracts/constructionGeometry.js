@@ -51,7 +51,7 @@ const POINT_KINDS = new Set([
 // Semi-transparent construction plane fill (Fusion-style orange).
 export const CONSTRUCTION_PLANE_FILL_COLOR = [1, 0.55, 0.15, 0.35];
 
-export const constructionCategoryFromKind = (kind) => {
+const constructionCategoryFromKind = (kind) => {
   if (kind === 'UCS') return 'ucs';
   if (PLANE_KINDS.has(kind)) return 'plane';
   if (AXIS_KINDS.has(kind)) return 'axis';
@@ -134,7 +134,7 @@ const planeCornersFromGeometry = ({ origin, axisU, axisV, extent }) => {
   ];
 };
 
-export const constructionPlaneFillMesh = (object, options = {}) => {
+const constructionPlaneFillMesh = (object, options = {}) => {
   const { id, kind, category, visible = true, value = 0, inputs = [] } = object;
   const geometry =
     Array.isArray(object.origin) && Array.isArray(object.axisU) && Array.isArray(object.axisV)
@@ -207,7 +207,7 @@ export const constructionViewportMesh = (object, options = {}) => {
   return mesh;
 };
 
-export const nextConstructionIdentity = (construction, kind) => {
+const nextConstructionIdentity = (construction, kind) => {
   const category = constructionCategoryFromKind(kind);
   const prefix = {
     ucs: 'Ucs',

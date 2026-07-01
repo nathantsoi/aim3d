@@ -5,18 +5,10 @@
 // is absent, so this becomes a no-op and the UI keeps its local state.
 
 const CORE_CHANGED_EVENT = 'core://changed';
-const DEFAULT_BRIDGE_WS_PORT = 8765;
-const RECONNECT_DELAY_MS = 1500;
 
 const tauriListen = () => {
   if (typeof window === 'undefined') return null;
   return window.__TAURI__?.event?.listen || window.__TAURI__?.core?.event?.listen || null;
-};
-
-const defaultBridgeUrl = () => {
-  const port =
-    (typeof window !== 'undefined' && window.__AIM3D_BRIDGE_WS_PORT__) || DEFAULT_BRIDGE_WS_PORT;
-  return `ws://127.0.0.1:${port}`;
 };
 
 const parsePayload = (payload) => {
@@ -45,5 +37,3 @@ export const subscribeCoreSnapshots = async (store) => {
   });
   return unlisten;
 };
-
-// connectCoreSnapshotSocket is no longer needed. We run natively in Tauri.

@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "vitest run",
+    "test": "vitest run --exclude e2e/**",
+    "test:coverage": "vitest run --exclude e2e/** --coverage",
     "test:voxelizer": "vitest run src/services/voxelSdf.iou.test.js src/services/webgpuVoxelizer.parity.test.js",
     "test:webgpu": "vitest run src/services/webgpuVoxelizer.webgpu.test.js",
+    "test:e2e": "vitest run e2e/simulator.pipeline.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -17,6 +19,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.2.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "@vue/test-utils": "^2.4.6",
     "jsdom": "^24.1.3",
     "playwright": "^1.61.0",

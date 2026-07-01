@@ -47,13 +47,6 @@ public:
     // Returns true if there is a collision.
     bool checkCollision(const std::array<double, 3>& cylinderBase, double radius, double height) const;
 
-    // Extract the triangulated mesh
-    void updateMesh();
-
-    const std::vector<float>& getPositions() const { return m_positions; }
-    const std::vector<float>& getNormals() const { return m_normals; }
-    const std::vector<std::uint32_t>& getIndices() const { return m_indices; }
-
     // Retrieve and clear queued cuts for the frontend WebGPU voxelizer
     std::vector<MaterialCutSegment> popPendingCuts();
 
@@ -72,9 +65,6 @@ private:
     double m_toolRadius = 3.175; // Default 1/4" endmill
     double m_resolution = 1.0; // Mesh deflection/resolution
 
-    std::vector<float> m_positions;
-    std::vector<float> m_normals;
-    std::vector<std::uint32_t> m_indices;
     std::vector<MaterialCutSegment> m_pendingCuts;
 };
 

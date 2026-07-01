@@ -15,7 +15,7 @@ const ORIGIN_AXIS_OPTIONS = [
 
 const field = (key, type, label, extra = {}) => ({ key, type, label, ...extra });
 
-export const CONSTRUCTION_COMMAND_DEFS = {
+const CONSTRUCTION_COMMAND_DEFS = {
   UCS: {
     label: 'User Coordinate System',
     category: 'plane',

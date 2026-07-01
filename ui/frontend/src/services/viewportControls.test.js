@@ -18,6 +18,24 @@ import {
 
 const distance3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
+// The default viewport scene is empty (no solids) by design; several tests
+// need a scene that actually contains pickable solid geometry, so build one.
+const sceneWithSolid = () => {
+  const scene = createDefaultViewportScene();
+  scene.solids = [
+    {
+      id: 'solid_MainPocket_1',
+      sourceToken: 'feat_Extrude_1_face_0',
+      pickable: { entityId: 'feat_Extrude_1_face_0', kind: 'B-rep Exact Face', priority: 10 },
+      positions: [
+        -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
+        -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
+      ]
+    }
+  ];
+  return scene;
+};
+
 describe('viewport controls (Z-up, -Y forward)', () => {
   it('places the eye on +Y looking forward at yaw 0 / pitch 0', () => {
     const eye = cameraEye({ target: [0, 0, 0], distance: 5, yaw: 0, pitch: 0 });
@@ -76,7 +94,7 @@ describe('viewport controls (Z-up, -Y forward)', () => {
   });
 
   it('selects entities whose projection falls inside the rubber-band rectangle', () => {
-    const scene = createDefaultViewportScene();
+    const scene = sceneWithSolid();
     const width = 800;
     const height = 600;
 
@@ -96,7 +114,7 @@ describe('viewport controls (Z-up, -Y forward)', () => {
   });
 
   it('frames the scene geometry from the home view', () => {
-    const scene = createDefaultViewportScene();
+    const scene = sceneWithSolid();
     const home = homeCamera(scene);
     const bounds = solidsBounds(scene.solids);
 
@@ -130,7 +148,8 @@ describe('viewport controls (Z-up, -Y forward)', () => {
 
   it('detects whether the scene contains solid geometry', () => {
     expect(sceneHasSolidGeometry({ solids: [] })).toBe(false);
-    expect(sceneHasSolidGeometry(createDefaultViewportScene())).toBe(true);
+    expect(sceneHasSolidGeometry(createDefaultViewportScene())).toBe(false);
+    expect(sceneHasSolidGeometry(sceneWithSolid())).toBe(true);
   });
 
   it('projects points in front of the camera onto the canvas', () => {

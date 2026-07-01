@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { useCoreStore } from '../store';
+import { seedSampleDocument } from '../test/sampleDocument';
 import { cameraEye } from '../services/viewportControls';
 import Viewport from './Viewport.vue';
 
@@ -35,6 +36,8 @@ const dispatchWheel = (element, options) => {
 const mountViewport = async () => {
   const pinia = createPinia();
   setActivePinia(pinia);
+  const store = useCoreStore(pinia);
+  seedSampleDocument(store);
   const wrapper = mount(Viewport, { global: { plugins: [pinia] } });
   await flush();
   const canvas = wrapper.find('canvas').element;
@@ -42,7 +45,7 @@ const mountViewport = async () => {
     value: () => ({ left: 0, top: 0, width: 800, height: 600 }),
     configurable: true
   });
-  return { wrapper, canvas, store: useCoreStore() };
+  return { wrapper, canvas, store };
 };
 
 describe('Viewport camera controls', () => {
@@ -169,20 +172,7 @@ describe('Viewport camera controls', () => {
   });
 
   it('updates hover diagnostics from local picking without dispatching selection', async () => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const wrapper = mount(Viewport, {
-      global: {
-        plugins: [pinia]
-      }
-    });
-    await flush();
-
-    const store = useCoreStore();
-    const canvas = wrapper.find('canvas').element;
-    Object.defineProperty(canvas, 'getBoundingClientRect', {
-      value: () => ({ left: 0, top: 0, width: 800, height: 600 })
-    });
+    const { canvas, store } = await mountViewport();
 
     dispatchPointer(canvas, 'pointermove', { button: 0, clientX: 400, clientY: 300 });
     await flush();
@@ -193,20 +183,7 @@ describe('Viewport camera controls', () => {
   });
 
   it('commits exactly one selection action when clicking a picked entity', async () => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const wrapper = mount(Viewport, {
-      global: {
-        plugins: [pinia]
-      }
-    });
-    await flush();
-
-    const store = useCoreStore();
-    const canvas = wrapper.find('canvas').element;
-    Object.defineProperty(canvas, 'getBoundingClientRect', {
-      value: () => ({ left: 0, top: 0, width: 800, height: 600 })
-    });
+    const { canvas, store } = await mountViewport();
 
     canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
     await flush();

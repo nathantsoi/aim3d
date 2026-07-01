@@ -6,8 +6,8 @@
 // XY ground plane). At yaw = 0, pitch = 0 the eye sits on +Y looking toward -Y,
 // so -Y is the forward (into-screen) direction.
 
-export const WORLD_UP = Object.freeze([0, 0, 1]);
-export const MAX_PITCH = 1.45;
+const WORLD_UP = Object.freeze([0, 0, 1]);
+const MAX_PITCH = 1.45;
 const TAN_HALF_FOV = Math.tan(Math.PI / 8);
 
 // Default "home" orientation: a comfortable isometric framing.
@@ -40,7 +40,7 @@ const upVec = (yaw, pitch) => {
 };
 const rightVec = (yaw) => [-Math.cos(yaw), Math.sin(yaw), 0];
 
-export const cameraFrame = (yaw = 0, pitch = 0) => ({
+const cameraFrame = (yaw = 0, pitch = 0) => ({
   forward: forwardVec(yaw, pitch),
   up: upVec(yaw, pitch),
   right: rightVec(yaw)

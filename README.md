@@ -119,12 +119,12 @@ The project has four test suites. The Makefile is the single source of truth —
 
 | Target                 | Suite                              | What it covers                                                                                                      | Needs                            | Time    |
 | ---------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------- |
-| `make test`            | **C++ core** (Emscripten + ctest)  | gcode parsing, motion planning, canned cycles (G81/G84), soft limits, the material-simulator C-API                  | OCCT build (Emscripten)          | minutes |
+| `make test`            | **C++ core** (Emscripten + ctest)  | gcode parsing, motion planning, canned cycles (G81/G84), soft limits, the SPE protocol emulator                     | OCCT build (Emscripten)          | minutes |
 | `make test-voxelizer`  | **WebGPU voxelizer (GPU-free)**    | the cutting-model SDF math (`sdBox`/`sdSweptTool`) vs analytic ground truth (IoU), and a WGSL↔JS parity drift guard | Node only                        | ~1s     |
 | `make test-webgpu`     | **WebGPU voxelizer (real shader)** | runs the actual WGSL compute shaders in headless Chromium and compares the GPU density grid to the JS reference     | Node + Playwright Chromium       | ~1s     |
 | `make test-frontend`   | **Frontend (vitest, full)**        | Vue components, services, and the Pinia store (jsdom)                                                               | Node                             | seconds |
 | `make test-python`     | **Python integration**             | `aim3d`/`adsk` facades, websocket/daemon, FFI bindings                                                              | native `libaim3d_core` + `.venv` | seconds |
-| `make test-simulation` | **G-code/simulation**              | LinuxCNC interpreter, canned cycles, subtractive heightmap meshing                                                  | native `libaim3d_core` + `.venv` | seconds |
+| `make test-e2e`        | **G-code → motion → cutting (browser)** | drives a real G-code program through the WASM core + WebGPU voxelizer in headless Chromium and asserts material was removed | Node + Playwright Chromium + WebGPU | seconds |
 
 Verbose variants: `make test-verbose` (C++), `make test-core-verbose` (raw `node aim3d_core_tests.js` output).
 
@@ -164,7 +164,7 @@ The heavier C++ core tests and the real-shader WebGPU test run in GitHub Actions
 
 ### Python test prerequisites
 
-Python tests (`make test-python` / `make test-simulation`) need a native `libaim3d_core` shared library for the ctypes FFI and a repo-local `.venv`. `make test-python` builds both automatically via `make build-native` (a native, OCCT-disabled build of the core library). To set up the venv manually:
+Python tests (`make test-python`) need a native `libaim3d_core` shared library for the ctypes FFI and a repo-local `.venv`. `make test-python` builds both automatically via `make build-native` (a native, OCCT-disabled build of the core library). To set up the venv manually:
 
 ```bash
 python3 -m venv .venv

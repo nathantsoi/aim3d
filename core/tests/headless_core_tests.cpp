@@ -1337,34 +1337,10 @@ int main() {
     std::cout << "[TEST] test_controller_clear_and_resubmit..." << std::endl;
     test_controller_clear_and_resubmit();
 
-    // Run MaterialSimulator & C-API tests
-    {
-        std::cout << "[TEST] aim3d_simulator_run (C-API)..." << std::endl;
-        Aim3dSimulatorHandle* handle = aim3d_simulator_create();
-        assert(handle != nullptr);
-
-        int toolIds[] = {1};
-        double toolRadii[] = {3.0};
-        int toolIsBall[] = {0};
-
-        int ok = aim3d_simulator_run(
-            handle,
-            "G21 G90\n"
-            "T1 M6\n"
-            "G0 X10 Y10 Z5\n"
-            "G1 X90 Y10 Z-2 F600\n"
-            "M30\n",
-            100.0, 100.0, 25.0, 20, 20,
-            toolIds, toolRadii, toolIsBall, 1
-        );
-        assert(ok == 1);
-#if AIM3D_HAS_OCCT
-        assert(aim3d_simulator_vertex_count(handle) > 0);
-        assert(aim3d_simulator_index_count(handle) > 0);
-#endif
-
-        aim3d_simulator_release(handle);
-    }
+    // Note: the headless aim3d_simulator_* C-API cutting path has been removed
+    // (it returned an uncut/empty mesh). The gcode -> motion -> cutting pipeline
+    // is now exercised end-to-end in the browser via Playwright (make test-e2e),
+    // and the parser/planner/SPE behavior is covered by the controller tests above.
 
     std::cout << "[TEST] All tests completed successfully!" << std::endl;
     return 0;

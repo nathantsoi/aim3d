@@ -3,12 +3,15 @@ import { createPinia } from 'pinia';
 import { describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
 import { useCoreStore } from '../store';
+import { seedSampleDocument } from '../test/sampleDocument';
 import TimelineBar from './TimelineBar.vue';
 
 const mountBar = () => {
   const pinia = createPinia();
+  const store = useCoreStore(pinia);
+  seedSampleDocument(store);
   const wrapper = mount(TimelineBar, { global: { plugins: [pinia] } });
-  return { wrapper, store: useCoreStore() };
+  return { wrapper, store };
 };
 
 describe('TimelineBar bottom bar', () => {

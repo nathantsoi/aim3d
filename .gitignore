@@ -7,6 +7,7 @@ python/test_artifacts/
 
 build/
 build-noocct/
+build-coverage/
 cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
@@ -14,6 +15,14 @@ compile_commands.json
 
 node_modules/
 dist/
+
+# Coverage reports
+ui/frontend/coverage/
+python/htmlcov/
+python/.coverage
+*.profraw
+*.profdata
+coverage-core/
 
 target/
 

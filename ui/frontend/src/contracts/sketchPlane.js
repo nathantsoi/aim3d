@@ -11,7 +11,7 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (v, s) => [v[0] * s, v[1] * s, v[2] * s];
 
-export const SKETCH_GRID_EXTENT = 5;
+const SKETCH_GRID_EXTENT = 5;
 
 export const planeReferenceFromToken = (token) => {
   if (!token) {

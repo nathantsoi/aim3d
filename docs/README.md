@@ -49,4 +49,4 @@ This will open a tmux session with panes configured for:
 3. **tauri**: Runs the desktop application shell.
 4. **test-core**: Watches and runs C++ core tests.
 5. **test-python**: Watches and runs Python tests (using the virtualenv).
-6. **test-simulation**: Watches and runs simulation tests.
+6. **test-voxelizer**: Watches and runs the GPU-free voxelizer SDF/parity tests.

@@ -176,19 +176,6 @@ EMSCRIPTEN_BINDINGS(aim3d_core) {
         .function("setToolRadius", &MaterialSimulator::setToolRadius)
         .function("reset", &MaterialSimulator::reset)
         .function("popPendingCuts", &MaterialSimulator::popPendingCuts)
-        .function("checkCollision", &MaterialSimulator::checkCollision)
-        .function("updateMesh", &MaterialSimulator::updateMesh)
-        .function("getPositions", optional_override([](const MaterialSimulator& self) {
-            if (self.getPositions().empty()) return val::array();
-            return val(typed_memory_view(self.getPositions().size(), self.getPositions().data()));
-        }))
-        .function("getNormals", optional_override([](const MaterialSimulator& self) {
-            if (self.getNormals().empty()) return val::array();
-            return val(typed_memory_view(self.getNormals().size(), self.getNormals().data()));
-        }))
-        .function("getIndices", optional_override([](const MaterialSimulator& self) {
-            if (self.getIndices().empty()) return val::array();
-            return val(typed_memory_view(self.getIndices().size(), self.getIndices().data()));
-        }));
+        .function("checkCollision", &MaterialSimulator::checkCollision);
 }
 #endif

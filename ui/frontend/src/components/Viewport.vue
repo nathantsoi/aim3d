@@ -475,6 +475,28 @@ export default defineComponent({
 
     onMounted(async () => {
       await nextTick();
+      // Dev-only: the Playwright e2e suite loads the app with ?e2e=1 and query
+      // params to pin a small, deterministic stock/resolution/tool config before
+      // the WebGPU voxelizer is constructed (it is built once at mount).
+      if (import.meta.env && import.meta.env.DEV) {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('e2e') === '1') {
+          store.units = 'mm';
+          store.stockSize = {
+            x: Number(params.get('sx') ?? 20),
+            y: Number(params.get('sy') ?? 20),
+            z: Number(params.get('sz') ?? 20),
+            kind: 'cuboid'
+          };
+          store.stockLocation = {
+            x: Number(params.get('lx') ?? 0),
+            y: Number(params.get('ly') ?? 0),
+            z: Number(params.get('lz') ?? 0)
+          };
+          store.simulationResolution = Number(params.get('res') ?? 32);
+          store.toolDiameter = Number(params.get('td') ?? 4);
+        }
+      }
       const scaleToMm = store.units === 'inch' ? 25.4 : 1.0;
       const stockSize = [
         (store.stockSize?.x ?? 25) * scaleToMm,
@@ -507,6 +529,13 @@ export default defineComponent({
       canvas3D.value.addEventListener('contextmenu', preventContextMenu);
       window.addEventListener('resize', resize);
       renderLoop();
+
+      // Dev-only: let the Playwright e2e test read the live voxelizer so it can
+      // assert that the gcode -> motion -> cutting pipeline actually removed
+      // material (vertexCount > 0, removed voxels, cut depth).
+      if (import.meta.env && import.meta.env.DEV && window.__aim3d) {
+        window.__aim3d.getVoxelizer = () => renderer?.voxelizer ?? null;
+      }
     });
 
     watch(debugModeEnabled, async (enabled) => {

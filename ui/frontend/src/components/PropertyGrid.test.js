@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
 import { ACTION_TYPES } from '../contracts/coreState';
 import { useCoreStore } from '../store';
+import { seedSampleDocument } from '../test/sampleDocument';
 import PropertyGrid from './PropertyGrid.vue';
 
 const flush = async () => {
@@ -13,12 +14,14 @@ const flush = async () => {
 
 const mountPanel = () => {
   const pinia = createPinia();
+  const store = useCoreStore(pinia);
+  seedSampleDocument(store);
   const wrapper = mount(PropertyGrid, {
     global: {
       plugins: [pinia]
     }
   });
-  return { wrapper, store: useCoreStore(pinia) };
+  return { wrapper, store };
 };
 
 describe('PropertyGrid', () => {

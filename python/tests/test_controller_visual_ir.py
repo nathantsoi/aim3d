@@ -7,7 +7,6 @@ from aim3d.controller import (
     assert_valid_visual_ir,
     compile_visual_ir_to_gcode,
     validate_visual_ir,
-    simulate_program_mesh,
 )
 from aim3d.daemon import Aim3dCncDaemon, ControllerClient
 
@@ -90,26 +89,7 @@ def test_controller_client_request_shapes_and_transport():
     assert calls == [("POST", "/command/jog", {"x": 1.0, "y": 2.0, "z": 0.0})]
 
 
-def test_lightweight_simulator_mesh(record_meshes):
-    gcode = (
-        "G21 G90\n"
-        "T1 M6\n"
-        "G0 X10 Y10 Z5\n"
-        "G1 X90 Y10 Z-2 F600\n"
-        "M30\n"
-    )
-    tools = [{"id": 1, "diameter_mm": 6.0, "kind": "flat_endmill"}]
-    mesh = simulate_program_mesh(gcode, (100.0, 100.0, 25.0), tools, 10)
-    
-    assert "positions" in mesh
-    assert "normals" in mesh
-    assert "indices" in mesh
-    assert len(mesh["positions"]) == 10 * 10 * 2 * 3
-
-    if record_meshes:
-        import os
-        from pathlib import Path
-        from mesh_utils import write_obj_mesh
-        records_dir = Path(__file__).resolve().parents[1] / "test_artifacts" / "obj"
-        records_dir.mkdir(parents=True, exist_ok=True)
-        write_obj_mesh(str(records_dir / "test_lightweight_simulator_mesh.obj"), mesh)
+# Material-removal cutting now runs entirely in the frontend WebGPU voxelizer;
+# the headless simulate_program_mesh path has been removed. The end-to-end
+# gcode -> motion -> cutting pipeline is covered by the Playwright e2e test
+# (ui/frontend/e2e/simulator.pipeline.test.js).

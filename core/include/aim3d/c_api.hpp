@@ -123,32 +123,4 @@ Aim3dBufferDType aim3d_buffer_dtype(Aim3dBufferHandle* handle);
 std::uintptr_t aim3d_buffer_pointer(Aim3dBufferHandle* handle);
 void aim3d_buffer_release(Aim3dBufferHandle* handle);
 
-// Lightweight simulator API
-typedef struct Aim3dSimulatorHandle Aim3dSimulatorHandle;
-
-Aim3dSimulatorHandle* aim3d_simulator_create(void);
-void aim3d_simulator_release(Aim3dSimulatorHandle* handle);
-int aim3d_simulator_run(
-    Aim3dSimulatorHandle* handle,
-    const char* gcode, 
-    double stockX, 
-    double stockY, 
-    double stockZ, 
-    int resX, 
-    int resY,
-    const int* toolIds,
-    const double* toolRadii,
-    const int* toolIsBall,
-    int toolCount);
-
-void aim3d_simulator_set_work_offset(Aim3dSimulatorHandle* handle, int code, double x, double y, double z);
-
-std::size_t aim3d_simulator_vertex_count(Aim3dSimulatorHandle* handle);
-std::size_t aim3d_simulator_index_count(Aim3dSimulatorHandle* handle);
-void aim3d_simulator_copy_mesh(
-    Aim3dSimulatorHandle* handle,
-    float* outPos, 
-    float* outNorm, 
-    uint32_t* outInd);
-
 } // extern "C"

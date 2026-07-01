@@ -62,3 +62,16 @@ if (overlay) {
 }
 
 console.log('[aim3d Frontend] Vue container initialized successfully.');
+
+// Dev-only test hook: expose the Pinia store and a voxelizer accessor so the
+// Playwright e2e suite (ui/frontend/e2e/simulator.pipeline.test.js) can drive
+// the real gcode -> motion -> cutting pipeline and read back GPU cut results.
+// Stripped from production builds by Vite's tree-shaking + the DEV guard.
+if (import.meta.env && import.meta.env.DEV) {
+  window.__aim3d = {
+    store: coreStore,
+    // Populated by Viewport.vue once the WebGPU renderer (and its voxelizer)
+    // is mounted. Returns null until then.
+    getVoxelizer: () => null,
+  };
+}

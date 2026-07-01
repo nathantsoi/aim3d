@@ -2,8 +2,6 @@
 #include "aim3d/application.hpp"
 #include "aim3d/cam_ir.hpp"
 #include "aim3d/document.hpp"
-#include "aim3d/controller.hpp"
-#include "aim3d/material_simulator.hpp"
 #include <iostream>
 
 #include <atomic>
@@ -596,126 +594,6 @@ std::uintptr_t aim3d_buffer_pointer(Aim3dBufferHandle* handle) {
 
 void aim3d_buffer_release(Aim3dBufferHandle* handle) {
     delete handle;
-}
-
-struct Aim3dSimulatorHandle {
-    aim3d::MachineProfile profile;
-    aim3d::MachineController controller;
-    std::vector<float> positions;
-    std::vector<float> normals;
-    std::vector<uint32_t> indices;
-
-    Aim3dSimulatorHandle() : profile(aim3d::MachineProfile::defaultThreeAxisMill()), controller(profile) {}
-};
-
-Aim3dSimulatorHandle* aim3d_simulator_create(void) {
-    return new Aim3dSimulatorHandle();
-}
-
-void aim3d_simulator_release(Aim3dSimulatorHandle* handle) {
-    delete handle;
-}
-
-int aim3d_simulator_run(
-    Aim3dSimulatorHandle* handle,
-    const char* gcode, 
-    double stockX, 
-    double stockY, 
-    double stockZ, 
-    int resX, 
-    int resY,
-    const int* toolIds,
-    const double* toolRadii,
-    const int* toolIsBall,
-    int toolCount) {
-    
-    (void)resX;
-    (void)resY;
-    (void)toolRadii;
-    (void)toolIsBall;
-
-    if (!handle || !gcode) return 0;
-    
-    try {
-        handle->controller.materialSimulator().initialize(stockX, stockY, stockZ);
-        
-        for (int i = 0; i < toolCount; ++i) {
-            handle->controller.setToolOffset(toolIds[i], 0.0);
-        }
-        
-        if (!handle->controller.submitMdi(gcode)) {
-            return 0;
-        }
-
-        handle->controller.setTaskMode(aim3d::SpeTaskMode::Mdi);
-        int safetyTicks = 0;
-        while (handle->controller.getQueuedSegments() > 0 || handle->controller.getState() == aim3d::SpeState::Running) {
-            handle->controller.tick(0.01);
-            if (handle->controller.getState() == aim3d::SpeState::Fault) {
-                std::cerr << "[api_simulator] Emulator entered FAULT state during run. Stopping." << std::endl;
-                return 0;
-            }
-            if (++safetyTicks > 100000) {
-                std::cerr << "[api_simulator] Safety tick limit (100,000) exceeded. Stopping to prevent hang." << std::endl;
-                return 0;
-            }
-        }
-        std::cout << "[api_simulator] Tick loop done: " << safetyTicks << " ticks. Flushing material simulation..." << std::endl;
-
-        // Flush deferred OCCT cuts in one batch (avoids OCCT booleans in the hot tick loop).
-        handle->controller.flushMaterialSimulation();
-        std::cout << "[api_simulator] Material simulation flush complete." << std::endl;
-
-        // Compute final mesh
-        handle->controller.materialSimulator().updateMesh();
-
-        handle->positions.clear();
-        handle->normals.clear();
-        handle->indices.clear();
-        const auto& pos = handle->controller.materialSimulator().getPositions();
-        handle->positions.assign(pos.begin(), pos.end());
-        const auto& norm = handle->controller.materialSimulator().getNormals();
-        handle->normals.assign(norm.begin(), norm.end());
-        const auto& ind = handle->controller.materialSimulator().getIndices();
-        handle->indices.assign(ind.begin(), ind.end());
-        return 1;
-    } catch (const std::exception& ex) {
-        std::cerr << "[api_simulator] Exception: " << ex.what() << std::endl;
-        return 0;
-    } catch (...) {
-        std::cerr << "[api_simulator] Unknown exception" << std::endl;
-        return 0;
-    }
-}
-
-void aim3d_simulator_set_work_offset(Aim3dSimulatorHandle* handle, int code, double x, double y, double z) {
-    if (!handle) return;
-    handle->controller.setWorkOffset(code, x, y, z);
-}
-
-std::size_t aim3d_simulator_vertex_count(Aim3dSimulatorHandle* handle) {
-    return handle ? handle->positions.size() / 3 : 0;
-}
-
-std::size_t aim3d_simulator_index_count(Aim3dSimulatorHandle* handle) {
-    return handle ? handle->indices.size() : 0;
-}
-
-void aim3d_simulator_copy_mesh(
-    Aim3dSimulatorHandle* handle,
-    float* outPos, 
-    float* outNorm, 
-    uint32_t* outInd) {
-    if (!handle) return;
-    if (outPos && !handle->positions.empty()) {
-        std::memcpy(outPos, handle->positions.data(), handle->positions.size() * sizeof(float));
-    }
-    if (outNorm && !handle->normals.empty()) {
-        std::memcpy(outNorm, handle->normals.data(), handle->normals.size() * sizeof(float));
-    }
-    if (outInd && !handle->indices.empty()) {
-        std::memcpy(outInd, handle->indices.data(), handle->indices.size() * sizeof(uint32_t));
-    }
 }
 
 } // extern "C"

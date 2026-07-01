@@ -6,7 +6,6 @@ import base64
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
-from aim3d.controller import simulate_program_mesh
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -118,34 +117,18 @@ class ControllerDaemonHandler(BaseHTTPRequestHandler):
             response_data = {"status": "success", "message": "Visual IR loaded"}
             
         elif parsed_path.path == '/command/simulate':
-            if not state.gcode:
-                response_data = {"simulation": {"status": "error", "error": "No G-code loaded"}}
-            else:
-                try:
-                    stock_size = payload.get('stockSize', [100.0, 100.0, 25.0])
-                    tools = payload.get('tools', [{"id": 1, "diameter_mm": 6.0, "kind": "flat"}])
-                    
-                    print(f"--- Simulation Request ---", file=sys.stderr)
-                    print(f"Stock size: {stock_size}", file=sys.stderr)
-                    print(f"Tools: {tools}", file=sys.stderr)
-                    print(f"G-code length: {len(state.gcode)} characters", file=sys.stderr)
-                    print(f"G-code snippet: {repr(state.gcode[:100])}", file=sys.stderr)
-                    
-                    mesh = simulate_program_mesh(state.gcode, tuple(stock_size), tools)
-                    
-                    print(f"Simulation SUCCESS: Generated {len(mesh.get('positions', []))//3} vertices", file=sys.stderr)
-                    
-                    response_data = {
-                        "simulation": {
-                            "status": "success",
-                            "solid": mesh
-                        }
-                    }
-                except Exception as e:
-                    import traceback
-                    print(f"Simulation ERROR: {e}", file=sys.stderr)
-                    traceback.print_exc(file=sys.stderr)
-                    response_data = {"simulation": {"status": "error", "error": str(e)}}
+            # Material-removal cutting now runs entirely in the frontend
+            # WebGPU voxelizer (ui/frontend/src/services/webgpuVoxelizer.js).
+            # The headless simulate_program_mesh path has been removed, so this
+            # endpoint no longer returns a cut mesh. The end-to-end
+            # gcode -> motion -> cutting pipeline is covered by the Playwright
+            # e2e test (ui/frontend/e2e/simulator.pipeline.test.js).
+            response_data = {
+                "simulation": {
+                    "status": "unsupported",
+                    "error": "Headless cutting simulation removed; cutting is frontend-only (WebGPU voxelizer).",
+                }
+            }
 
         elif parsed_path.path == '/snapshot':
             frame = make_websocket_text_frame(post_data.decode('utf-8'))

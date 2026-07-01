@@ -22,7 +22,7 @@ const identityTransform = [
   0, 0, 0, 1
 ];
 
-export const createAxisCylinder = (id, label, color, axisIndex, ox = 0, oy = 0, oz = 0, length = 1.1, radius = 0.015, segments = 6) => {
+const createAxisCylinder = (id, label, color, axisIndex, ox = 0, oy = 0, oz = 0, length = 1.1, radius = 0.015, segments = 6) => {
   const positions = [];
   const normals = [];
   const indices = [];
@@ -167,7 +167,7 @@ export const createDefaultViewportScene = () => ({
 // The hierarchical model-tree browser introduced with snapshot schemaVersion 2
 // (Origin default planes, construction objects, sketches with nested entities,
 // and produced bodies). v1 snapshots leave this at its empty default.
-export const createDefaultBrowser = () => ({
+const createDefaultBrowser = () => ({
   origin: { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true },
   construction: [],
   sketches: [],
@@ -508,20 +508,7 @@ export const syncViewportScene = (state) => {
       ];
       stockColors = Array(8 * 4).fill(0).map((_, i) => i % 4 === 3 ? 0.7 : 0.8);
     }
-    
-    // Override with simulated mesh if available
-    if (state.simulatedStockMesh && state.simulatedStockMesh.positions?.length > 0) {
-      stockPositions = state.simulatedStockMesh.positions;
-      stockNormals = state.simulatedStockMesh.normals;
-      stockIndices = state.simulatedStockMesh.indices;
-      // Re-generate solid colors based on the number of vertices
-      const numVerts = stockPositions.length / 3;
-      stockColors = new Array(numVerts * 4);
-      for (let i = 0; i < numVerts * 4; i++) {
-        stockColors[i] = i % 4 === 3 ? 0.8 : 0.7;
-      }
-    }
-    
+
     const stockSolid = {
       id: 'solid_stock',
       bodyId: 9998,
