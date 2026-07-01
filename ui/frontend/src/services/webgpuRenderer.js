@@ -44,6 +44,19 @@ fn solid_main(input: SolidIn) -> Out {
 }
 
 @vertex
+fn voxel_main(input: SolidIn) -> Out {
+  var out: Out;
+  let light = normalize(vec3<f32>(0.4, 0.7, 0.9));
+  // Remap lambertian [0,1] -> [0.5,1.0] so the voxel surface stays grey and never
+  // collapses to black (MC normals can be inconsistent/inverted), while still
+  // showing enough shading to read carved topography.
+  let shade = max(dot(normalize(input.normal), light), 0.0) * 0.5 + 0.5;
+  out.position = uniforms.viewProj * vec4<f32>(input.position, 1.0);
+  out.color = vec4<f32>(input.color.rgb * shade, input.color.a);
+  return out;
+}
+
+@vertex
 fn plane_main(input: SolidIn) -> Out {
   var out: Out;
   out.position = uniforms.viewProj * vec4<f32>(input.position, 1.0);
@@ -165,6 +178,29 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     vertex: {
       module: shader,
       entryPoint: 'solid_main',
+      buffers: [{
+        arrayStride: 40,
+        attributes: [
+          { shaderLocation: 0, offset: 0, format: 'float32x3' },
+          { shaderLocation: 1, offset: 12, format: 'float32x3' },
+          { shaderLocation: 2, offset: 24, format: 'float32x4' }
+        ]
+      }]
+    },
+    fragment: {
+      module: shader,
+      entryPoint: 'fragment_main',
+      targets: [{ format }]
+    },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' }
+  });
+
+  const voxelPipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: {
+      module: shader,
+      entryPoint: 'voxel_main',
       buffers: [{
         arrayStride: 40,
         attributes: [
@@ -339,7 +375,7 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       pass.drawIndexed(adapted.solidIndices.length);
     }
     if (options.voxelizer && options.voxelizer.vertexCount > 0) {
-      pass.setPipeline(solidPipeline);
+      pass.setPipeline(voxelPipeline);
       pass.setVertexBuffer(0, options.voxelizer.vertexBuffer);
       pass.setIndexBuffer(options.voxelizer.indexBuffer, 'uint32');
       pass.drawIndexed(options.voxelizer.vertexCount);
