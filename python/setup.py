@@ -8,12 +8,12 @@ setup(
     packages=find_packages(where="."),
     package_dir={"": "."},
     install_requires=[
-        "numpy>=1.20.0",
+        "numpy>=2.0.0",
     ],
     extras_require={
-        "test": ["pytest>=6.0.0"],
+        "test": ["pytest>=8.0.0"],
     },
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: Apache Software License",
