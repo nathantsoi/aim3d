@@ -7,6 +7,7 @@ python/test_artifacts/
 
 build/
 build-noocct/
+build-native/
 build-coverage/
 cmake-build-*/
 CMakeCache.txt

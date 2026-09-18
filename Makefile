@@ -14,9 +14,25 @@ FRONTEND_PORT ?= 1420
 FRONTEND_HOST ?= 127.0.0.1
 OCCT_BUILD_DIR ?= $(BUILD_DIR)/occt
 OCCT_INSTALL_DIR ?= $(BUILD_DIR)/occt-install
+OCCT_NATIVE_BUILD_DIR ?= $(BUILD_DIR)/occt-native
+OCCT_NATIVE_INSTALL_DIR ?= $(BUILD_DIR)/occt-native-install
 OCCT_BUILD_JOBS ?= 2
 OCCT_TOOLKITS ?= TKernel;TKMath;TKG2d;TKG3d;TKGeomBase;TKBRep;TKGeomAlgo;TKTopAlgo;TKPrim;TKShHealing;TKDE;TKXSBase;TKDESTEP;TKDEIGES;TKDECascade
+OCCT_CMAKE_COMMON_ARGS = \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON \
+	-DBUILD_LIBRARY_TYPE=Static \
+	-DBUILD_TOOLKITS="$(OCCT_TOOLKITS)" \
+	-DBUILD_MODULE_Visualization=OFF \
+	-DBUILD_MODULE_Draw=OFF \
+	-DUSE_TK=OFF \
+	-DUSE_FREETYPE=OFF \
+	-DUSE_FREEIMAGE=OFF \
+	-DUSE_VTK=OFF \
+	-DUSE_TBB=OFF \
+	-DUSE_RAPIDJSON=OFF
 
+# Prefer an explicit AIM3D_OCCT_DIR; otherwise the Emscripten install for WASM builds.
 CMAKE_ARGS ?= -DBUILD_TESTING=ON
 CMAKE_ARGS += -DAIM3D_ENABLE_OCCT=ON
 ifneq ($(AIM3D_OCCT_DIR),)
@@ -25,7 +41,27 @@ else
 CMAKE_ARGS += -DAIM3D_OCCT_DIR=$(abspath $(OCCT_INSTALL_DIR)/lib/cmake/opencascade)
 endif
 
-.PHONY: help build build-fast clean run deps test test-all test-verbose verbose-test verbose configure build-occt build-core build-core-fast build-native build-frontend build-tauri \
+# Host OpenCASCADE for native (non-Emscripten) builds. Prefer a locally built
+# OCCT 8.x install, then Homebrew. Never fall back to the Emscripten/WASM
+# install under build/occt-install (32-bit, unsuitable for host ARM/x86_64).
+BREW_OCCT_CMAKE := $(shell for p in /opt/homebrew /usr/local; do \
+	if [ -d "$$p/opt/opencascade/lib/cmake/opencascade" ]; then echo "$$p/opt/opencascade/lib/cmake/opencascade"; break; fi; \
+	done)
+WASM_OCCT_CMAKE := $(abspath $(OCCT_INSTALL_DIR)/lib/cmake/opencascade)
+ifneq ($(wildcard $(OCCT_NATIVE_INSTALL_DIR)/lib/cmake/opencascade/OpenCASCADEConfig.cmake),)
+NATIVE_OCCT_DIR ?= $(abspath $(OCCT_NATIVE_INSTALL_DIR)/lib/cmake/opencascade)
+else ifneq ($(BREW_OCCT_CMAKE),)
+NATIVE_OCCT_DIR ?= $(BREW_OCCT_CMAKE)
+else ifneq ($(AIM3D_OCCT_DIR),)
+ifneq ($(AIM3D_OCCT_DIR),$(WASM_OCCT_CMAKE))
+NATIVE_OCCT_DIR ?= $(AIM3D_OCCT_DIR)
+endif
+endif
+ifndef NATIVE_OCCT_DIR
+NATIVE_OCCT_DIR :=
+endif
+
+.PHONY: help build build-fast clean run deps test test-all test-verbose verbose-test verbose configure build-occt build-occt-native build-core build-core-fast build-native build-frontend build-tauri \
 	test-core test-core-verbose test-frontend test-voxelizer test-webgpu test-python test-simulation test-e2e \
 	test-coverage test-coverage-frontend test-coverage-python test-coverage-core \
 	run-frontend run-tauri emsdk install-hooks
@@ -56,9 +92,11 @@ help:
 	@echo "  make install-hooks  Install the pre-push git hook (runs test-voxelizer before push)"
 	@echo ""
 	@echo "Optional:"
-	@echo "  make build-occt     Build vendored OpenCASCADE into build/occt-install"
+	@echo "  make build-occt        Build vendored OCCT (Emscripten/WASM) into build/occt-install"
+	@echo "  make build-occt-native Build vendored OCCT 8.x for the host into build/occt-native-install"
 	@echo "  make build-occt OCCT_BUILD_JOBS=1"
 	@echo "  make build AIM3D_OCCT_DIR=/path/to/occt/cmake/package"
+	@echo "  Native OCCT: brew install opencascade  (easiest) or make build-occt-native (OCCT 8.x)"
 
 build: deps build-core build-frontend build-tauri
 
@@ -92,21 +130,19 @@ configure:
 
 build-occt:
 	bash -c "$(EMSDK_ENV) && emcmake $(CMAKE) -S third_party/OCCT -B $(OCCT_BUILD_DIR) \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON \
 		-DCMAKE_INSTALL_PREFIX=$(abspath $(OCCT_INSTALL_DIR)) \
 		-DINSTALL_DIR=$(abspath $(OCCT_INSTALL_DIR)) \
-		-DBUILD_LIBRARY_TYPE=Static \
-		-DBUILD_TOOLKITS=\"$(OCCT_TOOLKITS)\" \
-		-DBUILD_MODULE_Visualization=OFF \
-		-DBUILD_MODULE_Draw=OFF \
-		-DUSE_TK=OFF \
-		-DUSE_FREETYPE=OFF \
-		-DUSE_FREEIMAGE=OFF \
-		-DUSE_VTK=OFF \
-		-DUSE_TBB=OFF \
-		-DUSE_RAPIDJSON=OFF"
+		$(OCCT_CMAKE_COMMON_ARGS)"
 	bash -c "$(EMSDK_ENV) && emmake $(CMAKE) --build $(OCCT_BUILD_DIR) --target install --parallel $(OCCT_BUILD_JOBS)"
+
+# Host-toolchain OCCT from the vendored 8.x tree. Prefer this over Homebrew when
+# you want native builds to match the WASM OCCT major version.
+build-occt-native:
+	$(CMAKE) -S third_party/OCCT -B $(OCCT_NATIVE_BUILD_DIR) \
+		-DCMAKE_INSTALL_PREFIX=$(abspath $(OCCT_NATIVE_INSTALL_DIR)) \
+		-DINSTALL_DIR=$(abspath $(OCCT_NATIVE_INSTALL_DIR)) \
+		$(OCCT_CMAKE_COMMON_ARGS)
+	$(CMAKE) --build $(OCCT_NATIVE_BUILD_DIR) --target install --parallel $(OCCT_BUILD_JOBS)
 
 build-core: build-occt configure
 	bash -c "$(EMSDK_ENV) && emmake $(CMAKE) --build $(BUILD_DIR)"
@@ -146,16 +182,24 @@ test-frontend:
 	cd ui/frontend && $(NPM) run test
 
 # Build the native (non-Emscripten) core library for Python ctypes FFI.
-# Uses the host compiler with OCCT disabled so it builds without the OCCT
-# dependency. Only the library target is built (the native test binary needs
-# extra headers; the Emscripten build covers C++ tests). The shared library is
-# symlinked into build/lib so python/aim3d/_native.py can find it.
-NATIVE_BUILD_DIR ?= build-noocct
+# Enables OCCT when a host-compatible package is available (native 8.x install
+# or Homebrew). Falls back to OCCT=OFF only when none is found. The shared
+# library is symlinked into build/lib so python/aim3d/_native.py can find it.
+NATIVE_BUILD_DIR ?= build-native
 
 build-native:
-	@if [ ! -f $(NATIVE_BUILD_DIR)/CMakeCache.txt ]; then \
-		echo "Configuring native build (OCCT disabled) in $(NATIVE_BUILD_DIR)…"; \
-		$(CMAKE) -S . -B $(NATIVE_BUILD_DIR) -DBUILD_TESTING=ON -DAIM3D_ENABLE_OCCT=OFF; \
+	@native_args="-DBUILD_TESTING=ON"; \
+	if [ -n "$(NATIVE_OCCT_DIR)" ]; then \
+		echo "Configuring native build with OCCT ($(NATIVE_OCCT_DIR)) in $(NATIVE_BUILD_DIR)…"; \
+		native_args="$$native_args -DAIM3D_ENABLE_OCCT=ON -DAIM3D_OCCT_DIR=$(NATIVE_OCCT_DIR)"; \
+	else \
+		echo "Configuring native build (OCCT disabled; brew install opencascade or make build-occt-native) in $(NATIVE_BUILD_DIR)…"; \
+		native_args="$$native_args -DAIM3D_ENABLE_OCCT=OFF"; \
+	fi; \
+	if [ ! -f $(NATIVE_BUILD_DIR)/CMakeCache.txt ]; then \
+		$(CMAKE) -S . -B $(NATIVE_BUILD_DIR) $$native_args; \
+	else \
+		$(CMAKE) -S . -B $(NATIVE_BUILD_DIR) $$native_args >/dev/null; \
 	fi
 	@echo "Building native libaim3d_core…"
 	$(CMAKE) --build $(NATIVE_BUILD_DIR) --target aim3d_core
@@ -246,7 +290,7 @@ run-tauri:
 
 clean:
 	@if [ -d "$(BUILD_DIR)" ]; then \
-		find $(BUILD_DIR) -mindepth 1 -maxdepth 1 ! -name "occt" ! -name "occt-install" -exec rm -rf {} +; \
+		find $(BUILD_DIR) -mindepth 1 -maxdepth 1 ! -name "occt" ! -name "occt-install" ! -name "occt-native" ! -name "occt-native-install" -exec rm -rf {} +; \
 	fi
 	rm -rf ui/frontend/dist ui/frontend/node_modules ui/node_modules ui/src-tauri/target
 	rm -rf ui/frontend/public/aim3d_core.js ui/frontend/public/aim3d_core.wasm

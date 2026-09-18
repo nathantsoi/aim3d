@@ -11,6 +11,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -730,6 +731,18 @@ void test_viewport_scene_has_renderable_buffers() {
     assert(scene.solids[0].pickable.entityId == scene.solids[0].sourceToken);
     assert(scene.solids[0].pickable.kind == "B-rep Exact Face");
     assert(scene.solids[0].pickable.priority > 0);
+    // Topology-aware picking data: one range per face (covering all triangles),
+    // a body token, and per-edge/vertex pickables.
+    assert(!scene.solids[0].bodyToken.empty());
+    assert(scene.solids[0].faceRanges.size() == 6);
+    assert(scene.solids[0].edgePickables.size() == 12);
+    assert(scene.solids[0].vertexPickables.size() == 8);
+    std::size_t coveredTriangles = 0;
+    for (const auto& range : scene.solids[0].faceRanges) {
+        assert(!range.token.empty());
+        coveredTriangles += range.triangleCount;
+    }
+    assert(coveredTriangles == scene.solids[0].indices.size() / 3);
     assert(scene.diagnostics.triangleCount == scene.solids[0].indices.size() / 3);
     assert(scene.diagnostics.segmentCount >= 3);
 #else
@@ -768,7 +781,9 @@ void test_c_api_document_buffers_and_tasks() {
     Aim3dBufferHandle* meshIndices = aim3d_document_mesh_indices(doc);
     assert(aim3d_buffer_dtype(meshPositions) == AIM3D_BUFFER_FLOAT32);
     assert(aim3d_buffer_components(meshPositions) == 3);
-    assert(aim3d_buffer_count(meshPositions) == 24);
+    // Expanded-per-face box: 6 faces × 4 verts = 24 vertices (72 floats),
+    // 12 triangles (36 index components).
+    assert(aim3d_buffer_count(meshPositions) == 72);
     assert(aim3d_buffer_dtype(meshIndices) == AIM3D_BUFFER_UINT32);
     assert(aim3d_buffer_components(meshIndices) == 3);
     assert(aim3d_buffer_count(meshIndices) == 36);

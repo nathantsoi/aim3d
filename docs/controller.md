@@ -1,66 +1,38 @@
 # Controller & Firmware Documentation
 
-The aim3d Controller stack is specifically designed to leverage the NVIDIA Jetson Orin Nano. It relies on the Sensor Processing Engine (SPE) — an isolated ARM Cortex-R5 core — to guarantee hard real-time execution of step generation and safety interrupts (E-Stop).
+aim3d targets an **STM32 microcontroller** as its machine controller. The MCU firmware itself is not part of this repository — it is built and maintained in the sibling [`aic3d`](../../aic3d) project, which owns the STM32F401 ("Black Pill") firmware, its CRC16-framed serial protocol, and an independent safety supervisor for E-stop/limit handling. aim3d is the design/CAM/simulation application; aic3d is the machine controller.
 
 ## Architecture
 
-1.  **Python Host Daemon**: Runs in user-space on the Jetson's main Linux OS (Ubuntu 24.04 / JetPack 7.2). It receives the Visual IR job from the frontend over the network, buffers it, and streams waypoints down to the SPE via an Inter-VM Communication (IVC) mailbox.
-2.  **SPE Firmware (C)**: A bare-metal application running on the Cortex-R5. It polls the IVC mailbox for new position commands, runs a Bresenham/DDA algorithm to generate physical step/dir pulses on the GPIO pins, and handles instantaneous hardware E-Stops.
-3.  **IVC Mailbox / Shared Memory**: The bridge between the non-real-time Linux host and the real-time SPE.
+1.  **Python Controller Daemon** (`python/aim3d/daemon.py`): A local HTTP + WebSocket server (`Aim3dCncDaemon`). It receives job/state pushes from Python scripts driving the native core (via `python/aim3d/ui_bridge.py`) and relays them to the Tauri/Vue frontend over a `core://changed` WebSocket channel. The frontend's `ui/frontend/src/services/controllerDaemon.js` talks to it over `http://127.0.0.1:8765` by default (overridable via `AIM3D_BRIDGE_HOST`/`AIM3D_BRIDGE_WS_PORT`).
+2.  **Native core compilation stack**: `Document`/`addSolidFeature`/CAM operations compile a job into `CanonicalCamIR` (see [cam.md](cam.md)), which can be exported as G-code or the internal Visual IR.
+3.  **STM32 firmware (aic3d)**: Runs the real-time step/dir generation, E-stop, and limit-switch handling. See the `aic3d` project's own documentation for its wire protocol, pin map, and build/flash instructions.
 
-## Implementation Gaps & Limitations
+## Current implementation status
 
-Currently, the controller implementation has the following limitations:
+**There is currently no wired serial bridge from aim3d to STM32 firmware.** This is an open integration gap, not a hidden feature:
 
-1.  **Max Step Rate**: The maximum step frequency is strictly bound by the Cortex-R5 hardware timer resolution and the efficiency of the GPIO toggling loop. Very high micro-stepping on fast machines may exceed the processing loop capacity.
-2.  **No Advanced Look-ahead**: The SPE firmware expects pre-calculated, dense waypoints from the Host. It does not perform S-curve acceleration blending or advanced jerk look-ahead on its own.
-3.  **Closed-loop Feedback**: The system operates strictly open-loop (sending pulses to stepper drivers). It does not currently read encoder feedback to verify actual position or detect missed steps.
-4.  **E-Stop Latency**: While the SPE handles the E-Stop interrupt immediately (stopping pulses), there is a non-zero latency propagating that state back up to the Host Linux daemon and eventually the UI over the network. Always trust the physical E-Stop switch over the software UI.
+- aim3d previously had a native `SerialHardwareController` (`core/src/hardware_controller.cpp`) that spoke a custom XOR-checksum framing matching a since-removed, aim3d-local STM32F103 firmware prototype. It had zero callers anywhere in the running application and a confirmed struct-size mismatch bug, so it was never a working path. It has been removed along with that prototype firmware.
+- aic3d already has a complete, working host-side serial transport (`protocol.py`, `serialhdl.py`, `clocksync.py`, `transport.py`) that speaks its own CRC16-CCITT framed protocol to its firmware.
+- To actually run a job on hardware, the controller daemon needs a bridge that either (a) shells out to / imports aic3d's host transport to stream compiled toolpaths to the STM32, or (b) has aic3d expose its transport as a library aim3d's daemon can call. Neither exists yet.
 
----
+### Building the bridge (next steps)
+
+1. Decide the integration seam: aim3d's daemon importing aic3d's Python host package directly (simplest, if both projects are checked out as siblings per the workspace layout) vs. a small IPC/socket handoff between the two daemons.
+2. Convert aim3d's compiled `CanonicalCamIR` motion commands into aic3d's `SEGMENT` message format (absolute X/Y/Z in mm·1e-3, entry/exit feed, segment kind) rather than reintroducing aim3d's own wire format.
+3. Wire aim3d's `ARM`/`DISARM`/`FEEDHOLD`/`RESUME`/`ESTOP_RESET` semantics onto aic3d's `CONTROL` message and safety-supervisor state machine (today aic3d's `link.c` only implements `STOP`).
+4. Surface aic3d's `STATUS`/`FAULT`/`CLOCKSYNC` telemetry back through the daemon to the UI's machine DRO.
 
 ## Setup & Deployment Guide
 
-The `aim3d` controller environment consists of a Python Host Daemon running on the local PC/Jetson and a microcontroller firmware running on the STM32 target.
+### 1. Python Controller Daemon
 
-### 1. Python Host Daemon Installation
-The host daemon handles visual IR parsing, trajectory planning, and coordinates serial packet exchange with the STM32.
+```bash
+python python/aim3d/daemon.py
+```
 
-1. Install Python prerequisites inside the virtual environment:
-   ```bash
-   pip install pyserial
-   ```
-2. Start the daemon and specify the serial interface parameters:
-   ```bash
-   python python/aim3d/daemon.py --port /dev/ttyUSB0 --baud 115200
-   ```
-   *(Replace `/dev/ttyUSB0` with your serial device port, e.g. `/dev/cu.usbserial-xxx` on macOS or `COM3` on Windows)*
+Environment variables `AIM3D_BRIDGE_HOST` / `AIM3D_BRIDGE_WS_PORT` override the default `127.0.0.1:8765` bind address.
 
-### 2. STM32 Firmware Installation
-The STM32 firmware acts as the step execution driver, generating step pulses and monitoring safety signals in real-time.
+### 2. STM32 Firmware
 
-1. **Install Prerequisites**:
-   Ensure you have the Arm toolchain and serial flashing tool:
-   - GCC compiler: `arm-none-eabi-gcc`
-   - Flashing utility: `stm32flash`
-2. **Build the Firmware**:
-   ```bash
-   cd mcu/stm32
-   make
-   ```
-   This generates `build/firmware.bin` and `build/firmware.elf`.
-3. **Pin Configuration**:
-   - **X Axis**: STEP = `PB12`, DIR = `PB13`
-   - **Y Axis**: STEP = `PB14`, DIR = `PB15`
-   - **Z Axis**: STEP = `PA8`, DIR = `PA9`
-   - **Serial USART1**: TX = `PA9`, RX = `PA10` (connect to USB-to-UART adapter RX/TX crosswise)
-   - **E-Stop**: `PA0` (pulls low to trigger fault)
-   - **Limit Switches**: `PA1` (X), `PA2` (Y), `PA3` (Z) (pulls low to trigger fault)
-   - **Status LED**: `PC13`
-4. **Flash the Target Microcontroller**:
-   Set the BOOT0 pin of the STM32F103 board to `1` (High), connect a USB-to-UART serial interface, and run:
-   ```bash
-   make flash
-   ```
-   *(Once flashed, remember to reset BOOT0 back to `0` and power-cycle the board)*
-
+Build, flash, and pin-configuration instructions live in the `aic3d` repository, not here. Clone it as a sibling directory (see the top-level `README.md` workspace layout) and follow its own setup guide.

@@ -57,10 +57,39 @@ struct ViewportSolidMesh {
         std::vector<SnapPoint> snapPoints;
     };
 
+    // A contiguous span of triangles (in `indices`, three entries per triangle)
+    // that belong to a single B-rep face. Lets the viewport resolve a triangle
+    // hit back to a stable face token without a separate mesh per face.
+    struct FaceRange {
+        std::string token;
+        std::string kind = "face";
+        std::uint32_t triangleStart = 0;  // index into `indices` / 3
+        std::uint32_t triangleCount = 0;
+    };
+
+    // A pickable B-rep edge as a world-space polyline [x0,y0,z0, x1,y1,z1, ...].
+    struct EdgePickable {
+        std::string token;
+        std::string kind = "edge";
+        std::vector<float> points;
+    };
+
+    // A pickable B-rep vertex.
+    struct VertexPickable {
+        std::string token;
+        std::string kind = "vertex";
+        std::array<float, 3> position = {0.0f, 0.0f, 0.0f};
+    };
+
     std::string id;
     EntityId bodyId = 0;
     std::string sourceToken;
     PickableMetadata pickable;
+    // Stable token for selecting the whole body (Body priority / double-click).
+    std::string bodyToken;
+    std::vector<FaceRange> faceRanges;
+    std::vector<EdgePickable> edgePickables;
+    std::vector<VertexPickable> vertexPickables;
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<float> colors;

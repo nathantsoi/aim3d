@@ -35,15 +35,43 @@ target_include_directories(aim3d_core PUBLIC
 )
 
 if(AIM3D_ENABLE_OCCT)
+    # The Emscripten OCCT install under build/occt-install is 32-bit WASM and is
+    # unsuitable for native host toolchains (e.g. arm64 macOS). Keep search paths
+    # separate so native builds never pick it up by accident.
+    set(_aim3d_occt_hints)
     if(AIM3D_OCCT_DIR)
-        list(APPEND CMAKE_PREFIX_PATH "${AIM3D_OCCT_DIR}")
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/build/occt-install/lib/cmake/opencascade")
-        list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/build/occt-install/lib/cmake/opencascade")
+        list(APPEND _aim3d_occt_hints "${AIM3D_OCCT_DIR}")
+    endif()
+    if(EMSCRIPTEN)
+        if(EXISTS "${CMAKE_SOURCE_DIR}/build/occt-install/lib/cmake/opencascade")
+            list(APPEND _aim3d_occt_hints
+                "${CMAKE_SOURCE_DIR}/build/occt-install/lib/cmake/opencascade")
+        endif()
+    else()
+        if(EXISTS "${CMAKE_SOURCE_DIR}/build/occt-native-install/lib/cmake/opencascade")
+            list(APPEND _aim3d_occt_hints
+                "${CMAKE_SOURCE_DIR}/build/occt-native-install/lib/cmake/opencascade")
+        endif()
+        # Homebrew OpenCASCADE (arm64/x86_64 bottles) — easiest host path.
+        foreach(_brew_prefix /opt/homebrew /usr/local)
+            if(EXISTS "${_brew_prefix}/opt/opencascade/lib/cmake/opencascade")
+                list(APPEND _aim3d_occt_hints
+                    "${_brew_prefix}/opt/opencascade/lib/cmake/opencascade")
+            endif()
+        endforeach()
+    endif()
+    if(_aim3d_occt_hints)
+        list(APPEND CMAKE_PREFIX_PATH ${_aim3d_occt_hints})
     elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/OCCT")
-        message(STATUS "AIM3D_ENABLE_OCCT is ON; run `make build-occt` or pass AIM3D_OCCT_DIR to a configured OCCT package.")
+        if(EMSCRIPTEN)
+            message(STATUS "AIM3D_ENABLE_OCCT is ON; run `make build-occt` or pass AIM3D_OCCT_DIR.")
+        else()
+            message(STATUS "AIM3D_ENABLE_OCCT is ON; install host OpenCASCADE (e.g. `brew install opencascade`), run `make build-occt-native`, or pass AIM3D_OCCT_DIR.")
+        endif()
     endif()
 
     find_package(OpenCASCADE CONFIG REQUIRED)
+    message(STATUS "Using OpenCASCADE ${OpenCASCADE_VERSION} from ${OpenCASCADE_DIR}")
     target_compile_definitions(aim3d_core PUBLIC AIM3D_HAS_OCCT=1)
     target_include_directories(aim3d_core PUBLIC ${OpenCASCADE_INCLUDE_DIR})
     target_link_libraries(aim3d_core PUBLIC ${OpenCASCADE_LIBRARIES})

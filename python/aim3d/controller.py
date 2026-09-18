@@ -42,7 +42,7 @@ class AxisLimit:
 
 @dataclass(frozen=True)
 class Machine:
-    id: str = "jetson-orin-nano-spe-mill"
+    id: str = "stm32-mill"
     axes: Mapping[str, AxisLimit] = field(
         default_factory=lambda: {
             "x": AxisLimit(-1.0, 300.0, 80.0),
@@ -50,8 +50,8 @@ class Machine:
             "z": AxisLimit(-100.0, 50.0, 400.0),
         }
     )
-    platform: str = "jetpack-7.2-spe"
-    controller: str = "spe-step-dir"
+    platform: str = "stm32"
+    controller: str = "stm32-step-dir"
 
 
 @dataclass(frozen=True)
@@ -248,7 +248,7 @@ def compile_visual_ir_to_gcode(document: Mapping[str, Any]) -> str:
     assert_valid_visual_ir(document)
     setup = document["setup"]
     lines = [
-        "; aim3d visual IR compiled for Jetson SPE controller",
+        "; aim3d visual IR compiled for STM32 controller",
         "G21" if setup.get("units", "mm") == "mm" else "G20",
         "G90",
         str(setup.get("work_offset", "G54")),

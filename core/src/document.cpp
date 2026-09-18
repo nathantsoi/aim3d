@@ -25,11 +25,16 @@
 #include <STEPControl_Reader.hxx>
 #include <STEPControl_Writer.hxx>
 #include <TopAbs_ShapeEnum.hxx>
+#include <NCollection_IndexedMap.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <TopoDS_Shape.hxx>
 #endif
 
@@ -258,39 +263,36 @@ bool writeOcctShape(const TopoDS_Shape& shape, const std::string& path, Geometry
 }
 #endif
 
+// Stable subshape token in the topological-naming format ("body:<id>/face:<n>")
+// so viewport face/edge/vertex picks resolve to the same tokens exposed in the
+// topology snapshot.
+std::string subshapeToken(EntityId bodyId, const std::string& kind, std::size_t ordinal) {
+    const EntityId id = bodyId == 0 ? 1 : bodyId;
+    return "body:" + std::to_string(id) + "/" + kind + ":" + std::to_string(ordinal);
+}
+
+std::string bodyPickToken(EntityId bodyId) {
+    const EntityId id = bodyId == 0 ? 1 : bodyId;
+    return "body:" + std::to_string(id);
+}
+
+ViewportSolidMesh boxSolidMesh(const BRepBody& body, const std::string& token);
+
 ViewportSolidMesh fallbackSolidMesh(EntityId bodyId, const std::string& token) {
-    ViewportSolidMesh mesh;
-    mesh.id = "solid_" + std::to_string(bodyId == 0 ? 1 : bodyId);
-    mesh.bodyId = bodyId;
-    mesh.sourceToken = token.empty() ? "feat_Extrude_1_face_0" : token;
-    mesh.pickable.entityId = mesh.sourceToken;
+    // Use the same expanded-per-face layout as boxSolidMesh so per-face
+    // highlight does not bleed across shared vertices, and emit edge/vertex
+    // pickables for the legacy demo extents.
+    BRepBody body(bodyId == 0 ? 1 : bodyId, "fallback");
+    body.setBox({-1.8, -1.2, -0.35}, {1.8, 1.2, 0.35});
+    auto mesh = boxSolidMesh(body, token.empty() ? "feat_Extrude_1_face_0" : token);
     mesh.pickable.kind = "B-rep Exact Face";
-    mesh.pickable.priority = 10;
-    mesh.pickable.snapPoints.push_back(ViewportSolidMesh::SnapPoint{
-        "solid_" + std::to_string(bodyId == 0 ? 1 : bodyId) + "_center",
-        "center",
-        {0.0f, 0.0f, 0.35f}
-    });
-    mesh.positions = {
-        -1.8f, -1.2f, -0.35f, 1.8f, -1.2f, -0.35f, 1.8f, 1.2f, -0.35f, -1.8f, 1.2f, -0.35f,
-        -1.8f, -1.2f, 0.35f, 1.8f, -1.2f, 0.35f, 1.8f, 1.2f, 0.35f, -1.8f, 1.2f, 0.35f
-    };
-    mesh.normals = {
-        0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f,
-        0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f
-    };
-    mesh.colors = {
-        0.16f, 0.62f, 0.9f, 1.0f, 0.16f, 0.62f, 0.9f, 1.0f, 0.16f, 0.62f, 0.9f, 1.0f, 0.16f, 0.62f, 0.9f, 1.0f,
-        0.2f, 0.72f, 1.0f, 1.0f, 0.2f, 0.72f, 1.0f, 1.0f, 0.2f, 0.72f, 1.0f, 1.0f, 0.2f, 0.72f, 1.0f, 1.0f
-    };
-    mesh.indices = {
-        0, 1, 2, 0, 2, 3,
-        4, 6, 5, 4, 7, 6,
-        0, 4, 5, 0, 5, 1,
-        1, 5, 6, 1, 6, 2,
-        2, 6, 7, 2, 7, 3,
-        3, 7, 4, 3, 4, 0
-    };
+    mesh.colors.assign(mesh.positions.size() / 3 * 4, 0.0f);
+    for (std::size_t i = 0; i + 3 < mesh.colors.size(); i += 4) {
+        mesh.colors[i] = 0.2f;
+        mesh.colors[i + 1] = 0.72f;
+        mesh.colors[i + 2] = 1.0f;
+        mesh.colors[i + 3] = 1.0f;
+    }
     return mesh;
 }
 
@@ -309,6 +311,7 @@ ViewportSolidMesh boxSolidMesh(const BRepBody& body, const std::string& token) {
     mesh.pickable.entityId = mesh.sourceToken;
     mesh.pickable.kind = "B-rep Exact Face";
     mesh.pickable.priority = 10;
+    mesh.bodyToken = bodyPickToken(body.id());
 
     const auto& lo = body.boxMin();
     const auto& hi = body.boxMax();
@@ -339,14 +342,45 @@ ViewportSolidMesh boxSolidMesh(const BRepBody& body, const std::string& token) {
         {{{{x1, y0, z0}, {x1, y1, z0}, {x1, y1, z1}, {x1, y0, z1}}}, {1.0f, 0.0f, 0.0f}}
     }};
 
+    std::size_t faceOrdinal = 0;
     for (const auto& face : faces) {
         const auto base = static_cast<std::uint32_t>(mesh.positions.size() / 3);
+        const auto triangleStart = static_cast<std::uint32_t>(mesh.indices.size() / 3);
         for (const auto& corner : face.corners) {
             mesh.positions.insert(mesh.positions.end(), {corner[0], corner[1], corner[2]});
             mesh.normals.insert(mesh.normals.end(), {face.normal[0], face.normal[1], face.normal[2]});
             mesh.colors.insert(mesh.colors.end(), {0.2f, 0.72f, 1.0f, 1.0f});
         }
         mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        mesh.faceRanges.push_back(ViewportSolidMesh::FaceRange{
+            subshapeToken(body.id(), "face", faceOrdinal), "face", triangleStart, 2u
+        });
+        faceOrdinal++;
+    }
+
+    // 8 box corners and 12 edges, tokenised so the viewport can pre-highlight
+    // and select individual edges/vertices.
+    const std::array<std::array<float, 3>, 8> corners = {{
+        {x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0},
+        {x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}
+    }};
+    for (std::size_t i = 0; i < corners.size(); ++i) {
+        mesh.vertexPickables.push_back(ViewportSolidMesh::VertexPickable{
+            subshapeToken(body.id(), "vertex", i), "vertex", corners[i]
+        });
+    }
+    const std::array<std::array<int, 2>, 12> edges = {{
+        {0, 1}, {1, 2}, {2, 3}, {3, 0},
+        {4, 5}, {5, 6}, {6, 7}, {7, 4},
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}
+    }};
+    for (std::size_t i = 0; i < edges.size(); ++i) {
+        const auto& a = corners[edges[i][0]];
+        const auto& b = corners[edges[i][1]];
+        mesh.edgePickables.push_back(ViewportSolidMesh::EdgePickable{
+            subshapeToken(body.id(), "edge", i), "edge",
+            {a[0], a[1], a[2], b[0], b[1], b[2]}
+        });
     }
     return mesh;
 }
@@ -427,6 +461,32 @@ std::string solidMeshJson(const ViewportSolidMesh& mesh) {
         out += "\"position\":[" + jsonNumber(sp.position[0]) + "," + jsonNumber(sp.position[1]) + "," + jsonNumber(sp.position[2]) + "]}";
     }
     out += "]},";
+    out += "\"bodyToken\":\"" + jsonEscape(mesh.bodyToken) + "\",";
+    out += "\"faceRanges\":[";
+    for (std::size_t i = 0; i < mesh.faceRanges.size(); ++i) {
+        const auto& fr = mesh.faceRanges[i];
+        if (i) out += ",";
+        out += "{\"token\":\"" + jsonEscape(fr.token) + "\",\"kind\":\"" + jsonEscape(fr.kind) + "\",";
+        out += "\"triangleStart\":" + std::to_string(fr.triangleStart) + ",";
+        out += "\"triangleCount\":" + std::to_string(fr.triangleCount) + "}";
+    }
+    out += "],";
+    out += "\"edgePickables\":[";
+    for (std::size_t i = 0; i < mesh.edgePickables.size(); ++i) {
+        const auto& ep = mesh.edgePickables[i];
+        if (i) out += ",";
+        out += "{\"token\":\"" + jsonEscape(ep.token) + "\",\"kind\":\"" + jsonEscape(ep.kind) + "\",";
+        out += "\"points\":" + floatArrayJson(ep.points) + "}";
+    }
+    out += "],";
+    out += "\"vertexPickables\":[";
+    for (std::size_t i = 0; i < mesh.vertexPickables.size(); ++i) {
+        const auto& vp = mesh.vertexPickables[i];
+        if (i) out += ",";
+        out += "{\"token\":\"" + jsonEscape(vp.token) + "\",\"kind\":\"" + jsonEscape(vp.kind) + "\",";
+        out += "\"position\":[" + jsonNumber(vp.position[0]) + "," + jsonNumber(vp.position[1]) + "," + jsonNumber(vp.position[2]) + "]}";
+    }
+    out += "],";
     out += "\"positions\":" + floatArrayJson(mesh.positions) + ",";
     out += "\"normals\":" + floatArrayJson(mesh.normals) + ",";
     out += "\"colors\":" + floatArrayJson(mesh.colors) + ",";
@@ -473,6 +533,7 @@ ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& toke
     mesh.pickable.entityId = token;
     mesh.pickable.kind = "B-rep Exact Face";
     mesh.pickable.priority = 10;
+    mesh.bodyToken = bodyPickToken(body.id());
 
     const auto kernelShape = body.kernelShapeHandle();
     if (!kernelShape || kernelShape->shape.IsNull()) {
@@ -482,16 +543,19 @@ ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& toke
     BRepMesh_IncrementalMesh mesher(kernelShape->shape, 0.5, false, 0.5, true);
     mesher.Perform();
 
+    std::size_t faceOrdinal = 0;
     for (TopExp_Explorer explorer(kernelShape->shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
         TopLoc_Location location;
         const auto face = TopoDS::Face(explorer.Current());
         const Handle(Poly_Triangulation) triangulation = BRep_Tool::Triangulation(face, location);
         if (triangulation.IsNull()) {
+            faceOrdinal++;
             continue;
         }
 
         const auto transform = location.Transformation();
         const auto baseIndex = static_cast<std::uint32_t>(mesh.positions.size() / 3);
+        const auto triangleStart = static_cast<std::uint32_t>(mesh.indices.size() / 3);
         for (int nodeIndex = 1; nodeIndex <= triangulation->NbNodes(); ++nodeIndex) {
             const auto point = triangulation->Node(nodeIndex).Transformed(transform);
             mesh.positions.push_back(static_cast<float>(point.X()));
@@ -510,6 +574,51 @@ ViewportSolidMesh meshFromOcctBody(const BRepBody& body, const std::string& toke
             mesh.indices.push_back(baseIndex + static_cast<std::uint32_t>(b - 1));
             mesh.indices.push_back(baseIndex + static_cast<std::uint32_t>(c - 1));
         }
+        const auto triangleCount =
+            static_cast<std::uint32_t>(mesh.indices.size() / 3) - triangleStart;
+        mesh.faceRanges.push_back(ViewportSolidMesh::FaceRange{
+            subshapeToken(body.id(), "face", faceOrdinal), "face", triangleStart, triangleCount
+        });
+        faceOrdinal++;
+    }
+
+    // Unique edges, deduped via an indexed map (TopExp_Explorer would visit a
+    // shared edge once per adjoining face). Each edge is sampled to a two-point
+    // polyline from its bounding vertices.
+    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> edgeMap;
+    TopExp::MapShapes(kernelShape->shape, TopAbs_EDGE, edgeMap);
+    for (int e = 1; e <= edgeMap.Extent(); ++e) {
+        const auto edge = TopoDS::Edge(edgeMap(e));
+        gp_Pnt first;
+        gp_Pnt last;
+        bool haveFirst = false;
+        for (TopExp_Explorer vExp(edge, TopAbs_VERTEX); vExp.More(); vExp.Next()) {
+            const auto point = BRep_Tool::Pnt(TopoDS::Vertex(vExp.Current()));
+            if (!haveFirst) {
+                first = point;
+                haveFirst = true;
+            }
+            last = point;
+        }
+        if (!haveFirst) continue;
+        mesh.edgePickables.push_back(ViewportSolidMesh::EdgePickable{
+            subshapeToken(body.id(), "edge", static_cast<std::size_t>(e - 1)), "edge",
+            {
+                static_cast<float>(first.X()), static_cast<float>(first.Y()), static_cast<float>(first.Z()),
+                static_cast<float>(last.X()), static_cast<float>(last.Y()), static_cast<float>(last.Z())
+            }
+        });
+    }
+
+    // Unique vertices (deduped the same way).
+    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> vertexMap;
+    TopExp::MapShapes(kernelShape->shape, TopAbs_VERTEX, vertexMap);
+    for (int v = 1; v <= vertexMap.Extent(); ++v) {
+        const auto point = BRep_Tool::Pnt(TopoDS::Vertex(vertexMap(v)));
+        mesh.vertexPickables.push_back(ViewportSolidMesh::VertexPickable{
+            subshapeToken(body.id(), "vertex", static_cast<std::size_t>(v - 1)), "vertex",
+            {static_cast<float>(point.X()), static_cast<float>(point.Y()), static_cast<float>(point.Z())}
+        });
     }
 
     return mesh.indices.empty() ? fallbackSolidMesh(body.id(), token) : mesh;

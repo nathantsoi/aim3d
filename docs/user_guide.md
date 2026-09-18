@@ -37,8 +37,8 @@ Before running on hardware, you should validate the toolpaths:
 ## 5. Executing on the Controller
 
 Once satisfied:
-1.  Ensure your Jetson Orin Nano is connected to the network and the `aim3d` daemon is running.
-2.  Click **Connect** in the Top Navbar and enter the Jetson's IP address.
+1.  Ensure the `aim3d` controller daemon is running and connected to the STM32 board over its serial (USB-UART) port.
+2.  Click **Connect** in the Top Navbar to attach to the daemon.
 3.  Click **Export & Run**. You can choose to export standard G-code, or our optimized Visual IR format.
-4.  The application will push the job to the daemon, which sends waypoints to the Jetson SPE firmware.
+4.  The application will push the job to the daemon, which streams step/dir waypoints down to the STM32 firmware.
 5.  **Safety First**: Keep your hand on the physical E-Stop button while the machine is running!

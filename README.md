@@ -80,7 +80,7 @@ workspace-dir/
 - Python 3.9+
 - Node.js 18+ and npm
 - Rust toolchain with Cargo
-- OpenCASCADE/OCCT for native B-rep import/export work. The wiki selects OCCT as the initial kernel and the monorepo includes source at `../opensource/OCCT`; pass `-DAIM3D_ENABLE_OCCT=ON -DAIM3D_OCCT_DIR=/path/to/occt/package` after OCCT has been configured and built.
+- OpenCASCADE/OCCT for native B-rep import/export. WASM builds use the vendored `third_party/OCCT` submodule via `make build-occt`. Native (host) builds auto-detect a host-compatible package: `build/occt-native-install` (from `make build-occt-native`, OCCT 8.x), Homebrew (`brew install opencascade`), or `-DAIM3D_OCCT_DIR=...`. The Emscripten install under `build/occt-install` is 32-bit WASM and is not used for native ARM/x86_64 toolchains.
 
 ### Standard Commands
 
@@ -105,10 +105,18 @@ Run tests with:
 make test
 ```
 
-By default, the core builds without linking OCCT so the scaffold can compile in a clean environment. To require OCCT-backed geometry support:
+By default the Makefile enables OCCT for the WASM core (`make build` / `make test-core`). For a native host build:
 
 ```bash
-make build AIM3D_ENABLE_OCCT=1 AIM3D_OCCT_DIR=/path/to/occt/cmake/package
+# easiest on macOS/Linux with Homebrew
+brew install opencascade
+cmake -S aim3d -B build-native -DBUILD_TESTING=ON -DAIM3D_ENABLE_OCCT=ON
+cmake --build build-native
+ctest --test-dir build-native --output-on-failure
+
+# or match the vendored OCCT 8.x major used by WASM
+make build-occt-native
+cmake -S . -B build-native -DBUILD_TESTING=ON -DAIM3D_ENABLE_OCCT=ON
 ```
 
 The Python package currently exposes the Tier 1/2 scaffold: modern `aim3d.*` modules and Fusion-compatible `adsk.*` facade modules.
@@ -164,30 +172,16 @@ The heavier C++ core tests and the real-shader WebGPU test run in GitHub Actions
 
 ### Python test prerequisites
 
-Python tests (`make test-python`) need a native `libaim3d_core` shared library for the ctypes FFI and a repo-local `.venv`. `make test-python` builds both automatically via `make build-native` (a native, OCCT-disabled build of the core library). To set up the venv manually:
+Python tests (`make test-python`) need a native `libaim3d_core` shared library for the ctypes FFI and a repo-local `.venv`. `make test-python` builds both automatically via `make build-native` (host compiler; OCCT enabled when Homebrew or `build/occt-native-install` is available). To set up the venv manually:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e python
 ```
 
-### Microcontroller (MCU) Firmware Setup (STM32)
+### Microcontroller (MCU) Firmware
 
-`aim3d` includes a bare-metal microcontroller controller firmware subproject under [mcu/stm32](mcu/stm32/) designed to run on STM32F103 boards (e.g., Blue Pill). It decodes G-code step segments sent over USART serial using a Klipper-style protocol and drives motor stepper outputs.
-
-To build the firmware:
-
-1. Ensure `arm-none-eabi-gcc` toolchain is installed and on your PATH.
-2. Run compile commands:
-   ```bash
-   cd mcu/stm32
-   make
-   ```
-3. To flash the compiled binary to the board over serial:
-   ```bash
-   make flash
-   ```
-   For detailed pin configurations, clock parameters, and hardware safety configurations (E-stop & limits), refer to the [mcu/stm32/README.md](mcu/stm32/README.md).
+aim3d does not vendor its own MCU firmware. The machine controller target is an STM32 board running the firmware maintained in the sibling [`aic3d`](../aic3d) project — build and flash instructions live there. aim3d's controller daemon is the host-side counterpart; it talks to that firmware over serial.
 
 ### Component Commands
 

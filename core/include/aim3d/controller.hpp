@@ -41,7 +41,7 @@ enum class UnitMode {
 };
 
 struct MachineProfile {
-    std::string id = "jetson-orin-nano-spe-mill";
+    std::string id = "stm32-mill";
     std::array<AxisProfile, 3> axes;
     double maxSegmentDurationSec = 0.025;
     double stepPulseWidthNs = 2500.0;
