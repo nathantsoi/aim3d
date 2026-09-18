@@ -23,7 +23,7 @@ const mountPanel = () => {
 describe('Timeline tree deletion', () => {
   it('dispatches a delete action and removes the feature in design mode', async () => {
     const { wrapper, store } = mountPanel();
-    const before = store.features.length;
+    const deletedId = store.features[0].id;
 
     await wrapper.find('[data-testid="feature-delete"]').trigger('click');
     await flush();
@@ -32,7 +32,9 @@ describe('Timeline tree deletion', () => {
       type: ACTION_TYPES.DELETE_ENTITY,
       targetKind: 'feature'
     });
-    expect(store.features.length).toBe(before - 1);
+    // The dispatch also syncs in the document's permanent (hidden-by-default)
+    // Stock entry, so check the deleted feature is gone rather than a raw count.
+    expect(store.features.some((feature) => feature.id === deletedId)).toBe(false);
   });
 
   it('deletes an operation node in manufacture mode', async () => {
@@ -79,7 +81,7 @@ describe('Timeline model browser (schema v2)', () => {
         origin: { planes: ['origin_XY', 'origin_XZ', 'origin_YZ'], visible: true },
         construction: [{ id: 'con_Plane_1', kind: 'OffsetPlane', category: 'plane', label: 'Plane1', value: 5, visible: true, inputs: [] }],
         sketches: [{ id: 'feat_Sketch_1', plane: { kind: 'Origin', originPlane: 'XY' }, visible: true, entities: [{ id: 'sk_ent_1', kind: 'Rectangle2Point', points: [[0, 0], [2, 1]], construction: false }] }],
-        bodies: [{ id: 'body_1', name: 'Body1', sourceFeature: 'feat_Extrude_1' }]
+        bodies: [{ id: 'body_1', label: 'Body1', visible: true }]
       },
       viewportScene: { solids: [], toolpaths: [] }
     });

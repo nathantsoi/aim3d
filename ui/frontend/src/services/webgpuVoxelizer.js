@@ -294,9 +294,11 @@ export const createWebGpuVoxelizer = async (
         let tIdx = atomicAdd(&counter, 3u);
         let n = normalize(cross(vertList[e1] - vertList[e0], vertList[e2] - vertList[e0]));
         
-        vertices[tIdx] = Vertex(vertList[e0].x * params.uiScale, vertList[e0].y * params.uiScale, vertList[e0].z * params.uiScale, n.x, n.y, n.z, 0.6, 0.6, 0.6, 1.0);
-        vertices[tIdx+1u] = Vertex(vertList[e1].x * params.uiScale, vertList[e1].y * params.uiScale, vertList[e1].z * params.uiScale, n.x, n.y, n.z, 0.6, 0.6, 0.6, 1.0);
-        vertices[tIdx+2u] = Vertex(vertList[e2].x * params.uiScale, vertList[e2].y * params.uiScale, vertList[e2].z * params.uiScale, n.x, n.y, n.z, 0.6, 0.6, 0.6, 1.0);
+        // Semi-translucent yellow so the stock volume reads as "stock", distinct
+        // from any actual part geometry, in both the uncut and mid-cut states.
+        vertices[tIdx] = Vertex(vertList[e0].x * params.uiScale, vertList[e0].y * params.uiScale, vertList[e0].z * params.uiScale, n.x, n.y, n.z, 1.0, 0.85, 0.1, 0.45);
+        vertices[tIdx+1u] = Vertex(vertList[e1].x * params.uiScale, vertList[e1].y * params.uiScale, vertList[e1].z * params.uiScale, n.x, n.y, n.z, 1.0, 0.85, 0.1, 0.45);
+        vertices[tIdx+2u] = Vertex(vertList[e2].x * params.uiScale, vertList[e2].y * params.uiScale, vertList[e2].z * params.uiScale, n.x, n.y, n.z, 1.0, 0.85, 0.1, 0.45);
         
         indices[tIdx] = tIdx;
         indices[tIdx+1u] = tIdx+1u;

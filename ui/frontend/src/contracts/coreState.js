@@ -1,7 +1,11 @@
 import { constructionViewportMesh, createConstructionObject } from './constructionGeometry.js';
+import { createTopologyBoxSolid, ensureSolidTopology } from './topologyBoxSolid.js';
 
 export const ACTION_TYPES = Object.freeze({
   SELECT_ENTITY: 'ui.selectEntity',
+  SET_SELECTION: 'ui.setSelection',
+  TOGGLE_SELECTION: 'ui.toggleSelection',
+  CLEAR_SELECTION: 'ui.clearSelection',
   UPDATE_FIELD: 'ui.updateField',
   DELETE_ENTITY: 'core.deleteEntity',
   RECOMPUTE_DOCUMENT: 'core.recomputeDocument',
@@ -80,6 +84,8 @@ export const createDefaultViewportScene = () => ({
       createAxisCylinder('axis_z', 'Z', [0.28, 0.48, 1, 1], 2)
     ],
     originVisible: true,
+    edgesVisible: true,
+    pointsVisible: true,
     originPlanes: [
       {
         id: 'origin_XY',
@@ -174,6 +180,16 @@ const createDefaultBrowser = () => ({
   bodies: []
 });
 
+// Fusion default: every entity type selectable and Select Through enabled.
+export const createDefaultSelectionFilters = () => ({
+  bodies: true,
+  bodyFaces: true,
+  bodyEdges: true,
+  bodyVertices: true,
+  workGeometry: true,
+  selectThrough: true
+});
+
 export const createInitialCoreState = () => ({
   activeDocumentId: 'doc_1001',
   documentPath: 'Untitled.a3d',
@@ -203,6 +219,12 @@ export const createInitialCoreState = () => ({
   sketchConstraints: [],
   selectedEntityId: null,
   selectedEntity: null,
+  // Fusion-style multi-selection set. `selectedEntityId` mirrors the primary
+  // (last committed) member for back-compat with single-selection consumers.
+  selectedEntityIds: [],
+  // Selection toolbar state (Fusion Select > Selection Priority / Filters).
+  selectionPriority: null, // null | 'face' | 'body' | 'edge'
+  selectionFilters: createDefaultSelectionFilters(),
   features: [],
   setups: [],
   operations: [],
@@ -249,8 +271,32 @@ export const createUiAction = ({
 
 const findById = (items, id) => items.find((item) => item.id === id);
 
+// Classify a topology token ("body:2/face:0", "body:2/edge:3", "body:2") into a
+// human-readable entity type for the property panel.
+const topologyTypeFromToken = (entityId) => {
+  const match = /\/(face|edge|vertex):\d+$/.exec(entityId);
+  if (match) {
+    const kind = match[1];
+    if (kind === 'face') return 'B-rep Face';
+    if (kind === 'edge') return 'B-rep Edge';
+    if (kind === 'vertex') return 'B-rep Vertex';
+  }
+  if (/^body:\d+$/.test(entityId)) return 'B-rep Body';
+  return null;
+};
+
 const selectionFromToken = (state, entityId) => {
   if (!entityId) return null;
+
+  const topologyType = topologyTypeFromToken(entityId);
+  if (topologyType) {
+    return {
+      id: entityId,
+      type: topologyType,
+      parentId: state.activeDocumentId,
+      parentLabel: state.documentPath
+    };
+  }
 
   const feature = state.features.find((item) => item.selectionToken === entityId);
   if (feature) {
@@ -322,10 +368,31 @@ const applyFieldUpdate = (state, action) => {
   }
 };
 
+// Commit a selection set onto the state, keeping `selectedEntityId` /
+// `selectedEntity` in sync with the primary (last) member.
+const commitSelection = (state, ids) => {
+  const unique = [...new Set((ids ?? []).filter(Boolean))];
+  state.selectedEntityIds = unique;
+  const primary = unique.length ? unique[unique.length - 1] : null;
+  state.selectedEntityId = primary;
+  state.selectedEntity = primary ? selectionFromToken(state, primary) : null;
+};
+
+// The current selection as an array, tolerating legacy states that only set
+// the scalar `selectedEntityId`.
+const selectionList = (state) =>
+  state.selectedEntityIds?.length
+    ? state.selectedEntityIds
+    : state.selectedEntityId
+      ? [state.selectedEntityId]
+      : [];
+
 const clearSelectionIf = (state, ...ids) => {
-  if (ids.filter(Boolean).includes(state.selectedEntityId)) {
-    state.selectedEntityId = null;
-    state.selectedEntity = null;
+  const removed = new Set(ids.filter(Boolean));
+  const working = selectionList(state);
+  const remaining = working.filter((id) => !removed.has(id));
+  if (remaining.length !== working.length) {
+    commitSelection(state, remaining);
   }
 };
 
@@ -343,6 +410,40 @@ const solidBelongsToFeature = (solid, feature) => {
   );
 };
 
+// Keep the Stock feature/body-tree entry in sync with whatever stock geometry
+// is actually rendered in the viewport (see the `hasStockFeature` block in
+// syncViewportScene below). Without this, a stock cuboid shown automatically
+// (e.g. just by switching to Machine mode, before any explicit Setup > Stock
+// confirmation) would render with no corresponding entry in `features` /
+// `browser.bodies`, making it invisible to and undeletable from the model tree.
+const upsertStockDocumentEntry = (state, { x, y, z, kind }) => {
+  const stockId = 'feat_Stock_1';
+  const label = `Stock (${kind})`;
+
+  const existingFeature = findById(state.features, stockId);
+  if (existingFeature) {
+    existingFeature.label = label;
+  } else {
+    state.features.push({
+      id: stockId,
+      type: 'Stock',
+      label,
+      value: 0,
+      unit: 'mm',
+      isDirty: false,
+      selectionToken: `${stockId}_body_0`
+    });
+  }
+
+  if (!state.browser) state.browser = createDefaultBrowser();
+  const existingBody = findById(state.browser.bodies, stockId);
+  if (existingBody) {
+    existingBody.label = label;
+  } else {
+    state.browser.bodies.push({ id: stockId, label, visible: true });
+  }
+};
+
 const applyEntityDeletion = (state, action) => {
   const { targetKind, targetId } = action;
 
@@ -358,6 +459,9 @@ const applyEntityDeletion = (state, action) => {
       state.viewportScene.solids = state.viewportScene.solids.filter(
         (solid) => !solidBelongsToFeature(solid, removed)
       );
+    }
+    if (state.browser?.bodies) {
+      state.browser.bodies = state.browser.bodies.filter((body) => body.id !== targetId);
     }
     clearSelectionIf(state, targetId, removed?.selectionToken);
   }
@@ -412,28 +516,36 @@ export const syncViewportScene = (state) => {
     toolpath.status = readyOperationIds.has(toolpath.operationId) ? 'Ready' : 'Stale';
   });
 
-  // Dynamic Stock mesh for simulation
-  const hasStockFeature = (
-    state.features.some(f => f.type === 'Stock') || 
-    state.pendingStockSetup || 
-    state.activeMode === 'machine' || 
-    state.isSimulating
-  ) && (state.showStock !== false);
+  // Stock is a permanent part of every document (like Origin), so its
+  // feature/model-tree entry always exists — only its *geometry* is gated by
+  // the Stock visibility toggle (`showStock`), independent of active mode.
+  const stockX = state.pendingStockSetup?.x ?? state.stockSize?.x ?? 1;
+  const stockY = state.pendingStockSetup?.y ?? state.stockSize?.y ?? 1;
+  const stockZ = state.pendingStockSetup?.z ?? state.stockSize?.z ?? 1;
+  const stockKind = state.pendingStockSetup?.kind ?? state.stockSize?.kind ?? 'cuboid';
+  upsertStockDocumentEntry(state, { x: stockX, y: stockY, z: stockZ, kind: stockKind });
+
+  const hasStockFeature = state.showStock !== false;
   if (hasStockFeature) {
-    const x = state.pendingStockSetup?.x ?? state.stockSize?.x ?? 1;
-    const y = state.pendingStockSetup?.y ?? state.stockSize?.y ?? 1;
-    const z = state.pendingStockSetup?.z ?? state.stockSize?.z ?? 1;
-    const kind = state.pendingStockSetup?.kind ?? state.stockSize?.kind ?? 'cuboid';
+    const x = stockX;
+    const y = stockY;
+    const z = stockZ;
+    const kind = stockKind;
     const locX = state.pendingStockSetup?.locX ?? state.stockLocation?.x ?? 0;
     const locY = state.pendingStockSetup?.locY ?? state.stockLocation?.y ?? 0;
     const locZ = state.pendingStockSetup?.locZ ?? state.stockLocation?.z ?? 0;
-    
-    let stockPositions = [];
-    let stockNormals = [];
-    let stockIndices = [];
-    let stockColors = [];
-    
+
+    let stockSolid = null;
+
+    // Semi-translucent yellow so the stock preview reads as "stock", distinct
+    // from actual part geometry, matching the voxelizer's Stock mesh color.
+    const STOCK_COLOR = [1, 0.85, 0.1, 0.45];
+
     if (kind === 'cylinder') {
+      const stockPositions = [];
+      const stockNormals = [];
+      const stockIndices = [];
+      const stockColors = [];
       const radius = x / 2;
       const h = z;
       const segments = 32;
@@ -441,98 +553,85 @@ export const syncViewportScene = (state) => {
         const theta = (i / segments) * Math.PI * 2;
         const cx = Math.cos(theta) * radius;
         const cy = Math.sin(theta) * radius;
-        
+        const shade = i % 2 === 0 ? 0.85 : 1;
+        const [cr, cg, cb, ca] = [STOCK_COLOR[0] * shade, STOCK_COLOR[1] * shade, STOCK_COLOR[2] * shade, STOCK_COLOR[3]];
+
         // Bottom circle
         stockPositions.push(cx + locX, cy + locY, 0 + locZ);
         stockNormals.push(0, 0, -1);
-        stockColors.push(c, c, c, 0.7);
-        
+
         // Top circle
         stockPositions.push(cx + locX, cy + locY, h + locZ);
         stockNormals.push(0, 0, 1);
-        
+
         // Side bottom
         stockPositions.push(cx + locX, cy + locY, 0 + locZ);
         stockNormals.push(cx, cy, 0);
-        stockColors.push(c, c, c, 0.7);
-        
+
         // Side top
         stockPositions.push(cx + locX, cy + locY, h + locZ);
         stockNormals.push(cx, cy, 0);
-        
-        const c = i % 2 === 0 ? 0.7 : 0.8;
-        stockColors.push(c, c, c, 0.7, c, c, c, 0.7, c, c, c, 0.7, c, c, c, 0.7);
-        
+
+        stockColors.push(
+          cr, cg, cb, ca, cr, cg, cb, ca,
+          cr, cg, cb, ca, cr, cg, cb, ca
+        );
+
         if (i < segments) {
           const base = i * 4;
-          // Sides
           stockIndices.push(base + 2, base + 6, base + 3);
           stockIndices.push(base + 3, base + 6, base + 7);
         }
       }
-      
-      // Caps
+
       const centerBottom = stockPositions.length / 3;
       stockPositions.push(0 + locX, 0 + locY, 0 + locZ);
       stockNormals.push(0, 0, -1);
-      stockColors.push(0.7, 0.7, 0.7, 0.7);
-      
+      stockColors.push(STOCK_COLOR[0] * 0.85, STOCK_COLOR[1] * 0.85, STOCK_COLOR[2] * 0.85, STOCK_COLOR[3]);
+
       const centerTop = stockPositions.length / 3;
       stockPositions.push(0 + locX, 0 + locY, h + locZ);
       stockNormals.push(0, 0, 1);
-      stockColors.push(0.8, 0.8, 0.8, 0.7);
-      
+      stockColors.push(...STOCK_COLOR);
+
       for (let i = 0; i < segments; i++) {
         stockIndices.push(centerBottom, i * 4, ((i + 1) % segments) * 4);
         stockIndices.push(centerTop, ((i + 1) % segments) * 4 + 1, i * 4 + 1);
       }
-    } else {
-      const w = x;
-      const d = y;
-      const h = z;
-      stockPositions = [
-          0 + locX, 0 + locY, 0 + locZ,  w + locX, 0 + locY, 0 + locZ,  w + locX, d + locY, 0 + locZ,  0 + locX, d + locY, 0 + locZ,
-          0 + locX, 0 + locY, h + locZ,  w + locX, 0 + locY, h + locZ,  w + locX, d + locY, h + locZ,  0 + locX, d + locY, h + locZ
-      ];
-      stockNormals = [
-          0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
-          0,0,1,  0,0,1,  0,0,1,  0,0,1
-      ];
-      stockIndices = [
-          0, 3, 2, 0, 2, 1,
-          4, 5, 6, 4, 6, 7,
-          0, 1, 5, 0, 5, 4,
-          1, 2, 6, 1, 6, 5,
-          3, 7, 6, 3, 6, 2,
-          0, 4, 7, 0, 7, 3
-      ];
-      stockColors = Array(8 * 4).fill(0).map((_, i) => i % 4 === 3 ? 0.7 : 0.8);
-    }
 
-    const stockSolid = {
-      id: 'solid_stock',
-      bodyId: 9998,
-      sourceToken: 'feat_Stock_1',
-      positions: stockPositions,
-      normals: stockNormals,
-      indices: stockIndices,
-      colors: stockColors,
-      transform: [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ],
-      pickable: {
-        entityId: 'feat_Stock_1',
+      stockSolid = {
+        id: 'solid_stock',
+        bodyId: 9998,
+        sourceToken: 'feat_Stock_1',
+        positions: stockPositions,
+        normals: stockNormals,
+        indices: stockIndices,
+        colors: stockColors,
+        transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        pickable: {
+          entityId: 'feat_Stock_1',
+          kind: 'Stock',
+          priority: 5,
+          snapPoints: []
+        }
+      };
+    } else {
+      // Topology-complete stock cuboid so face/edge/body pick works on the
+      // default stock cube the same way it does on extruded bodies.
+      stockSolid = createTopologyBoxSolid({
+        min: [0 + locX, 0 + locY, 0 + locZ],
+        max: [x + locX, y + locY, z + locZ],
+        id: 'solid_stock',
+        bodyId: 9998,
+        sourceToken: 'feat_Stock_1',
         kind: 'Stock',
         priority: 5,
-        snapPoints: []
-      }
-    };
-    
+        color: STOCK_COLOR
+      });
+    }
+
     state.viewportScene.solids = state.viewportScene.solids.filter(s => s.id !== 'solid_stock');
-    if (!state.viewportScene.solids.some(s => s.id === 'solid_simulated_stock')) {
+    if (stockSolid && !state.viewportScene.solids.some(s => s.id === 'solid_simulated_stock')) {
       state.viewportScene.solids.push(stockSolid);
     }
   } else if (state.viewportScene?.solids) {
@@ -747,7 +846,9 @@ export const applyCoreSnapshot = (currentState, snapshot) => {
   }
   const snapshotScene = snapshot.viewportScene ?? {};
   if (Array.isArray(snapshotScene.solids)) {
-    state.viewportScene.solids = snapshotScene.solids;
+    // Stale cores / shared-vertex demo cubes may omit topology pickables;
+    // enrich axis-aligned boxes so face/edge/body selection works.
+    state.viewportScene.solids = snapshotScene.solids.map(ensureSolidTopology);
   }
   if (Array.isArray(snapshotScene.toolpaths)) {
     state.viewportScene.toolpaths = snapshotScene.toolpaths;
@@ -766,8 +867,8 @@ export const applyCoreSnapshot = (currentState, snapshot) => {
       .map((item) => constructionViewportMesh(item));
   }
 
-  // Drop a dangling selection that no longer resolves to a live entity.
-  if (state.selectedEntityId) {
+  // Drop dangling selection members that no longer resolve to a live entity.
+  if ((state.selectedEntityIds ?? []).length || state.selectedEntityId) {
     const tokens = new Set();
     state.features.forEach((feature) => {
       tokens.add(feature.id);
@@ -777,11 +878,16 @@ export const applyCoreSnapshot = (currentState, snapshot) => {
       if (solid.sourceToken) tokens.add(solid.sourceToken);
       if (solid.pickable?.entityId) tokens.add(solid.pickable.entityId);
       if (solid.id) tokens.add(solid.id);
+      if (solid.bodyToken) tokens.add(solid.bodyToken);
+      (solid.faceRanges ?? []).forEach((range) => range.token && tokens.add(range.token));
+      (solid.edgePickables ?? []).forEach((edge) => edge.token && tokens.add(edge.token));
+      (solid.vertexPickables ?? []).forEach((vertex) => vertex.token && tokens.add(vertex.token));
     });
-    if (!tokens.has(state.selectedEntityId)) {
-      state.selectedEntityId = null;
-      state.selectedEntity = null;
-    }
+    // Origin gizmos and construction geometry are always selectable work geometry.
+    (state.viewportScene.gizmos?.originPlanes ?? []).forEach((plane) => plane.id && tokens.add(plane.id));
+    (state.viewportScene.gizmos?.axes ?? []).forEach((axis) => axis.id && tokens.add(axis.id));
+    const survivors = selectionList(state).filter((id) => tokens.has(id));
+    commitSelection(state, survivors);
   }
 
   syncViewportScene(state);
@@ -796,8 +902,29 @@ export const applyMockCoreAction = (currentState, action) => {
   }
 
   if (action.type === ACTION_TYPES.SELECT_ENTITY) {
-    state.selectedEntityId = action.value;
-    state.selectedEntity = selectionFromToken(state, action.value);
+    commitSelection(state, action.value ? [action.value] : []);
+  }
+
+  if (action.type === ACTION_TYPES.SET_SELECTION) {
+    const ids = Array.isArray(action.value) ? action.value : action.value ? [action.value] : [];
+    commitSelection(state, ids);
+  }
+
+  if (action.type === ACTION_TYPES.TOGGLE_SELECTION) {
+    const current = state.selectedEntityIds ?? [];
+    const targets = Array.isArray(action.value) ? action.value : action.value ? [action.value] : [];
+    const next = [...current];
+    targets.forEach((id) => {
+      if (!id) return;
+      const at = next.indexOf(id);
+      if (at >= 0) next.splice(at, 1);
+      else next.push(id);
+    });
+    commitSelection(state, next);
+  }
+
+  if (action.type === ACTION_TYPES.CLEAR_SELECTION) {
+    commitSelection(state, []);
   }
 
   if (action.type === ACTION_TYPES.UPDATE_FIELD) {
@@ -925,32 +1052,7 @@ export const applyMockCoreAction = (currentState, action) => {
   }
 
   if (action.type === ACTION_TYPES.CREATE_STOCK) {
-    const { x, y, z, kind } = action.value;
-    const stockId = `feat_Stock_1`;
-    const label = `Stock (${kind})`;
-    
-    // Create feature
-    state.features = state.features.filter(f => f.id !== stockId);
-    state.features.push({
-      id: stockId,
-      type: 'Stock',
-      label,
-      value: 0,
-      unit: 'mm',
-      isDirty: false,
-      selectionToken: `${stockId}_body_0`
-    });
-
-    if (!state.browser) state.browser = createDefaultBrowser();
-    state.browser.bodies = state.browser.bodies.filter(b => b.id !== stockId);
-    state.browser.bodies.push({
-      id: stockId,
-      label: label,
-      visible: true
-    });
-    
-    syncViewportScene(state);
-    
+    upsertStockDocumentEntry(state, action.value);
     syncViewportScene(state);
   }
 

@@ -8,9 +8,31 @@
     <div
       v-if="selectionRect"
       class="selection-rect"
+      :class="{ crossing: selectionRectMode === 'crossing' }"
       data-testid="selection-rect"
       :style="selectionRectStyle"
     ></div>
+
+    <div
+      v-if="selectOther"
+      class="select-other glass"
+      data-testid="select-other-menu"
+      :style="{ left: `${selectOther.x}px`, top: `${selectOther.y}px` }"
+      @pointerleave="previewSelectOther(null)"
+    >
+      <div class="select-other-title">Select Other</div>
+      <button
+        v-for="(candidate, index) in selectOther.candidates"
+        :key="`${candidate.entityId}_${index}`"
+        class="select-other-row"
+        data-testid="select-other-row"
+        @pointerenter="previewSelectOther(candidate.entityId)"
+        @click.stop="commitSelectOther(candidate.entityId, $event)"
+      >
+        <span class="select-other-kind">{{ candidate.kind }}</span>
+        <span class="select-other-id">{{ candidate.entityId }}</span>
+      </button>
+    </div>
     <div v-if="fallbackMessage" class="viewport-fallback glass" data-testid="webgpu-fallback">
       {{ fallbackMessage }}
     </div>
@@ -87,6 +109,84 @@
         </div>
       </div>
 
+      <div class="viewport-settings">
+        <button
+          class="tool-btn glass"
+          title="Show/hide planes, edges, points & stock"
+          data-testid="view-visibility-toggle"
+          @click="viewMenuOpen = !viewMenuOpen"
+        >
+          &#128065;
+        </button>
+        <div v-if="viewMenuOpen" class="settings-menu glass" data-testid="view-visibility-menu">
+          <div class="settings-group-label">View</div>
+          <label
+            v-for="item in viewVisibilityItems"
+            :key="item.id"
+            class="settings-row"
+          >
+            <span>{{ item.label }}</span>
+            <input
+              type="checkbox"
+              :data-testid="`view-visibility-${item.id}`"
+              :checked="viewVisibility[item.id]"
+              @change="store.toggleViewportElementVisibility(item.id)"
+            />
+          </label>
+          <label class="settings-row">
+            <span>Stock</span>
+            <input
+              type="checkbox"
+              data-testid="view-visibility-stock"
+              :checked="store.showStock !== false"
+              @change="store.toggleStockVisibility()"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div class="viewport-settings">
+        <button
+          class="tool-btn glass"
+          :class="{ active: store.selectionPriority }"
+          title="Selection priority & filters"
+          data-testid="selection-menu-toggle"
+          @click="selectMenuOpen = !selectMenuOpen"
+        >
+          &#9737;
+        </button>
+        <div v-if="selectMenuOpen" class="settings-menu glass" data-testid="selection-menu">
+          <div class="settings-group-label">Selection Priority</div>
+          <label
+            v-for="mode in selectionPriorityModes"
+            :key="mode.id"
+            class="settings-row"
+          >
+            <span>{{ mode.label }}</span>
+            <input
+              type="radio"
+              :data-testid="`selection-priority-${mode.id}`"
+              :checked="store.selectionPriority === mode.id"
+              @click="store.setSelectionPriority(mode.id)"
+            />
+          </label>
+          <div class="settings-group-label">Selection Filters</div>
+          <label
+            v-for="filter in selectionFilterList"
+            :key="filter.id"
+            class="settings-row"
+          >
+            <span>{{ filter.label }}</span>
+            <input
+              type="checkbox"
+              :data-testid="`selection-filter-${filter.id}`"
+              :checked="store.selectionFilters[filter.id] !== false"
+              @change="store.toggleSelectionFilter(filter.id)"
+            />
+          </label>
+        </div>
+      </div>
+
       <button
         class="tool-btn glass"
         title="Home: re-center the view"
@@ -120,7 +220,7 @@ import { useCoreStore } from '../store';
 import SimulationPlaybackPanel from './SimulationPlaybackPanel.vue';
 import { createWebGpuViewportRenderer } from '../services/webgpuRenderer';
 import { popPendingCuts } from '../services/coreWasm';
-import { createCameraRay, pickViewportEntity } from '../services/viewportPicking';
+import { createCameraRay, pickAllViewportEntities, pickViewportEntity } from '../services/viewportPicking';
 import { overviewCamera } from '../services/viewportDebugGizmos';
 import {
   clamp,
@@ -164,7 +264,38 @@ export default defineComponent({
     const store = useCoreStore();
     const hoverTargetId = ref(null);
     const settingsOpen = ref(false);
+    const selectMenuOpen = ref(false);
+    const viewMenuOpen = ref(false);
     const debugOverlayVisible = ref(true);
+
+    // View visibility flyout: shows/hides origin planes, body edges and
+    // vertices (points) in the 3D view. Hidden elements are also excluded
+    // from hover/pick (see viewportPicking.js and viewportSceneAdapter.js).
+    const viewVisibilityItems = [
+      { id: 'planes', label: 'Planes' },
+      { id: 'edges', label: 'Edges' },
+      { id: 'points', label: 'Points' }
+    ];
+    const viewVisibility = computed(() => ({
+      planes: store.viewportScene?.gizmos?.originVisible !== false,
+      edges: store.viewportScene?.gizmos?.edgesVisible !== false,
+      points: store.viewportScene?.gizmos?.pointsVisible !== false
+    }));
+
+    // Fusion Selection Priority tools and Selection Filters checklist.
+    const selectionPriorityModes = [
+      { id: 'face', label: 'Select Face Priority' },
+      { id: 'body', label: 'Select Body Priority' },
+      { id: 'edge', label: 'Select Edge Priority' }
+    ];
+    const selectionFilterList = [
+      { id: 'bodies', label: 'Bodies' },
+      { id: 'bodyFaces', label: 'Body Faces' },
+      { id: 'bodyEdges', label: 'Body Edges' },
+      { id: 'bodyVertices', label: 'Body Vertices' },
+      { id: 'workGeometry', label: 'Work Geometry' },
+      { id: 'selectThrough', label: 'Select Through' }
+    ];
 
     const gridEnabled = computed(() => Boolean(store.viewportScene?.gizmos?.grid));
     const debugModeEnabled = computed(() => Boolean(store.viewportScene?.gizmos?.debug?.enabled));
@@ -185,6 +316,8 @@ export default defineComponent({
     });
 
     const selectionRect = ref(null);
+    const selectionRectMode = ref('window');
+    const selectOther = ref(null);
     const selectionRectStyle = computed(() => {
       const rect = selectionRect.value;
       if (!rect) return {};
@@ -292,13 +425,19 @@ export default defineComponent({
         }
       }
 
-      const hideStock = (store.isSimulating || store.activeMode === 'machine') && renderer?.voxelizer?.vertexCount > 0;
-      renderer.updateScene(store.viewportScene, store.selectedEntityId, hoverTargetId.value, { hideStock });
-      renderer.render(store.viewportScene);
+      const stockVisible = store.showStock !== false;
+      const inMachineContext = store.isSimulating || store.activeMode === 'machine';
+      // The pickable/highlightable stock preview (solid_stock) is shown in
+      // Design/Manufacture; the voxelizer's live cut mesh (not pickable) takes
+      // over once actually machining/simulating. Never draw both at once.
+      const hideStock = inMachineContext && renderer?.voxelizer?.vertexCount > 0;
+      const showVoxelizerStock = stockVisible && inMachineContext;
+      renderer.updateScene(store.viewportScene, store.selectedEntityIds, hoverTargetId.value, { hideStock });
+      renderer.render(store.viewportScene, { showStock: showVoxelizerStock });
       if (debugModeEnabled.value && debugRenderer?.available) {
         const overviewScene = buildOverviewScene();
-        debugRenderer.updateScene(overviewScene, store.selectedEntityId, hoverTargetId.value);
-        debugRenderer.render(overviewScene, { camera: overviewScene.camera });
+        debugRenderer.updateScene(overviewScene, store.selectedEntityIds, hoverTargetId.value);
+        debugRenderer.render(overviewScene, { camera: overviewScene.camera, showStock: showVoxelizerStock });
       }
       animationFrame = requestAnimationFrame(renderLoop);
     };
@@ -308,12 +447,23 @@ export default defineComponent({
       debugRenderer?.resize?.();
     };
 
+    // Active Fusion-style selection options (filters + priority) applied to
+    // every hover/click pick so the toolbar state drives what is selectable.
+    const selectionOptions = () => ({
+      filters: store.selectionFilters,
+      priority: store.selectionPriority,
+      // In sketch mode, sketch entities take absolute precedence (Fusion). The
+      // picker honours this hook today; 3D solids stay pickable until sketch
+      // pickables are emitted into the scene.
+      sketchMode: store.isSketchMode
+    });
+
     const pickAtEvent = (event) => {
       const canvas = canvas3D.value;
       const rect = canvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      return pickViewportEntity(store.viewportScene, x, y, rect.width, rect.height);
+      return pickViewportEntity(store.viewportScene, x, y, rect.width, rect.height, selectionOptions());
     };
 
     const applyPickDiagnostics = (pickResult) => {
@@ -327,7 +477,38 @@ export default defineComponent({
         snapCandidateId: snapId
       });
       const hideStock = (store.isSimulating || store.activeMode === 'machine') && renderer?.voxelizer?.vertexCount > 0;
-      renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverId, { hideStock });
+      renderer?.updateScene?.(store.viewportScene, store.selectedEntityIds, hoverId, { hideStock });
+    };
+
+    const closeSelectOther = () => {
+      selectOther.value = null;
+    };
+
+    // Long-press over overlapping geometry opens the Fusion "Select Other" depth
+    // menu, listing every entity pierced by the cursor ray front-to-back.
+    const openSelectOther = (event) => {
+      const canvas = canvas3D.value;
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const { candidates } = pickAllViewportEntities(store.viewportScene, x, y, rect.width, rect.height);
+      if (candidates.length < 2) return;
+      selectOther.value = { x, y, candidates };
+      suppressNextClick = true;
+    };
+
+    const previewSelectOther = (entityId) => {
+      hoverTargetId.value = entityId;
+    };
+
+    const commitSelectOther = async (entityId, event) => {
+      closeSelectOther();
+      const additive = Boolean(event?.metaKey || event?.ctrlKey);
+      if (additive) {
+        await store.toggleSelection(entityId);
+      } else {
+        await store.setSelection([entityId]);
+      }
     };
 
     const handleSelectionClick = async (event) => {
@@ -357,19 +538,37 @@ export default defineComponent({
           return;
         }
       }
-      await store.selectEntity(pickResult.hit?.entityId ?? null);
+
+      const entityId = pickResult.hit?.entityId ?? null;
+      const additive = event.metaKey || event.ctrlKey;
+      if (additive) {
+        // Ctrl/Cmd click adds or removes a single entity from the set.
+        if (entityId) await store.toggleSelection(entityId);
+        return;
+      }
+      if (entityId) {
+        await store.selectEntity(entityId);
+      } else {
+        await store.clearSelection();
+      }
     };
 
     // Click-drag draws a rubber-band rectangle that selects whatever it covers.
     const handlePointerDown = (event) => {
       if (event.button !== 0) return;
+      closeSelectOther();
       const rect = canvas3D.value.getBoundingClientRect();
       const start = localPoint(event, rect);
       dragState = {
         pointerId: event.pointerId,
         startX: start.x,
         startY: start.y,
-        moved: false
+        lastX: start.x,
+        moved: false,
+        additive: event.metaKey || event.ctrlKey,
+        longPress: setTimeout(() => {
+          if (dragState && !dragState.moved) openSelectOther(event);
+        }, 500)
       };
       canvas3D.value.setPointerCapture?.(event.pointerId);
       event.preventDefault();
@@ -383,10 +582,18 @@ export default defineComponent({
       if (dragState.pointerId !== event.pointerId) return;
       const rect = canvas3D.value.getBoundingClientRect();
       const current = localPoint(event, rect);
+      dragState.lastX = current.x;
       if (Math.hypot(current.x - dragState.startX, current.y - dragState.startY) > 3) {
         dragState.moved = true;
+        if (dragState.longPress) {
+          clearTimeout(dragState.longPress);
+          dragState.longPress = null;
+        }
       }
       if (dragState.moved) {
+        // Left-to-right is a window (fully enclosed); right-to-left is a
+        // crossing (touched), mirroring Fusion's solid vs dashed marquee.
+        selectionRectMode.value = current.x >= dragState.startX ? 'window' : 'crossing';
         selectionRect.value = normalizeRect(dragState.startX, dragState.startY, current.x, current.y);
       }
       event.preventDefault();
@@ -395,7 +602,12 @@ export default defineComponent({
     const handlePointerUp = async (event) => {
       if (!dragState || dragState.pointerId !== event.pointerId) return;
       canvas3D.value.releasePointerCapture?.(event.pointerId);
+      if (dragState.longPress) clearTimeout(dragState.longPress);
       const wasDrag = dragState.moved;
+      const additive = dragState.additive;
+      const mode = event.clientX - canvas3D.value.getBoundingClientRect().left >= dragState.startX
+        ? 'window'
+        : 'crossing';
       const rect = selectionRect.value;
       dragState = null;
       selectionRect.value = null;
@@ -408,8 +620,16 @@ export default defineComponent({
 
       suppressNextClick = true;
       const canvasRect = canvas3D.value.getBoundingClientRect();
-      const matches = entitiesInRect(store.viewportScene, rect, canvasRect.width, canvasRect.height);
-      await store.selectEntity(matches[0] ?? null);
+      const matches = entitiesInRect(store.viewportScene, rect, canvasRect.width, canvasRect.height, {
+        mode,
+        filters: store.selectionFilters
+      });
+      if (additive) {
+        const union = [...new Set([...(store.selectedEntityIds ?? []), ...matches])];
+        await store.setSelection(union);
+      } else {
+        await store.setSelection(matches);
+      }
     };
 
     // Resolve the orbit pivot from the cursor ray. Prefer the exact point on a
@@ -547,15 +767,16 @@ export default defineComponent({
     });
 
     watch(
-      () => [store.viewportScene, store.selectedEntityId],
+      () => [store.viewportScene, store.selectedEntityIds],
       () => {
         const hideStock = (store.isSimulating || store.activeMode === 'machine') && renderer?.voxelizer?.vertexCount > 0;
-        renderer?.updateScene?.(store.viewportScene, store.selectedEntityId, hoverTargetId.value, { hideStock });
+        renderer?.updateScene?.(store.viewportScene, store.selectedEntityIds, hoverTargetId.value, { hideStock });
       }
     );
 
     onUnmounted(() => {
       disposed = true;
+      if (dragState?.longPress) clearTimeout(dragState.longPress);
       if (animationFrame) cancelAnimationFrame(animationFrame);
       canvas3D.value?.removeEventListener('click', handleSelectionClick);
       canvas3D.value?.removeEventListener('pointerdown', handlePointerDown);
@@ -576,6 +797,12 @@ export default defineComponent({
       fallbackMessage,
       store,
       settingsOpen,
+      selectMenuOpen,
+      viewMenuOpen,
+      viewVisibilityItems,
+      viewVisibility,
+      selectionPriorityModes,
+      selectionFilterList,
       debugOverlayVisible,
       debugModeEnabled,
       orbitPivotLabel,
@@ -583,7 +810,12 @@ export default defineComponent({
       navCubeStyle,
       goHome,
       selectionRect,
-      selectionRectStyle
+      selectionRectMode,
+      selectionRectStyle,
+      selectOther,
+      previewSelectOther,
+      commitSelectOther,
+      closeSelectOther
     };
   }
 });
@@ -615,6 +847,66 @@ export default defineComponent({
   background: hsla(200, 100%, 60%, 0.15);
   pointer-events: none;
   z-index: 6;
+}
+
+/* Crossing (right-to-left) marquee: dashed outline, green wash, like Fusion. */
+.selection-rect.crossing {
+  border: 1px dashed hsl(140, 70%, 60%);
+  background: hsla(140, 70%, 50%, 0.12);
+}
+
+.select-other {
+  position: absolute;
+  z-index: 8;
+  min-width: 220px;
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.select-other-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: hsl(220, 10%, 65%);
+  padding: 4px 8px;
+}
+
+.select-other-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: hsl(220, 10%, 90%);
+}
+
+.select-other-row:hover {
+  background: hsla(200, 100%, 55%, 0.22);
+}
+
+.select-other-kind {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: hsl(200, 100%, 70%);
+  text-transform: capitalize;
+  min-width: 46px;
+}
+
+.select-other-id {
+  font-size: 0.72rem;
+  color: hsl(220, 10%, 78%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .viewport-fallback {
@@ -687,6 +979,22 @@ export default defineComponent({
   font-size: 0.8rem;
   color: hsl(220, 10%, 88%);
   cursor: pointer;
+}
+
+.settings-group-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: hsl(220, 10%, 60%);
+  margin: 8px 0 4px;
+}
+
+.settings-group-label:first-child {
+  margin-top: 0;
+}
+
+.tool-btn.active {
+  color: hsl(45, 100%, 60%);
 }
 
 .settings-row input {

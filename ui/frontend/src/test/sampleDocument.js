@@ -1,43 +1,24 @@
+import { createTopologyBoxSolid } from '../contracts/topologyBoxSolid.js';
+
 // Test-only fixture: seeds a representative sample document (features, setups,
 // operations, and a pickable viewport solid) into a fresh store. Production
 // `createInitialCoreState` intentionally starts empty (a new document has no
 // geometry), so component tests that need something to render/edit/pick seed it
 // explicitly via this helper rather than relying on built-in sample data.
 
-const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-
-const SAMPLE_SOLID = {
+// Topology-complete box matching the legacy demo extents, with per-face verts
+// and face/edge/vertex/body pickables so Fusion-style selection works out of
+// the box on the default cube.
+const SAMPLE_SOLID = createTopologyBoxSolid({
+  min: [-1.8, -1.2, -0.35],
+  max: [1.8, 1.2, 0.35],
   id: 'solid_MainPocket_1',
   bodyId: 2,
   sourceToken: 'feat_Extrude_1_face_0',
-  pickable: {
-    entityId: 'feat_Extrude_1_face_0',
-    kind: 'B-rep Exact Face',
-    priority: 10,
-    snapPoints: [{ id: 'solid_MainPocket_1_center', kind: 'center', position: [0, 0, 0.35] }]
-  },
-  positions: [
-    -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
-    -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
-  ],
-  normals: [
-    0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
-    0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1
-  ],
-  colors: [
-    0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1, 0.16, 0.62, 0.9, 1,
-    0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1, 0.2, 0.72, 1, 1
-  ],
-  indices: [
-    0, 1, 2, 0, 2, 3,
-    4, 6, 5, 4, 7, 6,
-    0, 4, 5, 0, 5, 1,
-    1, 5, 6, 1, 6, 2,
-    2, 6, 7, 2, 7, 3,
-    3, 7, 4, 3, 4, 0
-  ],
-  transform: IDENTITY
-};
+  kind: 'B-rep Exact Face',
+  priority: 10,
+  color: [0.2, 0.72, 1, 1]
+});
 
 const SAMPLE_TOOLPATH = {
   id: 'toolpath_op_Pocket_1',

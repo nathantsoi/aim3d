@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultViewportScene } from '../contracts/coreState';
+import { createTopologyBoxSolid } from '../contracts/topologyBoxSolid';
 import {
   cameraEye,
   cameraUp,
@@ -23,15 +24,13 @@ const distance3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const sceneWithSolid = () => {
   const scene = createDefaultViewportScene();
   scene.solids = [
-    {
+    createTopologyBoxSolid({
+      min: [-1.8, -1.2, -0.35],
+      max: [1.8, 1.2, 0.35],
       id: 'solid_MainPocket_1',
-      sourceToken: 'feat_Extrude_1_face_0',
-      pickable: { entityId: 'feat_Extrude_1_face_0', kind: 'B-rep Exact Face', priority: 10 },
-      positions: [
-        -1.8, -1.2, -0.35, 1.8, -1.2, -0.35, 1.8, 1.2, -0.35, -1.8, 1.2, -0.35,
-        -1.8, -1.2, 0.35, 1.8, -1.2, 0.35, 1.8, 1.2, 0.35, -1.8, 1.2, 0.35
-      ]
-    }
+      bodyId: 2,
+      sourceToken: 'feat_Extrude_1_face_0'
+    })
   ];
   return scene;
 };
@@ -99,10 +98,47 @@ describe('viewport controls (Z-up, -Y forward)', () => {
     const height = 600;
 
     const fullScreen = { minX: 0, minY: 0, maxX: width, maxY: height };
-    expect(entitiesInRect(scene, fullScreen, width, height)).toContain('feat_Extrude_1_face_0');
+    const hits = entitiesInRect(scene, fullScreen, width, height);
+    expect(hits.some((id) => /^body:2\//.test(id))).toBe(true);
 
     const cornerSpeck = { minX: 0, minY: 0, maxX: 2, maxY: 2 };
     expect(entitiesInRect(scene, cornerSpeck, width, height)).toHaveLength(0);
+  });
+
+  it('distinguishes window (enclosed) from crossing (touched) selection', () => {
+    const scene = sceneWithSolid();
+    const width = 800;
+    const height = 600;
+
+    // A rectangle that covers only part of the solid: crossing selects
+    // touched faces while a tight corner speck selects nothing in window mode.
+    const partial = { minX: 0, minY: 0, maxX: width / 2, maxY: height / 2 };
+    expect(entitiesInRect(scene, partial, width, height, {
+      mode: 'crossing',
+      filters: { bodyFaces: true, bodyEdges: false, bodyVertices: false }
+    }).some((id) => /^body:2\/face:/.test(id))).toBe(true);
+
+    const cornerSpeck = { minX: 0, minY: 0, maxX: 8, maxY: 8 };
+    expect(entitiesInRect(scene, cornerSpeck, width, height, {
+      mode: 'window',
+      filters: { bodyFaces: true, bodyEdges: true, bodyVertices: true }
+    })).toHaveLength(0);
+
+    // A full-canvas rectangle encloses the solid, so window selects it too.
+    const full = { minX: 0, minY: 0, maxX: width, maxY: height };
+    expect(entitiesInRect(scene, full, width, height, { mode: 'window' })
+      .some((id) => /^body:2\//.test(id))).toBe(true);
+  });
+
+  it('honours selection filters when marquee-selecting', () => {
+    const scene = sceneWithSolid();
+    const full = { minX: 0, minY: 0, maxX: 800, maxY: 600 };
+    expect(
+      entitiesInRect(scene, full, 800, 600, {
+        mode: 'window',
+        filters: { bodyFaces: false, bodyEdges: false, bodyVertices: false }
+      })
+    ).toHaveLength(0);
   });
 
   it('computes the bounds center and radius of solid geometry', () => {

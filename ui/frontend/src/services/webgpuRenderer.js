@@ -190,7 +190,16 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     fragment: {
       module: shader,
       entryPoint: 'fragment_main',
-      targets: [{ format }]
+      // Alpha blending here is a no-op for opaque (alpha=1) CAD geometry, but
+      // lets translucent solids (e.g. the semi-transparent Stock preview)
+      // actually blend instead of rendering fully opaque.
+      targets: [{
+        format,
+        blend: {
+          color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
+          alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
+        }
+      }]
     },
     primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' }
@@ -213,7 +222,15 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
     fragment: {
       module: shader,
       entryPoint: 'fragment_main',
-      targets: [{ format }]
+      // Same rationale as solidPipeline: lets the voxelizer's Stock mesh
+      // render semi-translucent via its vertex color's alpha channel.
+      targets: [{
+        format,
+        blend: {
+          color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
+          alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
+        }
+      }]
     },
     primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' }
@@ -374,7 +391,7 @@ export const createWebGpuViewportRenderer = async (canvas, onDiagnostics = () =>
       pass.setIndexBuffer(buffers.solidIndex, 'uint32');
       pass.drawIndexed(adapted.solidIndices.length);
     }
-    if (options.voxelizer && options.voxelizer.vertexCount > 0) {
+    if (options.showStock !== false && options.voxelizer && options.voxelizer.vertexCount > 0) {
       pass.setPipeline(voxelPipeline);
       pass.setVertexBuffer(0, options.voxelizer.vertexBuffer);
       pass.setIndexBuffer(options.voxelizer.indexBuffer, 'uint32');

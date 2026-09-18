@@ -127,7 +127,7 @@
               :class="{ selected: store.selectedEntityId === body.id }"
               data-testid="body-node"
               @click="onBrowserNodeClick(body.id)"
-            >{{ body.name }}</div>
+            >{{ body.label }}</div>
           </div>
         </div>
       </div>
@@ -165,6 +165,7 @@
             &#9998;
           </button>
           <button
+            v-if="feature.type !== 'Stock'"
             class="delete-btn"
             :title="`Delete ${feature.label}`"
             data-testid="feature-delete"

@@ -6,6 +6,8 @@
 // XY ground plane). At yaw = 0, pitch = 0 the eye sits on +Y looking toward -Y,
 // so -Y is the forward (into-screen) direction.
 
+import { ensureSolidTopology } from '../contracts/topologyBoxSolid';
+
 const WORLD_UP = Object.freeze([0, 0, 1]);
 const MAX_PITCH = 1.45;
 const TAN_HALF_FOV = Math.tan(Math.PI / 8);
@@ -195,33 +197,103 @@ export const projectToScreen = (camera, point, width, height) => {
 const rectContains = (rect, x, y) =>
   x >= rect.minX && x <= rect.maxX && y >= rect.minY && y <= rect.maxY;
 
-// Returns the entities whose geometry projects inside the selection rectangle,
+const filterAllows = (filters, kind) => {
+  if (!filters) return true;
+  switch (kind) {
+    case 'face':
+      return filters.bodyFaces !== false;
+    case 'edge':
+      return filters.bodyEdges !== false;
+    case 'vertex':
+      return filters.bodyVertices !== false;
+    case 'workGeometry':
+      return filters.workGeometry !== false;
+    default:
+      return true;
+  }
+};
+
+// Evaluate a set of world points against the selection rectangle for the given
+// mode. Window (L->R) requires every visible point inside the rect; crossing
+// (R->L) accepts any point inside. Returns the nearest depth or null.
+const pointsInRect = (camera, eye, points, rect, width, height, mode) => {
+  let anyInside = false;
+  let allInside = true;
+  let sawVisible = false;
+  let nearest = Infinity;
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const world = [points[i], points[i + 1], points[i + 2]];
+    const projected = projectToScreen(camera, world, width, height);
+    if (!projected.visible) {
+      allInside = false;
+      continue;
+    }
+    sawVisible = true;
+    if (rectContains(rect, projected.x, projected.y)) {
+      anyInside = true;
+      nearest = Math.min(nearest, length(sub(world, eye)));
+    } else {
+      allInside = false;
+    }
+  }
+  if (!sawVisible) return null;
+  const included = mode === 'crossing' ? anyInside : allInside && anyInside;
+  return included ? nearest : null;
+};
+
+// Returns the entities whose geometry falls within the selection rectangle,
 // ordered nearest-first. `rect` is in canvas pixel coordinates.
-export const entitiesInRect = (scene, rect, width, height) => {
+//
+// options.mode: 'window' (default, fully enclosed) or 'crossing' (touched).
+// options.filters: Fusion-style selection filters (per-kind gate).
+export const entitiesInRect = (scene, rect, width, height, options = {}) => {
+  const mode = options.mode === 'crossing' ? 'crossing' : 'window';
+  const filters = options.filters ?? null;
   const camera = scene?.camera;
+  const eye = cameraEye(camera);
   const found = new Map();
 
-  (scene?.solids ?? []).forEach((solid) => {
-    const positions = solid.positions ?? [];
-    const entityId = solid.pickable?.entityId ?? solid.sourceToken ?? solid.id ?? null;
-    if (!entityId || positions.length < 3) return;
+  const consider = (entityId, kind, points) => {
+    if (!entityId || !filterAllows(filters, kind)) return;
+    const depth = pointsInRect(camera, eye, points, rect, width, height, mode);
+    if (depth == null) return;
+    const existing = found.get(entityId);
+    if (existing == null || depth < existing) found.set(entityId, depth);
+  };
 
-    for (let i = 0; i + 2 < positions.length; i += 3) {
-      const projected = projectToScreen(
-        camera,
-        [positions[i], positions[i + 1], positions[i + 2]],
-        width,
-        height
-      );
-      if (!projected.visible || !rectContains(rect, projected.x, projected.y)) continue;
-      const eye = cameraEye(camera);
-      const depth = length(sub([positions[i], positions[i + 1], positions[i + 2]], eye));
-      const existing = found.get(entityId);
-      if (!existing || depth < existing) {
-        found.set(entityId, depth);
-      }
+  (scene?.solids ?? []).forEach((rawSolid) => {
+    const solid = ensureSolidTopology(rawSolid);
+    const positions = solid.positions ?? [];
+    const indices = solid.indices ?? [];
+    const faceRanges = solid.faceRanges ?? [];
+
+    if (faceRanges.length && positions.length >= 9 && indices.length >= 3) {
+      // Per-face granularity: evaluate the vertices referenced by each face's
+      // triangle range so window/crossing target individual faces.
+      faceRanges.forEach((range) => {
+        const start = (range.triangleStart ?? 0) * 3;
+        const count = (range.triangleCount ?? 0) * 3;
+        const pts = [];
+        for (let k = start; k < start + count && k < indices.length; k++) {
+          const base = indices[k] * 3;
+          pts.push(positions[base], positions[base + 1], positions[base + 2]);
+        }
+        consider(range.token, 'face', pts);
+      });
+    } else if (positions.length >= 3) {
+      const entityId = solid.pickable?.entityId ?? solid.sourceToken ?? solid.id ?? null;
+      consider(entityId, 'face', positions);
     }
+
+    (solid.edgePickables ?? []).forEach((edge) => consider(edge.token, 'edge', edge.points ?? []));
+    (solid.vertexPickables ?? []).forEach((vertex) =>
+      consider(vertex.token, 'vertex', vertex.position ?? [])
+    );
   });
+
+  // Origin planes/axes are viewport reference gizmos, not model geometry, so
+  // they are excluded from window/crossing marquees (matching Fusion, where a
+  // drag targets bodies/faces/edges/vertices rather than the origin gizmo).
 
   return [...found.entries()]
     .sort((a, b) => a[1] - b[1])

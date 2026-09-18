@@ -110,7 +110,10 @@ export const useCoreStore = defineStore('core', {
 
     // Machine Control State
     machineTaskMode: 'manual', // 'manual', 'mdi', 'auto'
-    showStock: true,
+    // Stock is a permanent part of the document tree (see coreState.js's
+    // upsertStockDocumentEntry), shown in every mode once toggled on, but
+    // defaults to hidden so a fresh document doesn't show one unprompted.
+    showStock: false,
     showG54Frame: true,
     showG54Modal: false,
     showToolTableModal: false,
@@ -775,6 +778,26 @@ export const useCoreStore = defineStore('core', {
       this.browser.origin.visible = this.viewportScene.gizmos.originVisible;
     },
 
+    // View visibility flyout: toggles whether planes, edges or points are
+    // shown (and therefore pickable/hoverable) in the 3D viewport. "Planes"
+    // reuses the origin-visibility flag so it stays in sync with the Timeline
+    // browser's Origin toggle.
+    toggleViewportElementVisibility(kind) {
+      if (kind === 'planes') {
+        this.toggleOriginVisibility();
+        return;
+      }
+      const key = kind === 'edges' ? 'edgesVisible' : kind === 'points' ? 'pointsVisible' : null;
+      if (!key || !this.viewportScene) return;
+      if (!this.viewportScene.gizmos) {
+        this.viewportScene.gizmos = {};
+      }
+      if (this.viewportScene.gizmos[key] === undefined) {
+        this.viewportScene.gizmos[key] = true;
+      }
+      this.viewportScene.gizmos[key] = !this.viewportScene.gizmos[key];
+    },
+
     toggleViewportDebugMode() {
       if (!this.viewportScene) return;
       if (!this.viewportScene.gizmos) {
@@ -828,6 +851,53 @@ export const useCoreStore = defineStore('core', {
         path: 'selectedEntityId',
         value: entityId
       });
+    },
+
+    // Replace the entire selection set (plain click or window/crossing commit).
+    setSelection(entityIds) {
+      const ids = Array.isArray(entityIds) ? entityIds : entityIds ? [entityIds] : [];
+      return this.dispatchAction({
+        type: ACTION_TYPES.SET_SELECTION,
+        targetId: ids[ids.length - 1] ?? null,
+        targetKind: 'selection',
+        path: 'selectedEntityIds',
+        value: ids
+      });
+    },
+
+    // Add/remove an entity from the current set (Ctrl/Cmd click).
+    toggleSelection(entityId) {
+      return this.dispatchAction({
+        type: ACTION_TYPES.TOGGLE_SELECTION,
+        targetId: entityId,
+        targetKind: 'selection',
+        path: 'selectedEntityIds',
+        value: entityId
+      });
+    },
+
+    clearSelection() {
+      return this.dispatchAction({
+        type: ACTION_TYPES.CLEAR_SELECTION,
+        targetId: null,
+        targetKind: 'selection',
+        path: 'selectedEntityIds',
+        value: []
+      });
+    },
+
+    // Fusion Selection Priority tool: clicking the active mode again clears it
+    // (only one priority mode can be active at a time).
+    setSelectionPriority(priority) {
+      this.selectionPriority = this.selectionPriority === priority ? null : priority;
+    },
+
+    toggleSelectionFilter(key) {
+      if (!this.selectionFilters || !(key in this.selectionFilters)) return;
+      this.selectionFilters = {
+        ...this.selectionFilters,
+        [key]: !this.selectionFilters[key]
+      };
     },
 
     updateFeatureParameter(featureId, value) {

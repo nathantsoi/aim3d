@@ -1,9 +1,50 @@
 import { CONSTRUCTION_PLANE_FILL_COLOR } from '../contracts/constructionGeometry.js';
+import { ensureSolidTopology } from '../contracts/topologyBoxSolid.js';
 import { buildCameraGizmoLines, buildCameraLookAxisLine, buildOrbitPivotLines } from './viewportDebugGizmos.js';
 
 const SELECTED_SOLID_COLOR = [1, 0.82, 0.24, 1];
 const HOVERED_SOLID_COLOR = [0.5, 0.95, 1, 1];
 const STALE_TOOLPATH_COLOR = [0.92, 0.42, 0.22, 1];
+// Overlay colors for highlighted edges/vertices, drawn on top of solids.
+const SELECTED_EDGE_COLOR = [1, 0.82, 0.24, 1];
+const HOVERED_EDGE_COLOR = [0.6, 0.97, 1, 1];
+
+// Selection/hover ids arrive as either a scalar token or an array (multi-select).
+const toIdSet = (value) => {
+  if (value == null) return new Set();
+  return new Set(Array.isArray(value) ? value.filter(Boolean) : [value]);
+};
+
+// Resolve, per vertex, whether it should render as selected (2), hovered (1) or
+// unaffected (0). A whole-solid/body match colors everything; otherwise only the
+// vertices of matched face ranges are highlighted so single faces stand out.
+const computeVertexState = (solid, selectedSet, hoverSet) => {
+  const vertexCount = Math.floor((solid.positions?.length ?? 0) / 3);
+  const state = new Uint8Array(vertexCount);
+  const wholeIds = [solid.pickable?.entityId, solid.sourceToken, solid.id, solid.bodyToken]
+    .filter(Boolean);
+  if (wholeIds.some((id) => selectedSet.has(id))) {
+    state.fill(2);
+    return state;
+  }
+  if (wholeIds.some((id) => hoverSet.has(id))) {
+    state.fill(1);
+    return state;
+  }
+  const ranges = solid.faceRanges ?? [];
+  const indices = solid.indices ?? [];
+  ranges.forEach((range) => {
+    const level = selectedSet.has(range.token) ? 2 : hoverSet.has(range.token) ? 1 : 0;
+    if (!level) return;
+    const start = (range.triangleStart ?? 0) * 3;
+    const end = start + (range.triangleCount ?? 0) * 3;
+    for (let k = start; k < end && k < indices.length; k++) {
+      const idx = indices[k];
+      if (idx < vertexCount && state[idx] < level) state[idx] = level;
+    }
+  });
+  return state;
+};
 
 const fnv1a = (value) => {
   const text = JSON.stringify(value, (k, v) => {
@@ -20,8 +61,8 @@ const fnv1a = (value) => {
   return (hash >>> 0).toString(16);
 };
 
-const colorForToolpath = (toolpath, selectedEntityId) => {
-  if (toolpath.operationId === selectedEntityId || toolpath.id === selectedEntityId) {
+const colorForToolpath = (toolpath, selectedSet) => {
+  if (selectedSet.has(toolpath.operationId) || selectedSet.has(toolpath.id)) {
     return SELECTED_SOLID_COLOR;
   }
   if (toolpath.status === 'Stale') {
@@ -142,7 +183,10 @@ const pickableForSolid = (solid, solidIndex, vertexOffset) => {
 };
 
 export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId = null, hideStock = false) => {
-  const solids = scene?.solids ?? [];
+  const selectedSet = toIdSet(selectedEntityId);
+  const hoverSet = toIdSet(hoverEntityId);
+  // Enrich box solids missing topology so face/edge highlight matches pick.
+  const solids = (scene?.solids ?? []).map(ensureSolidTopology);
   const toolpaths = scene?.toolpaths ?? [];
   const construction = [
     ...(scene?.construction ?? []),
@@ -175,10 +219,10 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     const positions = solid.positions ?? [];
     const normals = solid.normals ?? [];
     const colors = solid.colors ?? [];
-    const entityId = solid.pickable?.entityId ?? solid.sourceToken ?? solid.id;
-    const selected = entityId === selectedEntityId || solid.id === selectedEntityId;
-    const hovered = !selected && (entityId === hoverEntityId || solid.id === hoverEntityId);
     const pickable = pickableForSolid(solid, solidIndex, vertexOffset);
+    // Per-vertex highlight state so a single selected face lights up without
+    // recoloring the whole body.
+    const vertexState = computeVertexState(solid, selectedSet, hoverSet);
     // indexStart must be the current write offset into solidIndices, not the
     // pre-allocated array capacity (solidIndices.length is the total capacity),
     // otherwise every solid's pickable range collapses to indexCount 0 and
@@ -186,11 +230,13 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
     pickable.indexStart = iIndex;
 
     for (let i = 0; i + 2 < positions.length; i += 3) {
-      const colorIndex = Math.floor(i / 3) * 4;
+      const vertexIndex = Math.floor(i / 3);
+      const colorIndex = vertexIndex * 4;
       const normal = normals.length ? normals.slice(i, i + 3) : [0, 0, 1];
-      const color = selected
+      const state = vertexState[vertexIndex] ?? 0;
+      const color = state === 2
         ? SELECTED_SOLID_COLOR
-        : hovered
+        : state === 1
           ? HOVERED_SOLID_COLOR
           : colors.length
             ? colors.slice(colorIndex, colorIndex + 4)
@@ -218,8 +264,8 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
 
   if (scene?.gizmos?.originVisible !== false && Array.isArray(scene?.gizmos?.originPlanes)) {
     scene.gizmos.originPlanes.forEach((plane) => {
-      const selected = plane.id === selectedEntityId;
-      const hovered = !selected && plane.id === hoverEntityId;
+      const selected = selectedSet.has(plane.id);
+      const hovered = !selected && hoverSet.has(plane.id);
       const color = selected
         ? [SELECTED_SOLID_COLOR[0], SELECTED_SOLID_COLOR[1], SELECTED_SOLID_COLOR[2], 0.45]
         : hovered
@@ -256,8 +302,8 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
   axes.forEach((axis) => {
     if (scene?.gizmos?.originVisible === false && axis.id.startsWith('axis_')) return;
       if (axis.positions && axis.indices) {
-        const selected = axis.id === selectedEntityId;
-        const hovered = !selected && axis.id === hoverEntityId;
+        const selected = selectedSet.has(axis.id);
+        const hovered = !selected && hoverSet.has(axis.id);
         const color = selected
           ? SELECTED_SOLID_COLOR
           : hovered
@@ -344,13 +390,42 @@ export const adaptViewportScene = (scene, selectedEntityId = null, hoverEntityId
       scene.sketchOverlay.color ?? [0.35, 0.9, 1, 0.85]
     );
   }
+
+  // Pre-highlight / selected overlays for individual edges and vertices, drawn
+  // on top of the solids (the overlay line pipeline ignores depth).
+  const edgeOverlayLevel = (token) =>
+    selectedSet.has(token) ? SELECTED_EDGE_COLOR : hoverSet.has(token) ? HOVERED_EDGE_COLOR : null;
+  solids.forEach((solid) => {
+    if (hideStock && solid.id === 'solid_stock') return;
+    if (scene?.gizmos?.edgesVisible !== false) {
+      (solid.edgePickables ?? []).forEach((edge) => {
+        const color = edgeOverlayLevel(edge.token);
+        if (!color) return;
+        pushPolylineSegments(overlayLineVertices, edge.points ?? [], color);
+      });
+    }
+    if (scene?.gizmos?.pointsVisible !== false) {
+      (solid.vertexPickables ?? []).forEach((vertex) => {
+        const color = edgeOverlayLevel(vertex.token);
+        if (!color || !vertex.position) return;
+        const [px, py, pz] = vertex.position;
+        const r = 0.06;
+        // Small 3-axis cross marks the highlighted vertex as a distinct dot.
+        pushSegmentPairs(
+          overlayLineVertices,
+          [px - r, py, pz, px + r, py, pz, px, py - r, pz, px, py + r, pz, px, py, pz - r, px, py, pz + r],
+          color
+        );
+      });
+    }
+  });
   if (scene?.gizmos?.grid) {
     buildGroundGridLines().forEach((line) => {
       pushSegmentPairs(lineVertices, line.points, line.color);
     });
   }
   toolpaths.forEach((toolpath) => {
-    pushPolylineSegments(lineVertices, toolpath.points ?? [], colorForToolpath(toolpath, selectedEntityId));
+    pushPolylineSegments(lineVertices, toolpath.points ?? [], colorForToolpath(toolpath, selectedSet));
   });
   construction.forEach((item) => {
     if (item.visible === false || isPlaneFillItem(item)) return;

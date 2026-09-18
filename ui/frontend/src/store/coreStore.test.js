@@ -69,6 +69,66 @@ describe('core store action gateway', () => {
     });
   });
 
+  it('supports multi-select via set, toggle, and clear actions', async () => {
+    const store = useCoreStore();
+
+    await store.setSelection(['feat_Extrude_1_face_0', 'feat_Fillet_1_face_0']);
+    expect(store.selectedEntityIds).toEqual(['feat_Extrude_1_face_0', 'feat_Fillet_1_face_0']);
+    // The primary (scalar) selection mirrors the last committed member.
+    expect(store.selectedEntityId).toBe('feat_Fillet_1_face_0');
+
+    // Ctrl/Cmd click toggles a member out of the set.
+    await store.toggleSelection('feat_Fillet_1_face_0');
+    expect(store.selectedEntityIds).toEqual(['feat_Extrude_1_face_0']);
+    expect(store.selectedEntityId).toBe('feat_Extrude_1_face_0');
+
+    // Toggling a new member adds it.
+    await store.toggleSelection('feat_Fillet_1_face_0');
+    expect(store.selectedEntityIds).toEqual(['feat_Extrude_1_face_0', 'feat_Fillet_1_face_0']);
+
+    await store.clearSelection();
+    expect(store.selectedEntityIds).toEqual([]);
+    expect(store.selectedEntityId).toBeNull();
+    expect(store.selectedEntity).toBeNull();
+  });
+
+  it('classifies topology tokens into readable entity types', async () => {
+    const store = useCoreStore();
+    store.$patch((state) => {
+      state.viewportScene.solids = [{
+        id: 'solid_topo',
+        bodyToken: 'body:7',
+        faceRanges: [{ token: 'body:7/face:0' }],
+        edgePickables: [{ token: 'body:7/edge:2' }],
+        vertexPickables: [{ token: 'body:7/vertex:3' }]
+      }];
+    });
+
+    await store.setSelection(['body:7/face:0']);
+    expect(store.selectedEntity.type).toBe('B-rep Face');
+    await store.setSelection(['body:7/edge:2']);
+    expect(store.selectedEntity.type).toBe('B-rep Edge');
+    await store.setSelection(['body:7/vertex:3']);
+    expect(store.selectedEntity.type).toBe('B-rep Vertex');
+    await store.setSelection(['body:7']);
+    expect(store.selectedEntity.type).toBe('B-rep Body');
+  });
+
+  it('toggles selection priority and filters as presentation state', () => {
+    const store = useCoreStore();
+
+    expect(store.selectionPriority).toBeNull();
+    store.setSelectionPriority('face');
+    expect(store.selectionPriority).toBe('face');
+    // Clicking the active mode again clears it (one active priority at a time).
+    store.setSelectionPriority('face');
+    expect(store.selectionPriority).toBeNull();
+
+    expect(store.selectionFilters.bodyEdges).toBe(true);
+    store.toggleSelectionFilter('bodyEdges');
+    expect(store.selectionFilters.bodyEdges).toBe(false);
+  });
+
   it('deletes a feature and clears selection through the gateway', async () => {
     const store = useCoreStore();
 
@@ -318,7 +378,8 @@ describe('core snapshot projection', () => {
     store.loadCoreSnapshot(sketchRectExtrudeSnapshot());
 
     expect(store.activeDocumentId).toBe('doc_2002');
-    expect(store.features.map((feature) => feature.type)).toEqual(['Sketch', 'Extrude']);
+    // Every document also carries a permanent (hidden-by-default) Stock entry.
+    expect(store.features.map((feature) => feature.type)).toEqual(['Sketch', 'Extrude', 'Stock']);
     expect(store.features.find((feature) => feature.id === 'feat_Extrude_1').value).toBe(10);
     expect(store.viewportScene.solids).toHaveLength(1);
     expect(store.viewportScene.solids[0].sourceToken).toBe('feat_Extrude_1_face_0');
@@ -361,7 +422,8 @@ describe('core snapshot projection', () => {
 
     expect(store.browser.construction).toEqual([]);
     expect(store.browser.sketches).toEqual([]);
-    expect(store.browser.bodies).toEqual([]);
+    // Only the permanent (hidden-by-default) Stock entry is present.
+    expect(store.browser.bodies).toEqual([{ id: 'feat_Stock_1', label: 'Stock (cuboid)', visible: true }]);
   });
 
   it('guides center diameter circle creation with viewport picks', async () => {
@@ -418,7 +480,11 @@ describe('core snapshot projection', () => {
       viewportScene: { solids: [], toolpaths: [] }
     });
 
-    expect(store.features).toEqual([]);
+    // A blank timeline/viewport still carries the permanent (hidden-by-default)
+    // Stock entry, but no visible geometry for it.
+    expect(store.features).toEqual([
+      { id: 'feat_Stock_1', type: 'Stock', label: 'Stock (cuboid)', value: 0, unit: 'mm', isDirty: false, selectionToken: 'feat_Stock_1_body_0' }
+    ]);
     expect(store.viewportScene.solids).toEqual([]);
     expect(store.viewportScene.toolpaths).toEqual([]);
     expect(store.viewportScene.diagnostics.triangleCount).toBe(0);
@@ -486,5 +552,49 @@ describe('core snapshot projection', () => {
     expect(store.units).toBe('inch');
     expect(store.machineInitGcode).toContain('G20 (Select imperial units)');
     expect(store.machineInitGcode).not.toContain('G21');
+  });
+
+  it('keeps a Stock model-tree entry for every document, hidden by default', () => {
+    const store = useCoreStore();
+
+    // Stock is a permanent part of the document (like Origin) and is tracked
+    // in the model tree regardless of which workspace tab is active, but its
+    // geometry defaults to hidden so a fresh document isn't cluttered.
+    for (const mode of ['design', 'manufacture', 'machine']) {
+      store.setMode(mode);
+      expect(store.showStock).toBe(false);
+      expect(store.viewportScene.solids.some((s) => s.id === 'solid_stock')).toBe(false);
+      expect(store.features.find((f) => f.id === 'feat_Stock_1')).toMatchObject({
+        type: 'Stock',
+        label: 'Stock (cuboid)'
+      });
+      expect(store.browser.bodies.find((b) => b.id === 'feat_Stock_1')).toMatchObject({
+        label: 'Stock (cuboid)'
+      });
+    }
+  });
+
+  it('shows/hides only the stock geometry (never its model-tree entry) via the visibility toggle, in every mode', () => {
+    const store = useCoreStore();
+
+    store.setMode('design');
+    expect(store.viewportScene.solids.some((s) => s.id === 'solid_stock')).toBe(false);
+
+    store.toggleStockVisibility();
+    expect(store.showStock).toBe(true);
+    expect(store.viewportScene.solids.some((s) => s.id === 'solid_stock')).toBe(true);
+    expect(store.features.some((f) => f.id === 'feat_Stock_1')).toBe(true);
+    expect(store.browser.bodies.some((b) => b.id === 'feat_Stock_1')).toBe(true);
+
+    // Still visible after switching modes - not gated by which tab is active.
+    store.setMode('manufacture');
+    expect(store.viewportScene.solids.some((s) => s.id === 'solid_stock')).toBe(true);
+
+    store.toggleStockVisibility();
+    expect(store.showStock).toBe(false);
+    expect(store.viewportScene.solids.some((s) => s.id === 'solid_stock')).toBe(false);
+    // Hiding is a visibility toggle, not a deletion: the doc-hierarchy entry stays.
+    expect(store.features.some((f) => f.id === 'feat_Stock_1')).toBe(true);
+    expect(store.browser.bodies.some((b) => b.id === 'feat_Stock_1')).toBe(true);
   });
 });

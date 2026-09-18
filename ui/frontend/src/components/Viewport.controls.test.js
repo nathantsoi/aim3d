@@ -145,15 +145,29 @@ describe('Viewport camera controls', () => {
     expect(store.viewportScene.camera.distance).toBeLessThan(42);
   });
 
-  it('selects entities with a click-drag rubber-band rectangle', async () => {
+  it('selects touched entities with a right-to-left crossing rubber-band', async () => {
     const { canvas, store } = await mountViewport();
 
-    dispatchPointer(canvas, 'pointerdown', { button: 0, clientX: 40, clientY: 40 });
-    dispatchPointer(canvas, 'pointermove', { button: 0, clientX: 760, clientY: 560 });
-    dispatchPointer(canvas, 'pointerup', { button: 0, clientX: 760, clientY: 560 });
+    // Right-to-left drag is a crossing selection: any touched entity is picked.
+    dispatchPointer(canvas, 'pointerdown', { button: 0, clientX: 760, clientY: 560 });
+    dispatchPointer(canvas, 'pointermove', { button: 0, clientX: 40, clientY: 40 });
+    dispatchPointer(canvas, 'pointerup', { button: 0, clientX: 40, clientY: 40 });
     await flush();
 
-    expect(store.selectedEntityId).toBe('feat_Extrude_1_face_0');
+    expect(store.selectedEntityIds.some((id) => /^body:2\//.test(id))).toBe(true);
+  });
+
+  it('encloses entities with a left-to-right window rubber-band', async () => {
+    const { canvas, store } = await mountViewport();
+
+    // Left-to-right drag is a window selection: the sample solid is fully
+    // enclosed by an all-canvas rectangle.
+    dispatchPointer(canvas, 'pointerdown', { button: 0, clientX: 1, clientY: 1 });
+    dispatchPointer(canvas, 'pointermove', { button: 0, clientX: 799, clientY: 599 });
+    dispatchPointer(canvas, 'pointerup', { button: 0, clientX: 799, clientY: 599 });
+    await flush();
+
+    expect(store.selectedEntityIds.some((id) => /^body:2\//.test(id))).toBe(true);
   });
 
   it('shows a selection rectangle overlay while dragging', async () => {
@@ -177,7 +191,7 @@ describe('Viewport camera controls', () => {
     dispatchPointer(canvas, 'pointermove', { button: 0, clientX: 400, clientY: 300 });
     await flush();
 
-    expect(store.viewportScene.diagnostics.hoverTargetId).toBe('feat_Extrude_1_face_0');
+    expect(store.viewportScene.diagnostics.hoverTargetId).toMatch(/^body:2\/(face|edge|vertex):\d+$/);
     expect(store.viewportScene.diagnostics.lastPickLatencyMs).toBeLessThan(16);
     expect(store.actionLog).toHaveLength(0);
   });
@@ -188,11 +202,9 @@ describe('Viewport camera controls', () => {
     canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
     await flush();
 
-    expect(store.selectedEntityId).toBe('feat_Extrude_1_face_0');
+    expect(store.selectedEntityId).toMatch(/^body:2\/(face|edge|vertex):\d+$/);
     expect(store.actionLog).toHaveLength(1);
-    expect(store.actionLog[0]).toMatchObject({
-      type: 'ui.selectEntity',
-      value: 'feat_Extrude_1_face_0'
-    });
+    expect(store.actionLog[0].type).toBe('ui.selectEntity');
+    expect(store.actionLog[0].value).toBe(store.selectedEntityId);
   });
 });
